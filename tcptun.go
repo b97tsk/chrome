@@ -54,23 +54,23 @@ func (job *tcptunJob) start() {
 			close(cout)
 		}()
 
-		cin := make(chan net.Conn, 4)
-		defer func() {
-			for c := range cin {
-				c.Close()
-			}
-		}()
-
 		var (
-			activeListener net.Listener
-			lnwg           sync.WaitGroup
+			cin      = make(chan net.Conn, 4)
+			lwg      sync.WaitGroup
+			listener net.Listener
 		)
 		defer func() {
-			if activeListener != nil {
-				// log.Printf("[%v] closing %v\n", job.name, activeListener.Addr())
-				activeListener.Close()
-				lnwg.Wait()
+			if listener != nil {
+				// log.Printf("[%v] closing %v\n", job.name, listener.Addr())
+				listener.Close()
+				listener = nil
 			}
+			go func() {
+				for c := range cin {
+					c.Close()
+				}
+			}()
+			lwg.Wait()
 			close(cin)
 		}()
 
@@ -86,20 +86,20 @@ func (job *tcptunJob) start() {
 				if s, ok := v.(tcptunSettings); ok {
 					settings, s = s, settings
 					if settings.ListenAddr != s.ListenAddr {
-						if activeListener != nil {
-							// log.Printf("[%v] closing %v\n", job.name, activeListener.Addr())
-							activeListener.Close()
-							activeListener = nil
+						if listener != nil {
+							// log.Printf("[%v] closing %v\n", job.name, listener.Addr())
+							listener.Close()
+							listener = nil
 						}
 						log.Printf("[%v] listening on %v\n", job.name, settings.ListenAddr)
 						ln, err := net.Listen("tcp", settings.ListenAddr)
 						if err != nil {
 							log.Printf("[%v] %v\n", job.name, err)
 						} else {
-							activeListener = ln
-							lnwg.Add(1)
+							listener = ln
+							lwg.Add(1)
 							go func() {
-								defer lnwg.Done()
+								defer lwg.Done()
 								for {
 									c, err := ln.Accept()
 									if err != nil {
@@ -123,13 +123,15 @@ func (job *tcptunJob) start() {
 			case c := <-cin:
 				connections[c] = true
 
+				dial := dial
 				forwardAddr := settings.ForwardAddr
+
 				cwg.Add(1)
 				go func() {
-					defer cwg.Done()
 					defer func() {
 						c.Close()
 						cout <- c
+						cwg.Done()
 					}()
 
 					rc, err := dial("tcp", forwardAddr)
