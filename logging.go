@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const loggingTypeName = "Logging"
+const loggingTypeName = "logging"
 
 type loggingSettings struct {
 	Logfile string
@@ -36,7 +36,7 @@ func (job *loggingJob) start() {
 		var logfile *os.File
 		defer func() {
 			if logfile != nil {
-				log.SetOutput(os.Stdout)
+				log.SetOutput(os.Stderr)
 				// log.Printf("[%v] closing %v\n", job.name, settings.Logfile)
 				logfile.Close()
 			}
@@ -50,7 +50,7 @@ func (job *loggingJob) start() {
 					if settings.Logfile != s.Logfile {
 						if settings.Logfile == "" {
 							if logfile != nil {
-								log.SetOutput(os.Stdout)
+								log.SetOutput(os.Stderr)
 								// log.Printf("[%v] closing %v\n", job.name, s.Logfile)
 								logfile.Close()
 								logfile = nil
@@ -61,7 +61,7 @@ func (job *loggingJob) start() {
 							if err != nil {
 								log.Printf("[%v] %v", job.name, err)
 							} else {
-								log.SetOutput(io.MultiWriter(file, os.Stdout))
+								log.SetOutput(io.MultiWriter(file, os.Stderr))
 								if logfile != nil {
 									// log.Printf("[%v] closing %v\n", job.name, s.Logfile)
 									logfile.Close()

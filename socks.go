@@ -77,7 +77,7 @@ func (job *socksJob) start() {
 		var (
 			settings  socksSettings
 			proxyList ProxyList
-			dial      = net.Dial
+			dial      = direct.Dial
 		)
 
 		for {
@@ -116,7 +116,8 @@ func (job *socksJob) start() {
 					}
 					if pl := services.ProxyList(settings.ProxyList...); !pl.Equals(proxyList) {
 						proxyList = pl
-						dial = proxyList.Dialer(direct).Dial
+						d, _ := proxyList.Dialer(direct)
+						dial = d.Dial
 					}
 				}
 			case c := <-cin:

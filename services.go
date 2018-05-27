@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"hash/crc32"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -29,13 +30,14 @@ type Job interface {
 
 type ServiceManager struct {
 	mu       sync.Mutex
+	hash     uint32
 	proxies  map[string]ProxyList
 	services map[string]Service
 	jobs     map[string]Job
 	logging  Job
 }
 
-func NewServiceManager() *ServiceManager {
+func newServiceManager() *ServiceManager {
 	return &ServiceManager{
 		proxies:  make(map[string]ProxyList),
 		services: make(map[string]Service),
@@ -50,7 +52,6 @@ func (sm *ServiceManager) Add(s Service) {
 func (sm *ServiceManager) Load() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	log.Printf("[services] loading %v\n", configFileName)
 
 	file, err := os.Open(configFileName)
 	if err != nil {
@@ -65,31 +66,37 @@ func (sm *ServiceManager) Load() {
 		return
 	}
 
+	hash := crc32.ChecksumIEEE(data)
+	if hash == sm.hash {
+		return
+	}
+	sm.hash = hash
+
 	var c struct {
 		Logfile string `yaml:"logging"`
 		Proxies map[string]ProxyList
 		Jobs    map[string]JobItem
 	}
 
-	err = yaml.Unmarshal(data, &c)
+	err = yaml.UnmarshalStrict(data, &c)
 	if err != nil {
 		log.Printf("[services] loading %v: %v\n", configFileName, err)
 		return
 	}
 
-	if logging, ok := sm.services["Logging"]; ok {
+	if logging, ok := sm.services["logging"]; ok {
 		data, _ := yaml.Marshal(c.Logfile)
 		settings, err := logging.UnmarshalSettings(data)
 		if err == nil {
 			if sm.logging == nil {
-				sm.logging = logging.StartNewJob("Logging")
+				sm.logging = logging.StartNewJob("logging")
 			}
 			sm.logging.Send(settings)
 		} else {
 			log.Printf("[services] loading %v: logging %q: %v\n", configFileName, c.Logfile, err)
 		}
 	} else {
-		log.Printf("[services] Logging service not found\n")
+		log.Printf("[services] logging service not found\n")
 	}
 
 	for name, proxies := range sm.proxies {
@@ -133,6 +140,8 @@ func (sm *ServiceManager) Load() {
 		job.Send(settings)
 		sm.mu.Lock()
 	}
+
+	log.Printf("[services] loaded %v\n", configFileName)
 }
 
 func (sm *ServiceManager) Shutdown() {
@@ -154,7 +163,7 @@ func (sm *ServiceManager) Shutdown() {
 }
 
 type Proxy struct {
-	*url.URL
+	URL *url.URL
 	Raw string
 }
 
@@ -172,17 +181,19 @@ func (pl ProxyList) Equals(other ProxyList) bool {
 	return true
 }
 
-func (pl ProxyList) Dialer(forward proxy.Dialer) (dialer proxy.Dialer) {
-	dialer = forward
+func (pl ProxyList) Dialer(forward proxy.Dialer) (proxy.Dialer, error) {
+	var firstErr error
 	for i := len(pl) - 1; i > -1; i-- {
-		d, err := proxy.FromURL(pl[i].URL, dialer)
+		d, err := proxy.FromURL(pl[i].URL, forward)
 		if err != nil {
-			log.Printf("[services] proxy %q not recognized\n", pl[i])
+			if firstErr == nil {
+				firstErr = err
+			}
 			continue
 		}
-		dialer = d
+		forward = d
 	}
-	return
+	return forward, firstErr
 }
 
 func (pl *ProxyList) UnmarshalYAML(unmarshal func(interface{}) error) error {
@@ -193,7 +204,8 @@ func (pl *ProxyList) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			return errors.New("invalid proxy: " + rawurl)
 		}
 		*pl = []Proxy{{u, rawurl}}
-		return nil
+		_, err = pl.Dialer(direct)
+		return err
 	}
 	var slice []string
 	if err := unmarshal(&slice); err == nil {
@@ -205,7 +217,8 @@ func (pl *ProxyList) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			}
 			*pl = append(*pl, Proxy{u, rawurl})
 		}
-		return nil
+		_, err = pl.Dialer(direct)
+		return err
 	}
 	return errors.New("invalid proxy list")
 }
@@ -249,11 +262,16 @@ func (ji *JobItem) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	if err := unmarshal(&ji.Value); err != nil {
 		return err
 	}
-	if t, ok := ji.Value["type"].(string); ok {
-		ji.Type = t
-		return nil
+	raw, ok := ji.Value["type"]
+	if !ok {
+		return errors.New("invalid job: type not found")
 	}
-	return errors.New("invalid job: type not found")
+	t, ok := raw.(string)
+	if !ok {
+		return errors.New("invalid job: type must be string")
+	}
+	ji.Type = t
+	return nil
 }
 
-var services = NewServiceManager()
+var services = newServiceManager()
