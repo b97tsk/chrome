@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"hash/crc32"
 	"io/ioutil"
@@ -16,40 +17,90 @@ import (
 const configFileName = "chrome.yaml"
 
 type Service interface {
-	UnmarshalSettings(data []byte) (interface{}, error)
-	StartNewJob(name string) Job
+	Run(ServiceCtx)
 }
 
-type Job interface {
-	Send(v interface{})
-	Stop()
-	Done() <-chan struct{}
+type ServiceCtx struct {
+	Name   string
+	Done   <-chan struct{}
+	Events <-chan interface{}
+}
+
+type ServiceJob struct {
+	Done   <-chan struct{}
+	Events chan<- interface{}
+	Cancel context.CancelFunc
+}
+
+func (job *ServiceJob) Active() bool {
+	select {
+	case <-job.Done:
+		return false
+	default:
+		return true
+	}
+}
+
+func (job *ServiceJob) SendData(v interface{}) {
+	values := []interface{}{v, nil}
+	for _, v := range values {
+		select {
+		case <-job.Done:
+			return
+		case job.Events <- v:
+		}
+	}
 }
 
 type ServiceManager struct {
 	mu       sync.Mutex
 	hash     uint32
 	proxies  map[string]ProxyList
-	services map[string]Service
-	jobs     map[JobMapKey]Job
-	logging  Job
+	services map[string]ServiceItem
 }
 
-type JobMapKey struct {
-	Type string
+type ServiceItem struct {
 	Name string
+	Service
+	Jobs map[string]ServiceJob
 }
 
 func newServiceManager() *ServiceManager {
 	return &ServiceManager{
 		proxies:  make(map[string]ProxyList),
-		services: make(map[string]Service),
-		jobs:     make(map[JobMapKey]Job),
+		services: make(map[string]ServiceItem),
 	}
 }
 
 func (sm *ServiceManager) Add(name string, service Service) {
-	sm.services[name] = service
+	sm.services[name] = ServiceItem{name, service, nil}
+}
+
+func (sm *ServiceManager) sendData(service, name string, data interface{}) {
+	if service, ok := sm.services[service]; ok {
+		job, ok := service.Jobs[name]
+		if !ok || !job.Active() {
+			ctx, cancel := context.WithCancel(context.TODO())
+			done := make(chan struct{})
+			events := make(chan interface{})
+			go func() {
+				defer cancel()
+				defer close(done)
+				service.Run(ServiceCtx{name, ctx.Done(), events})
+			}()
+			if service.Jobs == nil {
+				service.Jobs = make(map[string]ServiceJob)
+				sm.services[service.Name] = service
+			}
+			job = ServiceJob{done, events, cancel}
+			service.Jobs[name] = job
+		}
+		sm.mu.Unlock()
+		job.SendData(data)
+		sm.mu.Lock()
+		return
+	}
+	log.Printf("[services] loading %v: service %q not found\n", configFileName, service)
 }
 
 func (sm *ServiceManager) Load() {
@@ -87,20 +138,7 @@ func (sm *ServiceManager) Load() {
 		return
 	}
 
-	if logging, ok := sm.services["logging"]; ok {
-		data, _ := yaml.Marshal(c.Logfile)
-		settings, err := logging.UnmarshalSettings(data)
-		if err == nil {
-			if sm.logging == nil {
-				sm.logging = logging.StartNewJob("logging")
-			}
-			sm.logging.Send(settings)
-		} else {
-			log.Printf("[services] loading %v: logging %q: %v\n", configFileName, c.Logfile, err)
-		}
-	} else {
-		log.Printf("[services] logging service not found\n")
-	}
+	sm.sendData("logging", "logging", c.Logfile)
 
 	for name, proxies := range sm.proxies {
 		if pl, ok := c.Proxies[name]; ok && pl.Equals(proxies) {
@@ -112,37 +150,22 @@ func (sm *ServiceManager) Load() {
 		sm.proxies[name] = proxies
 	}
 
-	for key, job := range sm.jobs {
-		_, ok := c.Jobs[key.Type][key.Name]
-		if !ok {
-			job.Stop()
-			<-job.Done()
-			delete(sm.jobs, key)
-		}
-	}
-	for name, jobs := range c.Jobs {
-		service, ok := sm.services[name]
-		if !ok {
-			log.Printf("[services] loading %v: service %q not found\n", configFileName, name)
+	for _, service := range sm.services {
+		if service.Name == "logging" {
 			continue
 		}
-		key := JobMapKey{Type: name}
-		for name, data := range jobs {
-			data, _ := yaml.Marshal(data)
-			settings, err := service.UnmarshalSettings(data)
-			if err != nil {
-				log.Printf("[services] loading %v: job %q: %v\n", configFileName, name, err)
+		for name, job := range service.Jobs {
+			if _, ok := c.Jobs[service.Name][name]; ok {
 				continue
 			}
-			key.Name = name
-			job, ok := sm.jobs[key]
-			if !ok {
-				job = service.StartNewJob(name)
-				sm.jobs[key] = job
-			}
-			sm.mu.Unlock()
-			job.Send(settings)
-			sm.mu.Lock()
+			job.Cancel()
+			<-job.Done
+			delete(service.Jobs, name)
+		}
+	}
+	for service, jobs := range c.Jobs {
+		for name, data := range jobs {
+			sm.sendData(service, name, data)
 		}
 	}
 
@@ -153,17 +176,26 @@ func (sm *ServiceManager) Shutdown() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	for _, job := range sm.jobs {
-		job.Stop()
+	loggingService := sm.services["logging"]
+	delete(sm.services, "logging")
+
+	for _, service := range sm.services {
+		for _, job := range service.Jobs {
+			job.Cancel()
+		}
 	}
 
-	for _, job := range sm.jobs {
-		<-job.Done()
+	for _, service := range sm.services {
+		for _, job := range service.Jobs {
+			<-job.Done
+		}
 	}
 
-	if sm.logging != nil {
-		sm.logging.Stop()
-		<-sm.logging.Done()
+	for _, job := range loggingService.Jobs {
+		job.Cancel()
+	}
+	for _, job := range loggingService.Jobs {
+		<-job.Done
 	}
 }
 
