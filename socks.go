@@ -11,10 +11,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const socksTypeName = "socks"
-
 type socksSettings struct {
-	Type       string
 	ListenAddr string        `yaml:"listen"`
 	ProxyList  ProxyNameList `yaml:"over"`
 }
@@ -160,10 +157,6 @@ func (job *socksJob) start() {
 	}()
 }
 
-func (*socksJob) Type() string {
-	return socksTypeName
-}
-
 func (job *socksJob) Send(v interface{}) {
 	values := []interface{}{v, nil}
 	for _, v := range values {
@@ -185,10 +178,6 @@ func (job *socksJob) Done() <-chan struct{} {
 
 type socksService struct{}
 
-func (socksService) Type() string {
-	return socksTypeName
-}
-
 func (socksService) UnmarshalSettings(data []byte) (interface{}, error) {
 	var settings socksSettings
 	if err := yaml.UnmarshalStrict(data, &settings); err != nil {
@@ -208,5 +197,5 @@ func (socksService) StartNewJob(name string) Job {
 }
 
 func init() {
-	services.Add(socksService{})
+	services.Add("socks", socksService{})
 }

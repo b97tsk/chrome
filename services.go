@@ -16,13 +16,11 @@ import (
 const configFileName = "chrome.yaml"
 
 type Service interface {
-	Type() string
 	UnmarshalSettings(data []byte) (interface{}, error)
 	StartNewJob(name string) Job
 }
 
 type Job interface {
-	Type() string
 	Send(v interface{})
 	Stop()
 	Done() <-chan struct{}
@@ -33,20 +31,25 @@ type ServiceManager struct {
 	hash     uint32
 	proxies  map[string]ProxyList
 	services map[string]Service
-	jobs     map[string]Job
+	jobs     map[JobMapKey]Job
 	logging  Job
+}
+
+type JobMapKey struct {
+	Type string
+	Name string
 }
 
 func newServiceManager() *ServiceManager {
 	return &ServiceManager{
 		proxies:  make(map[string]ProxyList),
 		services: make(map[string]Service),
-		jobs:     make(map[string]Job),
+		jobs:     make(map[JobMapKey]Job),
 	}
 }
 
-func (sm *ServiceManager) Add(s Service) {
-	sm.services[s.Type()] = s
+func (sm *ServiceManager) Add(name string, service Service) {
+	sm.services[name] = service
 }
 
 func (sm *ServiceManager) Load() {
@@ -75,7 +78,7 @@ func (sm *ServiceManager) Load() {
 	var c struct {
 		Logfile string `yaml:"logging"`
 		Proxies map[string]ProxyList
-		Jobs    map[string]JobItem
+		Jobs    map[string]map[string]interface{} `yaml:",inline"`
 	}
 
 	err = yaml.UnmarshalStrict(data, &c)
@@ -109,36 +112,38 @@ func (sm *ServiceManager) Load() {
 		sm.proxies[name] = proxies
 	}
 
-	for name, job := range sm.jobs {
-		if item, ok := c.Jobs[name]; ok {
-			if item.Type == job.Type() {
+	for key, job := range sm.jobs {
+		_, ok := c.Jobs[key.Type][key.Name]
+		if !ok {
+			job.Stop()
+			<-job.Done()
+			delete(sm.jobs, key)
+		}
+	}
+	for name, jobs := range c.Jobs {
+		service, ok := sm.services[name]
+		if !ok {
+			log.Printf("[services] loading %v: service %q not found\n", configFileName, name)
+			continue
+		}
+		key := JobMapKey{Type: name}
+		for name, data := range jobs {
+			data, _ := yaml.Marshal(data)
+			settings, err := service.UnmarshalSettings(data)
+			if err != nil {
+				log.Printf("[services] loading %v: job %q: %v\n", configFileName, name, err)
 				continue
 			}
+			key.Name = name
+			job, ok := sm.jobs[key]
+			if !ok {
+				job = service.StartNewJob(name)
+				sm.jobs[key] = job
+			}
+			sm.mu.Unlock()
+			job.Send(settings)
+			sm.mu.Lock()
 		}
-		job.Stop()
-		<-job.Done()
-		delete(sm.jobs, name)
-	}
-	for name, item := range c.Jobs {
-		service, ok := sm.services[item.Type]
-		if !ok {
-			log.Printf("[services] loading %v: service %q not found\n", configFileName, item.Type)
-			continue
-		}
-		data, _ := yaml.Marshal(item.Value)
-		settings, err := service.UnmarshalSettings(data)
-		if err != nil {
-			log.Printf("[services] loading %v: job %q: %v\n", configFileName, name, err)
-			continue
-		}
-		job, ok := sm.jobs[name]
-		if !ok {
-			job = service.StartNewJob(name)
-			sm.jobs[name] = job
-		}
-		sm.mu.Unlock()
-		job.Send(settings)
-		sm.mu.Lock()
 	}
 
 	log.Printf("[services] loaded %v\n", configFileName)
@@ -251,27 +256,6 @@ func (sl *ProxyNameList) UnmarshalYAML(unmarshal func(interface{}) error) error 
 		return nil
 	}
 	return errors.New("invalid proxy name list")
-}
-
-type JobItem struct {
-	Type  string
-	Value map[string]interface{}
-}
-
-func (ji *JobItem) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	if err := unmarshal(&ji.Value); err != nil {
-		return err
-	}
-	raw, ok := ji.Value["type"]
-	if !ok {
-		return errors.New("invalid job: type not found")
-	}
-	t, ok := raw.(string)
-	if !ok {
-		return errors.New("invalid job: type must be string")
-	}
-	ji.Type = t
-	return nil
 }
 
 var services = newServiceManager()

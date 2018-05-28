@@ -9,8 +9,6 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const loggingTypeName = "logging"
-
 type loggingSettings struct {
 	Logfile string
 }
@@ -78,10 +76,6 @@ func (job *loggingJob) start() {
 	}()
 }
 
-func (*loggingJob) Type() string {
-	return loggingTypeName
-}
-
 func (job *loggingJob) Send(v interface{}) {
 	values := []interface{}{v, nil}
 	for _, v := range values {
@@ -103,10 +97,6 @@ func (job *loggingJob) Done() <-chan struct{} {
 
 type loggingService struct{}
 
-func (loggingService) Type() string {
-	return loggingTypeName
-}
-
 func (loggingService) UnmarshalSettings(data []byte) (interface{}, error) {
 	var settings loggingSettings
 	if err := yaml.UnmarshalStrict(data, &settings.Logfile); err != nil {
@@ -126,5 +116,5 @@ func (loggingService) StartNewJob(name string) Job {
 }
 
 func init() {
-	services.Add(loggingService{})
+	services.Add("logging", loggingService{})
 }

@@ -10,13 +10,9 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-const tcptunTypeName = "tcptun"
-
 type tcptunSettings struct {
-	Type        string
-	ListenAddr  string        `yaml:"listen"`
-	ForwardAddr string        `yaml:"forward"`
-	ProxyList   ProxyNameList `yaml:"over"`
+	ListenAddr string        `yaml:"listen"`
+	ProxyList  ProxyNameList `yaml:"over"`
 }
 
 type tcptunJob struct {
@@ -124,7 +120,6 @@ func (job *tcptunJob) start() {
 				connections[c] = true
 
 				dial := dial
-				forwardAddr := settings.ForwardAddr
 
 				cwg.Add(1)
 				go func() {
@@ -134,7 +129,7 @@ func (job *tcptunJob) start() {
 						cwg.Done()
 					}()
 
-					rc, err := dial("tcp", forwardAddr)
+					rc, err := dial("tcp", job.name)
 					if err != nil {
 						log.Printf("[%v] %v\n", job.name, err)
 						return
@@ -153,10 +148,6 @@ func (job *tcptunJob) start() {
 			}
 		}
 	}()
-}
-
-func (*tcptunJob) Type() string {
-	return tcptunTypeName
 }
 
 func (job *tcptunJob) Send(v interface{}) {
@@ -180,10 +171,6 @@ func (job *tcptunJob) Done() <-chan struct{} {
 
 type tcptunService struct{}
 
-func (tcptunService) Type() string {
-	return tcptunTypeName
-}
-
 func (tcptunService) UnmarshalSettings(data []byte) (interface{}, error) {
 	var settings tcptunSettings
 	if err := yaml.UnmarshalStrict(data, &settings); err != nil {
@@ -203,5 +190,5 @@ func (tcptunService) StartNewJob(name string) Job {
 }
 
 func init() {
-	services.Add(tcptunService{})
+	services.Add("tcptun", tcptunService{})
 }
