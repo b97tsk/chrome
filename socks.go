@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net"
-	"sync"
 	"sync/atomic"
 
 	"github.com/shadowsocks/go-shadowsocks2/socks"
@@ -28,59 +27,28 @@ func (socksService) Run(ctx ServiceCtx) {
 	var dial atomic.Value
 	dial.Store(direct.Dial)
 
-	var wg sync.WaitGroup
-	defer wg.Wait()
-	defer ln.Close()
-
-	wg.Add(1)
-	go func() {
-		var connections struct {
-			sync.Map
-			sync.WaitGroup
+	serving := serve(ln, func(c net.Conn) {
+		addr, err := socks.Handshake(c)
+		if err != nil {
+			log.Printf("[socks] socks handshake: %v\n", err)
+			return
 		}
-		defer func() {
-			connections.Range(func(key, _ interface{}) bool {
-				key.(net.Conn).Close()
-				return true
-			})
-			connections.Wait()
-			wg.Done()
-		}()
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				if isTemporary(err) {
-					continue
-				}
-				return
-			}
-			tcpKeepAlive(c, direct.KeepAlive)
-			connections.Store(c, struct{}{})
-			connections.Add(1)
-			go func() {
-				defer connections.Done()
-				defer connections.Delete(c)
-				defer c.Close()
 
-				addr, err := socks.Handshake(c)
-				if err != nil {
-					log.Printf("[socks] socks handshake: %v\n", err)
-					return
-				}
-
-				dial := dial.Load().(func(network, addr string) (net.Conn, error))
-				rc, err := dial("tcp", addr.String())
-				if err != nil {
-					log.Printf("[socks] %v\n", err)
-					return
-				}
-				defer rc.Close()
-
-				if err = relay(rc, c); err != nil && !isTimeout(err) {
-					log.Printf("[socks] relay: %v\n", err)
-				}
-			}()
+		dial := dial.Load().(func(network, addr string) (net.Conn, error))
+		rc, err := dial("tcp", addr.String())
+		if err != nil {
+			log.Printf("[socks] %v\n", err)
+			return
 		}
+		defer rc.Close()
+
+		if err = relay(rc, c); err != nil && !isTimeout(err) {
+			log.Printf("[socks] relay: %v\n", err)
+		}
+	})
+	defer func() {
+		ln.Close()
+		<-serving.Done()
 	}()
 
 	var (

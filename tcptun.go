@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,62 +26,32 @@ func (tcptunService) Run(ctx ServiceCtx) {
 	defer log.Printf("[tcptun] stopped listening on %v\n", ctx.Name)
 
 	var connect atomic.Value
-	var wg sync.WaitGroup
-	defer wg.Wait()
-	defer ln.Close()
 
-	wg.Add(1)
-	go func() {
-		var connections struct {
-			sync.Map
-			sync.WaitGroup
-		}
-		defer func() {
-			connections.Range(func(key, _ interface{}) bool {
-				key.(net.Conn).Close()
-				return true
-			})
-			connections.Wait()
-			wg.Done()
-		}()
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				if isTemporary(err) {
-					continue
-				}
+	serving := serve(ln, func(c net.Conn) {
+		connectLoad := connect.Load
+		connect := connectLoad()
+		if connect == nil {
+			time.Sleep(time.Second)
+			connect = connectLoad()
+			if connect == nil {
 				return
 			}
-			tcpKeepAlive(c, direct.KeepAlive)
-			connections.Store(c, struct{}{})
-			connections.Add(1)
-			go func() {
-				defer connections.Done()
-				defer connections.Delete(c)
-				defer c.Close()
-
-				connectLoad := connect.Load
-				connect := connectLoad()
-				if connect == nil {
-					time.Sleep(time.Second)
-					connect = connectLoad()
-					if connect == nil {
-						return
-					}
-				}
-
-				rc, err := connect.(func() (net.Conn, error))()
-				if err != nil {
-					log.Printf("[tcptun] %v\n", err)
-					return
-				}
-				defer rc.Close()
-
-				if err = relay(rc, c); err != nil && !isTimeout(err) {
-					log.Printf("[tcptun] relay: %v\n", err)
-				}
-			}()
 		}
+
+		rc, err := connect.(func() (net.Conn, error))()
+		if err != nil {
+			log.Printf("[tcptun] %v\n", err)
+			return
+		}
+		defer rc.Close()
+
+		if err = relay(rc, c); err != nil && !isTimeout(err) {
+			log.Printf("[tcptun] relay: %v\n", err)
+		}
+	})
+	defer func() {
+		ln.Close()
+		<-serving.Done()
 	}()
 
 	var (
