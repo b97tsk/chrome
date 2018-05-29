@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -18,51 +19,34 @@ type tcptunService struct{}
 
 func (tcptunService) Run(ctx ServiceCtx) {
 	log.Printf("[tcptun] listening on %v\n", ctx.Name)
-	listener, err := net.Listen("tcp", ctx.Name)
+	ln, err := net.Listen("tcp", ctx.Name)
 	if err != nil {
 		log.Printf("[tcptun] %v\n", err)
 		return
 	}
 	defer log.Printf("[tcptun] stopped listening on %v\n", ctx.Name)
 
-	var (
-		connections = make(map[net.Conn]bool)
-		cout        = make(chan net.Conn, 4)
-		cwg         sync.WaitGroup
-	)
-	defer func() {
-		now := time.Now()
-		for c := range connections {
-			c.SetDeadline(now)
-		}
-		go func() {
-			for range cout {
-			}
-		}()
-		cwg.Wait()
-		close(cout)
-	}()
+	var connect atomic.Value
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer ln.Close()
 
-	var (
-		cin = make(chan net.Conn, 4)
-		lwg sync.WaitGroup
-	)
-	defer func() {
-		listener.Close()
-		go func() {
-			for c := range cin {
-				c.Close()
-			}
-		}()
-		lwg.Wait()
-		close(cin)
-	}()
-
-	lwg.Add(1)
+	wg.Add(1)
 	go func() {
-		defer lwg.Done()
+		var connections struct {
+			sync.Map
+			sync.WaitGroup
+		}
+		defer func() {
+			connections.Range(func(key, _ interface{}) bool {
+				key.(net.Conn).Close()
+				return true
+			})
+			connections.Wait()
+			wg.Done()
+		}()
 		for {
-			c, err := listener.Accept()
+			c, err := ln.Accept()
 			if err != nil {
 				if isTemporary(err) {
 					continue
@@ -70,7 +54,34 @@ func (tcptunService) Run(ctx ServiceCtx) {
 				return
 			}
 			tcpKeepAlive(c, direct.KeepAlive)
-			cin <- c
+			connections.Store(c, struct{}{})
+			connections.Add(1)
+			go func() {
+				defer connections.Done()
+				defer connections.Delete(c)
+				defer c.Close()
+
+				connectLoad := connect.Load
+				connect := connectLoad()
+				if connect == nil {
+					time.Sleep(time.Second)
+					connect = connectLoad()
+					if connect == nil {
+						return
+					}
+				}
+
+				rc, err := connect.(func() (net.Conn, error))()
+				if err != nil {
+					log.Printf("[tcptun] %v\n", err)
+					return
+				}
+				defer rc.Close()
+
+				if err = relay(rc, c); err != nil && !isTimeout(err) {
+					log.Printf("[tcptun] relay: %v\n", err)
+				}
+			}()
 		}
 	}()
 
@@ -92,39 +103,18 @@ func (tcptunService) Run(ctx ServiceCtx) {
 				continue
 			}
 			settings, s = s, settings
+			shouldUpdate := settings.ForwardAddr != s.ForwardAddr
 			if pl := services.ProxyList(settings.ProxyList...); !pl.Equals(proxyList) {
 				proxyList = pl
 				d, _ := proxyList.Dialer(direct)
 				dial = d.Dial
+				shouldUpdate = true
 			}
-		case c := <-cin:
-			connections[c] = true
-
-			dial := dial
-			forwardAddr := settings.ForwardAddr
-
-			cwg.Add(1)
-			go func() {
-				defer func() {
-					c.Close()
-					cout <- c
-					cwg.Done()
-				}()
-
-				rc, err := dial("tcp", forwardAddr)
-				if err != nil {
-					log.Printf("[tcptun] %v\n", err)
-					return
-				}
-				defer rc.Close()
-
-				_, _, err = relay(rc, c)
-				if err != nil && !isTimeout(err) {
-					log.Printf("[tcptun] relay: %v\n", err)
-				}
-			}()
-		case c := <-cout:
-			delete(connections, c)
+			if shouldUpdate {
+				dial := dial
+				addr := settings.ForwardAddr
+				connect.Store(func() (net.Conn, error) { return dial("tcp", addr) })
+			}
 		case <-ctx.Done:
 			return
 		}

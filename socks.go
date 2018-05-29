@@ -4,7 +4,7 @@ import (
 	"log"
 	"net"
 	"sync"
-	"time"
+	"sync/atomic"
 
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
@@ -18,51 +18,36 @@ type socksService struct{}
 
 func (socksService) Run(ctx ServiceCtx) {
 	log.Printf("[socks] listening on %v\n", ctx.Name)
-	listener, err := net.Listen("tcp", ctx.Name)
+	ln, err := net.Listen("tcp", ctx.Name)
 	if err != nil {
 		log.Printf("[socks] %v\n", err)
 		return
 	}
 	defer log.Printf("[socks] stopped listening on %v\n", ctx.Name)
 
-	var (
-		connections = make(map[net.Conn]bool)
-		cout        = make(chan net.Conn, 4)
-		cwg         sync.WaitGroup
-	)
-	defer func() {
-		now := time.Now()
-		for c := range connections {
-			c.SetDeadline(now)
-		}
-		go func() {
-			for range cout {
-			}
-		}()
-		cwg.Wait()
-		close(cout)
-	}()
+	var dial atomic.Value
+	dial.Store(direct.Dial)
 
-	var (
-		cin = make(chan net.Conn, 4)
-		lwg sync.WaitGroup
-	)
-	defer func() {
-		listener.Close()
-		go func() {
-			for c := range cin {
-				c.Close()
-			}
-		}()
-		lwg.Wait()
-		close(cin)
-	}()
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer ln.Close()
 
-	lwg.Add(1)
+	wg.Add(1)
 	go func() {
-		defer lwg.Done()
+		var connections struct {
+			sync.Map
+			sync.WaitGroup
+		}
+		defer func() {
+			connections.Range(func(key, _ interface{}) bool {
+				key.(net.Conn).Close()
+				return true
+			})
+			connections.Wait()
+			wg.Done()
+		}()
 		for {
-			c, err := listener.Accept()
+			c, err := ln.Accept()
 			if err != nil {
 				if isTemporary(err) {
 					continue
@@ -70,12 +55,35 @@ func (socksService) Run(ctx ServiceCtx) {
 				return
 			}
 			tcpKeepAlive(c, direct.KeepAlive)
-			cin <- c
+			connections.Store(c, struct{}{})
+			connections.Add(1)
+			go func() {
+				defer connections.Done()
+				defer connections.Delete(c)
+				defer c.Close()
+
+				addr, err := socks.Handshake(c)
+				if err != nil {
+					log.Printf("[socks] socks handshake: %v\n", err)
+					return
+				}
+
+				dial := dial.Load().(func(network, addr string) (net.Conn, error))
+				rc, err := dial("tcp", addr.String())
+				if err != nil {
+					log.Printf("[socks] %v\n", err)
+					return
+				}
+				defer rc.Close()
+
+				if err = relay(rc, c); err != nil && !isTimeout(err) {
+					log.Printf("[socks] relay: %v\n", err)
+				}
+			}()
 		}
 	}()
 
 	var (
-		dial      = direct.Dial
 		settings  socksSettings
 		proxyList ProxyList
 	)
@@ -95,41 +103,8 @@ func (socksService) Run(ctx ServiceCtx) {
 			if pl := services.ProxyList(settings.ProxyList...); !pl.Equals(proxyList) {
 				proxyList = pl
 				d, _ := proxyList.Dialer(direct)
-				dial = d.Dial
+				dial.Store(d.Dial)
 			}
-		case c := <-cin:
-			connections[c] = true
-
-			dial := dial
-
-			cwg.Add(1)
-			go func() {
-				defer func() {
-					c.Close()
-					cout <- c
-					cwg.Done()
-				}()
-
-				addr, err := socks.Handshake(c)
-				if err != nil {
-					log.Printf("[socks] socks handshake: %v\n", err)
-					return
-				}
-
-				rc, err := dial("tcp", addr.String())
-				if err != nil {
-					log.Printf("[socks] %v\n", err)
-					return
-				}
-				defer rc.Close()
-
-				_, _, err = relay(rc, c)
-				if err != nil && !isTimeout(err) {
-					log.Printf("[socks] relay: %v\n", err)
-				}
-			}()
-		case c := <-cout:
-			delete(connections, c)
 		case <-ctx.Done:
 			return
 		}

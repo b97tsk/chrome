@@ -36,27 +36,41 @@ func isTimeout(err error) bool {
 	return ok && e.Timeout()
 }
 
-// relay copies between left and right bidirectionally. Returns number of
-// bytes copied from right to left, from left to right, and any error occurred.
-func relay(left, right net.Conn) (int64, int64, error) {
-	type result struct {
-		N   int64
-		Err error
+func firstError(errors ...error) error {
+	for _, err := range errors {
+		if err != nil {
+			return err
+		}
 	}
-	ch := make(chan result)
+	return nil
+}
 
-	go func() {
-		n, err := io.Copy(right, left)
-		right.SetReadDeadline(time.Now())
-		ch <- result{n, err}
-	}()
-
-	n, err := io.Copy(left, right)
-	left.SetReadDeadline(time.Now())
-	res := <-ch
-
-	if err == nil {
-		err = res.Err
+func closeRead(c net.Conn) {
+	if cr, ok := c.(interface {
+		CloseRead() error
+	}); ok {
+		cr.CloseRead()
 	}
-	return n, res.N, err
+}
+
+func closeWrite(c net.Conn) {
+	if cw, ok := c.(interface {
+		CloseWrite() error
+	}); ok {
+		cw.CloseWrite()
+	}
+}
+
+func relay(left, right net.Conn) error {
+	wait := make(chan error, 1)
+	go func() { wait <- relayCopy(right, left) }()
+	err := relayCopy(left, right)
+	return firstError(err, <-wait)
+}
+
+func relayCopy(dst, src net.Conn) error {
+	_, err := io.Copy(dst, src)
+	closeRead(src)
+	closeWrite(dst)
+	return err
 }
