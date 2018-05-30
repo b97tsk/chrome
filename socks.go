@@ -9,20 +9,20 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type socksSettings struct {
+type socksOptions struct {
 	ProxyList ProxyNameList `yaml:"over"`
 }
 
 type socksService struct{}
 
 func (socksService) Run(ctx ServiceCtx) {
-	log.Printf("[socks] listening on %v\n", ctx.Name)
 	ln, err := net.Listen("tcp", ctx.Name)
 	if err != nil {
 		log.Printf("[socks] %v\n", err)
 		return
 	}
-	defer log.Printf("[socks] stopped listening on %v\n", ctx.Name)
+	log.Printf("[socks] listening on %v\n", ln.Addr())
+	defer log.Printf("[socks] stopped listening on %v\n", ln.Addr())
 
 	var dial atomic.Value
 	dial.Store(direct.Dial)
@@ -52,31 +52,33 @@ func (socksService) Run(ctx ServiceCtx) {
 	}()
 
 	var (
-		settings  socksSettings
+		// options  socksOptions
 		proxyList ProxyList
 	)
 	for {
 		select {
 		case data := <-ctx.Events:
-			if data == nil {
-				continue
-			}
-			var s socksSettings
-			bytes, _ := yaml.Marshal(data)
-			if err := yaml.UnmarshalStrict(bytes, &s); err != nil {
-				log.Printf("[socks] unmarshal: %v\n", err)
-				continue
-			}
-			settings, s = s, settings
-			if pl := services.ProxyList(settings.ProxyList...); !pl.Equals(proxyList) {
-				proxyList = pl
-				d, _ := proxyList.Dialer(direct)
-				dial.Store(d.Dial)
+			if new, ok := data.(socksOptions); ok {
+				// old := options
+				// options = new
+				if pl := services.ProxyList(new.ProxyList...); !pl.Equals(proxyList) {
+					proxyList = pl
+					d, _ := proxyList.Dialer(direct)
+					dial.Store(d.Dial)
+				}
 			}
 		case <-ctx.Done:
 			return
 		}
 	}
+}
+
+func (socksService) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options socksOptions
+	if err := yaml.UnmarshalStrict(text, &options); err != nil {
+		return nil, err
+	}
+	return options, nil
 }
 
 func init() {

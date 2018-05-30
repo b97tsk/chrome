@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type tcptunSettings struct {
+type tcptunOptions struct {
 	ForwardAddr string        `yaml:"for"`
 	ProxyList   ProxyNameList `yaml:"over"`
 }
@@ -17,13 +17,13 @@ type tcptunSettings struct {
 type tcptunService struct{}
 
 func (tcptunService) Run(ctx ServiceCtx) {
-	log.Printf("[tcptun] listening on %v\n", ctx.Name)
 	ln, err := net.Listen("tcp", ctx.Name)
 	if err != nil {
 		log.Printf("[tcptun] %v\n", err)
 		return
 	}
-	defer log.Printf("[tcptun] stopped listening on %v\n", ctx.Name)
+	log.Printf("[tcptun] listening on %v\n", ln.Addr())
+	defer log.Printf("[tcptun] stopped listening on %v\n", ln.Addr())
 
 	var connect atomic.Value
 
@@ -56,38 +56,40 @@ func (tcptunService) Run(ctx ServiceCtx) {
 
 	var (
 		dial      = direct.Dial
-		settings  tcptunSettings
+		options   tcptunOptions
 		proxyList ProxyList
 	)
 	for {
 		select {
 		case data := <-ctx.Events:
-			if data == nil {
-				continue
-			}
-			var s tcptunSettings
-			bytes, _ := yaml.Marshal(data)
-			if err := yaml.UnmarshalStrict(bytes, &s); err != nil {
-				log.Printf("[tcptun] unmarshal: %v\n", err)
-				continue
-			}
-			settings, s = s, settings
-			shouldUpdate := settings.ForwardAddr != s.ForwardAddr
-			if pl := services.ProxyList(settings.ProxyList...); !pl.Equals(proxyList) {
-				proxyList = pl
-				d, _ := proxyList.Dialer(direct)
-				dial = d.Dial
-				shouldUpdate = true
-			}
-			if shouldUpdate {
-				dial := dial
-				addr := settings.ForwardAddr
-				connect.Store(func() (net.Conn, error) { return dial("tcp", addr) })
+			if new, ok := data.(tcptunOptions); ok {
+				old := options
+				options = new
+				shouldUpdate := new.ForwardAddr != old.ForwardAddr
+				if pl := services.ProxyList(new.ProxyList...); !pl.Equals(proxyList) {
+					proxyList = pl
+					d, _ := proxyList.Dialer(direct)
+					dial = d.Dial
+					shouldUpdate = true
+				}
+				if shouldUpdate {
+					dial := dial
+					addr := new.ForwardAddr
+					connect.Store(func() (net.Conn, error) { return dial("tcp", addr) })
+				}
 			}
 		case <-ctx.Done:
 			return
 		}
 	}
+}
+
+func (tcptunService) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options tcptunOptions
+	if err := yaml.UnmarshalStrict(text, &options); err != nil {
+		return nil, err
+	}
+	return options, nil
 }
 
 func init() {

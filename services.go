@@ -18,6 +18,7 @@ const configFileName = "chrome.yaml"
 
 type Service interface {
 	Run(ServiceCtx)
+	UnmarshalOptions([]byte) (interface{}, error)
 }
 
 type ServiceCtx struct {
@@ -76,8 +77,14 @@ func (sm *ServiceManager) Add(name string, service Service) {
 	sm.services[name] = ServiceItem{name, service, nil}
 }
 
-func (sm *ServiceManager) sendData(service, name string, data interface{}) {
+func (sm *ServiceManager) setOptions(service, name string, data interface{}) {
 	if service, ok := sm.services[service]; ok {
+		text, _ := yaml.Marshal(data)
+		options, err := service.UnmarshalOptions(text)
+		if err != nil {
+			log.Printf("[services] loading %v: service %v: invalid options: %v\n", configFileName, service.Name, data)
+			return
+		}
 		job, ok := service.Jobs[name]
 		if !ok || !job.Active() {
 			ctx, cancel := context.WithCancel(context.TODO())
@@ -96,7 +103,7 @@ func (sm *ServiceManager) sendData(service, name string, data interface{}) {
 			service.Jobs[name] = job
 		}
 		sm.mu.Unlock()
-		job.SendData(data)
+		job.SendData(options)
 		sm.mu.Lock()
 		return
 	}
@@ -132,13 +139,12 @@ func (sm *ServiceManager) Load() {
 		Jobs    map[string]map[string]interface{} `yaml:",inline"`
 	}
 
-	err = yaml.UnmarshalStrict(data, &c)
-	if err != nil {
+	if err = yaml.UnmarshalStrict(data, &c); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFileName, err)
 		return
 	}
 
-	sm.sendData("logging", "logging", c.Logfile)
+	sm.setOptions("logging", "logging", c.Logfile)
 
 	for name, proxies := range sm.proxies {
 		if pl, ok := c.Proxies[name]; ok && pl.Equals(proxies) {
@@ -165,7 +171,7 @@ func (sm *ServiceManager) Load() {
 	}
 	for service, jobs := range c.Jobs {
 		for name, data := range jobs {
-			sm.sendData(service, name, data)
+			sm.setOptions(service, name, data)
 		}
 	}
 
