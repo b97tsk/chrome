@@ -12,6 +12,8 @@ import (
 )
 
 func main() {
+	var configFile string
+	flag.StringVar(&configFile, "conf", "chrome.yaml", "config file")
 	flag.Parse()
 
 	watcher, err := fsnotify.NewWatcher()
@@ -21,13 +23,13 @@ func main() {
 	}
 	defer watcher.Close()
 
-	err = watcher.Add(configFileName)
+	err = watcher.Add(configFile)
 	if err != nil {
 		log.Println("[watcher]", err)
 		return
 	}
 
-	services.Load()
+	services.Load(configFile)
 	defer services.Shutdown()
 
 	interrupt := make(chan os.Signal, 1)
@@ -42,7 +44,7 @@ func main() {
 				delay = time.After(1 * time.Second)
 			}
 		case <-delay:
-			services.Load()
+			services.Load(configFile)
 			delay = nil
 		case <-interrupt:
 			return

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io/ioutil"
 	"log"
@@ -13,8 +14,6 @@ import (
 	"golang.org/x/net/proxy"
 	"gopkg.in/yaml.v2"
 )
-
-const configFileName = "chrome.yaml"
 
 type Service interface {
 	Run(ServiceCtx)
@@ -77,13 +76,12 @@ func (sm *ServiceManager) Add(name string, service Service) {
 	sm.services[name] = ServiceItem{name, service, nil}
 }
 
-func (sm *ServiceManager) setOptions(service, name string, data interface{}) {
+func (sm *ServiceManager) setOptions(service, name string, data interface{}) error {
 	if service, ok := sm.services[service]; ok {
 		text, _ := yaml.Marshal(data)
 		options, err := service.UnmarshalOptions(text)
 		if err != nil {
-			log.Printf("[services] loading %v: service %v: invalid options: %v\n", configFileName, service.Name, data)
-			return
+			return fmt.Errorf("service %v: invalid options: %v", service.Name, data)
 		}
 		job, ok := service.Jobs[name]
 		if !ok || !job.Active() {
@@ -105,16 +103,16 @@ func (sm *ServiceManager) setOptions(service, name string, data interface{}) {
 		sm.mu.Unlock()
 		job.SendData(options)
 		sm.mu.Lock()
-		return
+		return nil
 	}
-	log.Printf("[services] loading %v: service %q not found\n", configFileName, service)
+	return fmt.Errorf("service %q not found", service)
 }
 
-func (sm *ServiceManager) Load() {
+func (sm *ServiceManager) Load(configFile string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	file, err := os.Open(configFileName)
+	file, err := os.Open(configFile)
 	if err != nil {
 		log.Printf("[services] %v\n", err)
 		return
@@ -123,7 +121,7 @@ func (sm *ServiceManager) Load() {
 
 	data, err := ioutil.ReadAll(file)
 	if err != nil {
-		log.Printf("[services] loading %v: %v\n", configFileName, err)
+		log.Printf("[services] loading %v: %v\n", configFile, err)
 		return
 	}
 
@@ -139,12 +137,14 @@ func (sm *ServiceManager) Load() {
 		Jobs    map[string]map[string]interface{} `yaml:",inline"`
 	}
 
-	if err = yaml.UnmarshalStrict(data, &c); err != nil {
-		log.Printf("[services] loading %v: %v\n", configFileName, err)
+	if err := yaml.UnmarshalStrict(data, &c); err != nil {
+		log.Printf("[services] loading %v: %v\n", configFile, err)
 		return
 	}
 
-	sm.setOptions("logging", "logging", c.Logfile)
+	if err := sm.setOptions("logging", "logging", c.Logfile); err != nil {
+		log.Printf("[services] loading %v: %v\n", configFile, err)
+	}
 
 	for name, proxies := range sm.proxies {
 		if pl, ok := c.Proxies[name]; ok && pl.Equals(proxies) {
@@ -171,11 +171,13 @@ func (sm *ServiceManager) Load() {
 	}
 	for service, jobs := range c.Jobs {
 		for name, data := range jobs {
-			sm.setOptions(service, name, data)
+			if err := sm.setOptions(service, name, data); err != nil {
+				log.Printf("[services] loading %v: %v\n", configFile, err)
+			}
 		}
 	}
 
-	log.Printf("[services] loaded %v\n", configFileName)
+	log.Printf("[services] loaded %v\n", configFile)
 }
 
 func (sm *ServiceManager) Shutdown() {
