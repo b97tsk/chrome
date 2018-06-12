@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -28,6 +29,8 @@ func main() {
 		log.Println("[watcher]", err)
 		return
 	}
+
+	os.Setenv("ConfigDir", filepath.Dir(configFile))
 
 	services.Load(configFile)
 	defer services.Shutdown()

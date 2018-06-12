@@ -41,7 +41,8 @@ func (loggingService) Run(ctx ServiceCtx) {
 						}
 					} else {
 						// log.Printf("[logging] opening %v\n", new.Logfile)
-						file, err := os.OpenFile(new.Logfile, os.O_APPEND|os.O_CREATE, 0644)
+						name := os.ExpandEnv(new.Logfile)
+						file, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE, 0644)
 						if err != nil {
 							log.Printf("[logging] %v", err)
 						} else {
