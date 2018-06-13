@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -81,7 +81,7 @@ func (sm *ServiceManager) setOptions(service, name string, data interface{}) err
 		text, _ := yaml.Marshal(data)
 		options, err := service.UnmarshalOptions(text)
 		if err != nil {
-			return fmt.Errorf("service %v: invalid options: %v", service.Name, data)
+			return fmt.Errorf("%v service: invalid options: %v", service.Name, data)
 		}
 		job, ok := service.Jobs[name]
 		if !ok || !job.Active() {
@@ -119,25 +119,17 @@ func (sm *ServiceManager) Load(configFile string) {
 	}
 	defer file.Close()
 
-	data, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Printf("[services] loading %v: %v\n", configFile, err)
-		return
-	}
-
-	hash := crc32.ChecksumIEEE(data)
+	digest := crc32.NewIEEE()
+	io.Copy(digest, file)
+	hash := digest.Sum32()
 	if hash == sm.hash {
 		return
 	}
 	sm.hash = hash
 
-	var c struct {
-		Logfile string `yaml:"logging"`
-		Proxies map[string]ProxyList
-		Jobs    map[string]map[string]interface{} `yaml:",inline"`
-	}
-
-	if err := yaml.UnmarshalStrict(data, &c); err != nil {
+	var c Config
+	file.Seek(0, io.SeekStart)
+	if err := c.Unmarshal(file); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
 		return
 	}
