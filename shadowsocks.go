@@ -14,7 +14,7 @@ import (
 type shadowsocksOptions struct {
 	Method    string
 	Password  string
-	ProxyList ProxyNameList `yaml:"over"`
+	ProxyList ProxyList `yaml:"over"`
 }
 
 type shadowsocksService struct{}
@@ -70,8 +70,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 	}()
 
 	var (
-		options   shadowsocksOptions
-		proxyList ProxyList
+		options shadowsocksOptions
 	)
 	for {
 		select {
@@ -86,9 +85,8 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 						cipher.Store(c)
 					}
 				}
-				if pl := services.ProxyList(new.ProxyList...); !pl.Equals(proxyList) {
-					proxyList = pl
-					d, _ := proxyList.Dialer(direct)
+				if !new.ProxyList.Equals(old.ProxyList) {
+					d, _ := new.ProxyList.Dialer(direct)
 					dial.Store(d.Dial)
 				}
 			}

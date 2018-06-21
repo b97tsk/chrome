@@ -55,7 +55,6 @@ func (job *ServiceJob) SendData(v interface{}) {
 type ServiceManager struct {
 	mu       sync.Mutex
 	hash     uint32
-	proxies  map[string]ProxyList
 	services map[string]ServiceItem
 }
 
@@ -67,7 +66,6 @@ type ServiceItem struct {
 
 func newServiceManager() *ServiceManager {
 	return &ServiceManager{
-		proxies:  make(map[string]ProxyList),
 		services: make(map[string]ServiceItem),
 	}
 }
@@ -136,16 +134,6 @@ func (sm *ServiceManager) Load(configFile string) {
 
 	if err := sm.setOptions("logging", "logging", c.Logfile); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
-	}
-
-	for name, proxies := range sm.proxies {
-		if pl, ok := c.Proxies[name]; ok && pl.Equals(proxies) {
-			continue
-		}
-		delete(sm.proxies, name)
-	}
-	for name, proxies := range c.Proxies {
-		sm.proxies[name] = proxies
 	}
 
 	for _, service := range sm.services {
@@ -258,36 +246,6 @@ func (pl *ProxyList) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 	return errors.New("invalid proxy list")
-}
-
-func (sm *ServiceManager) ProxyList(names ...string) (proxies ProxyList) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	for _, name := range names {
-		pl, ok := sm.proxies[name]
-		if !ok {
-			log.Printf("[services] proxy %q not found\n", name)
-			continue
-		}
-		proxies = append(proxies, pl...)
-	}
-	return
-}
-
-type ProxyNameList []string
-
-func (sl *ProxyNameList) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	var scalar string
-	if err := unmarshal(&scalar); err == nil {
-		*sl = []string{scalar}
-		return nil
-	}
-	var slice []string
-	if err := unmarshal(&slice); err == nil {
-		*sl = slice
-		return nil
-	}
-	return errors.New("invalid proxy name list")
 }
 
 var services = newServiceManager()

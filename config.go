@@ -10,7 +10,7 @@ import (
 
 type Config struct {
 	Logfile string `yaml:"logging"`
-	Proxies map[string]ProxyList
+	Aliases []interface{}
 	Jobs    map[string]map[string]interface{} `yaml:",inline"`
 }
 
@@ -38,16 +38,6 @@ func (c *Config) mergeWith(d Config) error {
 			return errors.New("duplicate logging")
 		}
 		c.Logfile = d.Logfile
-	}
-	if c.Proxies != nil {
-		for name, proxies := range d.Proxies {
-			if _, duplicated := c.Proxies[name]; duplicated {
-				return fmt.Errorf("duplicate proxy: %v", name)
-			}
-			c.Proxies[name] = proxies
-		}
-	} else {
-		c.Proxies = d.Proxies
 	}
 	if c.Jobs != nil {
 		for service, jobs := range d.Jobs {

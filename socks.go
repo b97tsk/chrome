@@ -10,7 +10,7 @@ import (
 )
 
 type socksOptions struct {
-	ProxyList ProxyNameList `yaml:"over"`
+	ProxyList ProxyList `yaml:"over"`
 }
 
 type socksService struct{}
@@ -52,18 +52,16 @@ func (socksService) Run(ctx ServiceCtx) {
 	}()
 
 	var (
-		// options  socksOptions
-		proxyList ProxyList
+		options socksOptions
 	)
 	for {
 		select {
 		case data := <-ctx.Events:
 			if new, ok := data.(socksOptions); ok {
-				// old := options
-				// options = new
-				if pl := services.ProxyList(new.ProxyList...); !pl.Equals(proxyList) {
-					proxyList = pl
-					d, _ := proxyList.Dialer(direct)
+				old := options
+				options = new
+				if !new.ProxyList.Equals(old.ProxyList) {
+					d, _ := new.ProxyList.Dialer(direct)
 					dial.Store(d.Dial)
 				}
 			}

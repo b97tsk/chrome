@@ -10,8 +10,8 @@ import (
 )
 
 type tcptunOptions struct {
-	ForwardAddr string        `yaml:"for"`
-	ProxyList   ProxyNameList `yaml:"over"`
+	ForwardAddr string    `yaml:"for"`
+	ProxyList   ProxyList `yaml:"over"`
 }
 
 type tcptunService struct{}
@@ -55,9 +55,8 @@ func (tcptunService) Run(ctx ServiceCtx) {
 	}()
 
 	var (
-		dial      = direct.Dial
-		options   tcptunOptions
-		proxyList ProxyList
+		dial    = direct.Dial
+		options tcptunOptions
 	)
 	for {
 		select {
@@ -66,9 +65,8 @@ func (tcptunService) Run(ctx ServiceCtx) {
 				old := options
 				options = new
 				shouldUpdate := new.ForwardAddr != old.ForwardAddr
-				if pl := services.ProxyList(new.ProxyList...); !pl.Equals(proxyList) {
-					proxyList = pl
-					d, _ := proxyList.Dialer(direct)
+				if !new.ProxyList.Equals(old.ProxyList) {
+					d, _ := new.ProxyList.Dialer(direct)
 					dial = d.Dial
 					shouldUpdate = true
 				}
