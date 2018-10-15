@@ -11,7 +11,7 @@ import (
 type Config struct {
 	Logfile string `yaml:"logging"`
 	Aliases []interface{}
-	Jobs    map[string]map[string]interface{} `yaml:",inline"`
+	Jobs    map[string]interface{} `yaml:",inline"`
 }
 
 func (c *Config) Unmarshal(r io.Reader) error {
@@ -40,18 +40,11 @@ func (c *Config) mergeWith(d Config) error {
 		c.Logfile = d.Logfile
 	}
 	if c.Jobs != nil {
-		for service, jobs := range d.Jobs {
-			jobsMerged := c.Jobs[service]
-			if jobsMerged == nil {
-				c.Jobs[service] = jobs
-				continue
+		for name, data := range d.Jobs {
+			if _, duplicated := c.Jobs[name]; duplicated {
+				return fmt.Errorf("duplicate: %v", name)
 			}
-			for name, data := range jobs {
-				if _, duplicated := jobsMerged[name]; duplicated {
-					return fmt.Errorf("duplicate %v service: %v", service, name)
-				}
-				jobsMerged[name] = data
-			}
+			c.Jobs[name] = data
 		}
 	} else {
 		c.Jobs = d.Jobs

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 
 	"golang.org/x/net/proxy"
@@ -21,15 +22,16 @@ type Service interface {
 }
 
 type ServiceCtx struct {
-	Name   string
-	Done   <-chan struct{}
-	Events <-chan interface{}
+	ListenAddr string
+	Done       <-chan struct{}
+	Events     <-chan interface{}
 }
 
 type ServiceJob struct {
-	Done   <-chan struct{}
-	Events chan<- interface{}
-	Cancel context.CancelFunc
+	ServiceName string
+	Done        <-chan struct{}
+	Events      chan<- interface{}
+	Cancel      context.CancelFunc
 }
 
 func (job *ServiceJob) Active() bool {
@@ -55,33 +57,34 @@ func (job *ServiceJob) SendData(v interface{}) {
 type ServiceManager struct {
 	mu       sync.Mutex
 	hash     uint32
-	services map[string]ServiceItem
-}
-
-type ServiceItem struct {
-	Name string
-	Service
-	Jobs map[string]ServiceJob
+	services map[string]Service
+	jobs     map[string]ServiceJob
 }
 
 func newServiceManager() *ServiceManager {
 	return &ServiceManager{
-		services: make(map[string]ServiceItem),
+		services: make(map[string]Service),
+		jobs:     make(map[string]ServiceJob),
 	}
 }
 
 func (sm *ServiceManager) Add(name string, service Service) {
-	sm.services[name] = ServiceItem{name, service, nil}
+	sm.services[name] = service
 }
 
-func (sm *ServiceManager) setOptions(service, name string, data interface{}) error {
-	if service, ok := sm.services[service]; ok {
+func (sm *ServiceManager) setOptions(name string, data interface{}) error {
+	fields := strings.SplitN(name, "|", 3)
+	if len(fields) != 3 {
+		return fmt.Errorf("ignore %v", name)
+	}
+	serviceName, listenAddr := fields[0], fields[1]+":"+fields[2]
+	if service, ok := sm.services[serviceName]; ok {
 		text, _ := yaml.Marshal(data)
 		options, err := service.UnmarshalOptions(text)
 		if err != nil {
-			return fmt.Errorf("%v service: invalid options: %v", service.Name, data)
+			return fmt.Errorf("invalid options in %v", name)
 		}
-		job, ok := service.Jobs[name]
+		job, ok := sm.jobs[name]
 		if !ok || !job.Active() {
 			ctx, cancel := context.WithCancel(context.TODO())
 			done := make(chan struct{})
@@ -89,21 +92,17 @@ func (sm *ServiceManager) setOptions(service, name string, data interface{}) err
 			go func() {
 				defer cancel()
 				defer close(done)
-				service.Run(ServiceCtx{name, ctx.Done(), events})
+				service.Run(ServiceCtx{listenAddr, ctx.Done(), events})
 			}()
-			if service.Jobs == nil {
-				service.Jobs = make(map[string]ServiceJob)
-				sm.services[service.Name] = service
-			}
-			job = ServiceJob{done, events, cancel}
-			service.Jobs[name] = job
+			job = ServiceJob{serviceName, done, events, cancel}
+			sm.jobs[name] = job
 		}
 		sm.mu.Unlock()
 		job.SendData(options)
 		sm.mu.Lock()
 		return nil
 	}
-	return fmt.Errorf("service %q not found", service)
+	return fmt.Errorf("service %q not found", serviceName)
 }
 
 func (sm *ServiceManager) Load(configFile string) {
@@ -132,28 +131,24 @@ func (sm *ServiceManager) Load(configFile string) {
 		return
 	}
 
-	if err := sm.setOptions("logging", "logging", c.Logfile); err != nil {
+	if err := sm.setOptions("logging||", c.Logfile); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
 	}
 
-	for _, service := range sm.services {
-		if service.Name == "logging" {
+	for name, job := range sm.jobs {
+		if job.ServiceName == "logging" {
 			continue
 		}
-		for name, job := range service.Jobs {
-			if _, ok := c.Jobs[service.Name][name]; ok {
-				continue
-			}
-			job.Cancel()
-			<-job.Done
-			delete(service.Jobs, name)
+		if _, ok := c.Jobs[name]; ok {
+			continue
 		}
+		job.Cancel()
+		<-job.Done
+		delete(sm.jobs, name)
 	}
-	for service, jobs := range c.Jobs {
-		for name, data := range jobs {
-			if err := sm.setOptions(service, name, data); err != nil {
-				log.Printf("[services] loading %v: %v\n", configFile, err)
-			}
+	for name, data := range c.Jobs {
+		if err := sm.setOptions(name, data); err != nil {
+			log.Printf("[services] loading %v: %v\n", configFile, err)
 		}
 	}
 
@@ -164,26 +159,26 @@ func (sm *ServiceManager) Shutdown() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	loggingService := sm.services["logging"]
-	delete(sm.services, "logging")
-
-	for _, service := range sm.services {
-		for _, job := range service.Jobs {
+	for _, job := range sm.jobs {
+		if job.ServiceName != "logging" {
 			job.Cancel()
 		}
 	}
-
-	for _, service := range sm.services {
-		for _, job := range service.Jobs {
+	for _, job := range sm.jobs {
+		if job.ServiceName != "logging" {
 			<-job.Done
 		}
 	}
 
-	for _, job := range loggingService.Jobs {
-		job.Cancel()
+	for _, job := range sm.jobs {
+		if job.ServiceName == "logging" {
+			job.Cancel()
+		}
 	}
-	for _, job := range loggingService.Jobs {
-		<-job.Done
+	for _, job := range sm.jobs {
+		if job.ServiceName == "logging" {
+			<-job.Done
+		}
 	}
 }
 

@@ -20,7 +20,7 @@ type shadowsocksOptions struct {
 type shadowsocksService struct{}
 
 func (shadowsocksService) Run(ctx ServiceCtx) {
-	ln, err := net.Listen("tcp", ctx.Name)
+	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[shadowsocks] %v\n", err)
 		return

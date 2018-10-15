@@ -16,7 +16,7 @@ type socksOptions struct {
 type socksService struct{}
 
 func (socksService) Run(ctx ServiceCtx) {
-	ln, err := net.Listen("tcp", ctx.Name)
+	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[socks] %v\n", err)
 		return
@@ -80,5 +80,7 @@ func (socksService) UnmarshalOptions(text []byte) (interface{}, error) {
 }
 
 func init() {
-	services.Add("socks", socksService{})
+	var service socksService
+	services.Add("socks", service)
+	services.Add("socks5", service)
 }

@@ -18,7 +18,7 @@ type httpfsOptions struct {
 type httpfsService struct{}
 
 func (httpfsService) Run(ctx ServiceCtx) {
-	ln, err := net.Listen("tcp", ctx.Name)
+	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[httpfs] %v\n", err)
 		return

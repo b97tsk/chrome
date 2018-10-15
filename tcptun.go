@@ -17,7 +17,7 @@ type tcptunOptions struct {
 type tcptunService struct{}
 
 func (tcptunService) Run(ctx ServiceCtx) {
-	ln, err := net.Listen("tcp", ctx.Name)
+	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[tcptun] %v\n", err)
 		return
