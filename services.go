@@ -124,9 +124,17 @@ func (sm *ServiceManager) Load(configFile string) {
 	}
 	sm.hash = hash
 
-	var c Config
+	var c struct {
+		Logfile string `yaml:"logging"`
+		Aliases []interface{}
+		Jobs    map[string]interface{} `yaml:",inline"`
+	}
+
+	dec := yaml.NewDecoder(file)
+	dec.SetStrict(true)
 	file.Seek(0, io.SeekStart)
-	if err := c.Unmarshal(file); err != nil {
+
+	if err := dec.Decode(&c); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
 		return
 	}
