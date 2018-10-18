@@ -90,6 +90,10 @@ func (tcptunService) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
+func (tcptunService) StandardName() string {
+	return "tcptun"
+}
+
 func init() {
 	services.Add("tcptun", tcptunService{})
 }

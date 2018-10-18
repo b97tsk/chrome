@@ -104,6 +104,10 @@ func (shadowsocksService) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
+func (shadowsocksService) StandardName() string {
+	return "shadowsocks"
+}
+
 func init() {
 	services.Add("shadowsocks", shadowsocksService{})
 }

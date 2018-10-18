@@ -81,6 +81,10 @@ func (httpfsService) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
+func (httpfsService) StandardName() string {
+	return "httpfs"
+}
+
 func init() {
 	services.Add("httpfs", httpfsService{})
 }

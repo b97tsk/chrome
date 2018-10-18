@@ -19,6 +19,7 @@ import (
 type Service interface {
 	Run(ServiceCtx)
 	UnmarshalOptions([]byte) (interface{}, error)
+	StandardName() string
 }
 
 type ServiceCtx struct {
@@ -79,11 +80,16 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 	}
 	serviceName, listenAddr := fields[0], fields[1]+":"+fields[2]
 	if service, ok := sm.services[serviceName]; ok {
+		serviceName = service.StandardName()
+		fields[0] = serviceName
+		name = strings.Join(fields, "|")
+
 		text, _ := yaml.Marshal(data)
 		options, err := service.UnmarshalOptions(text)
 		if err != nil {
 			return fmt.Errorf("invalid options in %v", name)
 		}
+
 		job, ok := sm.jobs[name]
 		if !ok || !job.Active() {
 			ctx, cancel := context.WithCancel(context.TODO())
@@ -97,6 +103,7 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 			job = ServiceJob{serviceName, done, events, cancel}
 			sm.jobs[name] = job
 		}
+
 		sm.mu.Unlock()
 		job.SendData(options)
 		sm.mu.Lock()

@@ -86,6 +86,10 @@ func (vmessService) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
+func (vmessService) StandardName() string {
+	return "vmess"
+}
+
 func init() {
 	services.Add("vmess", vmessService{})
 }

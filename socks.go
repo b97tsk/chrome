@@ -81,6 +81,10 @@ func (socksService) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
+func (socksService) StandardName() string {
+	return "socks"
+}
+
 func init() {
 	var service socksService
 	services.Add("socks", service)
