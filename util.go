@@ -1,11 +1,9 @@
 package main
 
 import (
-	"context"
 	"encoding/base64"
 	"io"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -75,43 +73,4 @@ func relayCopy(dst, src net.Conn) error {
 	closeRead(src)
 	closeWrite(dst)
 	return err
-}
-
-func serve(ln net.Listener, handle func(net.Conn)) context.Context {
-	ctx, cancel := context.WithCancel(context.TODO())
-	go func() {
-		var connections struct {
-			sync.Map
-			sync.WaitGroup
-		}
-		defer func() {
-			connections.Range(func(key, _ interface{}) bool {
-				key.(net.Conn).Close()
-				return true
-			})
-			connections.Wait()
-			cancel()
-		}()
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				if isTemporary(err) {
-					continue
-				}
-				return
-			}
-			tcpKeepAlive(c, direct.KeepAlive)
-			connections.Store(c, struct{}{})
-			connections.Add(1)
-			go func() {
-				defer func() {
-					c.Close()
-					connections.Delete(c)
-					connections.Done()
-				}()
-				handle(c)
-			}()
-		}
-	}()
-	return ctx
 }

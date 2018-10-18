@@ -27,6 +27,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 	}
 	log.Printf("[shadowsocks] listening on %v\n", ln.Addr())
 	defer log.Printf("[shadowsocks] stopped listening on %v\n", ln.Addr())
+	defer ln.Close()
 
 	var (
 		dial   atomic.Value
@@ -34,7 +35,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 	)
 	dial.Store(direct.Dial)
 
-	serving := serve(ln, func(c net.Conn) {
+	services.ServeListener(ln, func(c net.Conn) {
 		cipherLoad := cipher.Load
 		cipher := cipherLoad()
 		if cipher == nil {
@@ -64,10 +65,6 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 			log.Printf("[shadowsocks] relay: %v\n", err)
 		}
 	})
-	defer func() {
-		ln.Close()
-		<-serving.Done()
-	}()
 
 	var (
 		options shadowsocksOptions

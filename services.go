@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"io"
 	"log"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -56,10 +57,14 @@ func (job *ServiceJob) SendData(v interface{}) {
 }
 
 type ServiceManager struct {
-	mu       sync.Mutex
-	hash     uint32
-	services map[string]Service
-	jobs     map[string]ServiceJob
+	mu          sync.Mutex
+	hash        uint32
+	services    map[string]Service
+	jobs        map[string]ServiceJob
+	connections struct {
+		sync.Map
+		sync.WaitGroup
+	}
 }
 
 func newServiceManager() *ServiceManager {
@@ -170,6 +175,31 @@ func (sm *ServiceManager) Load(configFile string) {
 	log.Printf("[services] loaded %v\n", configFile)
 }
 
+func (sm *ServiceManager) ServeListener(ln net.Listener, handle func(net.Conn)) {
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				if isTemporary(err) {
+					continue
+				}
+				return
+			}
+			tcpKeepAlive(c, direct.KeepAlive)
+			sm.connections.Store(c, struct{}{})
+			sm.connections.Add(1)
+			go func() {
+				defer func() {
+					c.Close()
+					sm.connections.Delete(c)
+					sm.connections.Done()
+				}()
+				handle(c)
+			}()
+		}
+	}()
+}
+
 func (sm *ServiceManager) Shutdown() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -195,6 +225,12 @@ func (sm *ServiceManager) Shutdown() {
 			<-job.Done
 		}
 	}
+
+	sm.connections.Range(func(key, _ interface{}) bool {
+		key.(net.Conn).Close()
+		return true
+	})
+	sm.connections.Wait()
 }
 
 type Proxy struct {

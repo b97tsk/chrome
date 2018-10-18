@@ -25,11 +25,12 @@ func (socksService) Run(ctx ServiceCtx) {
 	}
 	log.Printf("[socks] listening on %v\n", ln.Addr())
 	defer log.Printf("[socks] stopped listening on %v\n", ln.Addr())
+	defer ln.Close()
 
 	var dial atomic.Value
 	dial.Store(direct.Dial)
 
-	serving := serve(ln, func(c net.Conn) {
+	services.ServeListener(ln, func(c net.Conn) {
 		addr, err := socks.Handshake(c)
 		if err != nil {
 			log.Printf("[socks] socks handshake: %v\n", err)
@@ -48,10 +49,6 @@ func (socksService) Run(ctx ServiceCtx) {
 			log.Printf("[socks] relay: %v\n", err)
 		}
 	})
-	defer func() {
-		ln.Close()
-		<-serving.Done()
-	}()
 
 	var (
 		options socksOptions

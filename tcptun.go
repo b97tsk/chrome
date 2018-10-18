@@ -24,10 +24,11 @@ func (tcptunService) Run(ctx ServiceCtx) {
 	}
 	log.Printf("[tcptun] listening on %v\n", ln.Addr())
 	defer log.Printf("[tcptun] stopped listening on %v\n", ln.Addr())
+	defer ln.Close()
 
 	var connect atomic.Value
 
-	serving := serve(ln, func(c net.Conn) {
+	services.ServeListener(ln, func(c net.Conn) {
 		connectLoad := connect.Load
 		connect := connectLoad()
 		if connect == nil {
@@ -49,10 +50,6 @@ func (tcptunService) Run(ctx ServiceCtx) {
 			log.Printf("[tcptun] relay: %v\n", err)
 		}
 	})
-	defer func() {
-		ln.Close()
-		<-serving.Done()
-	}()
 
 	var (
 		dial    = direct.Dial
