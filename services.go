@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -149,6 +151,27 @@ func (sm *ServiceManager) Load(configFile string) {
 	if err := dec.Decode(&c); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
 		return
+	}
+
+	for name, data := range c.Jobs {
+		if r := reNumberPlus.FindStringIndex(name); r != nil {
+			head, tail := name[:r[0]], name[r[1]:]
+			s := reNumberPlus.FindStringSubmatch(name[r[0]:r[1]])
+			x, _ := strconv.Atoi(s[1])
+			if s[2] != "" {
+				n, _ := strconv.Atoi(s[2])
+				for i := 0; i <= n; i++ {
+					c.Jobs[head+strconv.Itoa(x)+tail] = data
+					x++
+				}
+			} else {
+				for _, data := range data.([]interface{}) {
+					c.Jobs[head+strconv.Itoa(x)+tail] = data
+					x++
+				}
+			}
+			delete(c.Jobs, name)
+		}
 	}
 
 	if err := sm.setOptions("logging||", c.Logfile); err != nil {
@@ -295,3 +318,5 @@ func (pl *ProxyList) UnmarshalYAML(unmarshal func(interface{}) error) error {
 }
 
 var services = newServiceManager()
+
+var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)
