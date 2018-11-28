@@ -85,38 +85,42 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 	if len(fields) != 3 {
 		return fmt.Errorf("ignore %v", name)
 	}
+
 	serviceName, listenAddr := fields[0], fields[1]+":"+fields[2]
-	if service, ok := sm.services[serviceName]; ok {
-		serviceName = service.StandardName()
-		fields[0] = serviceName
-		name = strings.Join(fields, "|")
-
-		text, _ := yaml.Marshal(data)
-		options, err := service.UnmarshalOptions(text)
-		if err != nil {
-			return fmt.Errorf("invalid options in %v", name)
-		}
-
-		job, ok := sm.jobs[name]
-		if !ok || !job.Active() {
-			ctx, cancel := context.WithCancel(context.TODO())
-			done := make(chan struct{})
-			events := make(chan interface{})
-			go func() {
-				defer cancel()
-				defer close(done)
-				service.Run(ServiceCtx{listenAddr, ctx.Done(), events})
-			}()
-			job = ServiceJob{serviceName, done, events, cancel}
-			sm.jobs[name] = job
-		}
-
-		sm.mu.Unlock()
-		job.SendData(options)
-		sm.mu.Lock()
-		return nil
+	service, ok := sm.services[serviceName]
+	if !ok {
+		return fmt.Errorf("service %q not found", serviceName)
 	}
-	return fmt.Errorf("service %q not found", serviceName)
+
+	serviceName = service.StandardName()
+	fields[0] = serviceName
+	name = strings.Join(fields, "|")
+
+	text, _ := yaml.Marshal(data)
+	options, err := service.UnmarshalOptions(text)
+	if err != nil {
+		return fmt.Errorf("invalid options in %v", name)
+	}
+
+	job, ok := sm.jobs[name]
+	if !ok || !job.Active() {
+		ctx, cancel := context.WithCancel(context.TODO())
+		done := make(chan struct{})
+		events := make(chan interface{})
+		go func() {
+			defer cancel()
+			defer close(done)
+			service.Run(ServiceCtx{listenAddr, ctx.Done(), events})
+		}()
+		job = ServiceJob{serviceName, done, events, cancel}
+		sm.jobs[name] = job
+	}
+
+	sm.mu.Unlock()
+	job.SendData(options)
+	sm.mu.Lock()
+
+	return nil
 }
 
 func (sm *ServiceManager) Load(configFile string) {
