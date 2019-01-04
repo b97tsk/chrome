@@ -45,7 +45,7 @@ func (socksService) Run(ctx ServiceCtx) {
 		}
 		defer rc.Close()
 
-		if err = relay(rc, c); err != nil && !isTimeout(err) {
+		if err = relay(rc, c); err != nil {
 			log.Printf("[socks] relay: %v\n", err)
 		}
 	})

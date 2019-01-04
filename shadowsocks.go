@@ -61,7 +61,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 		}
 		defer rc.Close()
 
-		if err = relay(rc, c); err != nil && !isTimeout(err) {
+		if err = relay(rc, c); err != nil {
 			log.Printf("[shadowsocks] relay: %v\n", err)
 		}
 	})

@@ -36,41 +36,24 @@ func isTimeout(err error) bool {
 	return ok && e.Timeout()
 }
 
-func firstError(errors ...error) error {
-	for _, err := range errors {
-		if err != nil {
-			return err
-		}
+func relay(left, right net.Conn) error {
+	c := make(chan error, 2)
+	go func() {
+		_, err := io.Copy(left, right)
+		c <- err
+		left.SetReadDeadline(time.Now())
+	}()
+	go func() {
+		_, err := io.Copy(right, left)
+		c <- err
+		right.SetReadDeadline(time.Now())
+	}()
+	e1, e2 := <-c, <-c
+	if e1 != nil && !isTimeout(e1) {
+		return e1
+	}
+	if e2 != nil && !isTimeout(e2) {
+		return e2
 	}
 	return nil
-}
-
-func closeRead(c net.Conn) {
-	if cr, ok := c.(interface {
-		CloseRead() error
-	}); ok {
-		cr.CloseRead()
-	}
-}
-
-func closeWrite(c net.Conn) {
-	if cw, ok := c.(interface {
-		CloseWrite() error
-	}); ok {
-		cw.CloseWrite()
-	}
-}
-
-func relay(left, right net.Conn) error {
-	wait := make(chan error, 1)
-	go func() { wait <- relayCopy(right, left) }()
-	err := relayCopy(left, right)
-	return firstError(err, <-wait)
-}
-
-func relayCopy(dst, src net.Conn) error {
-	_, err := io.Copy(dst, src)
-	closeRead(src)
-	closeWrite(dst)
-	return err
 }
