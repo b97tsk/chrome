@@ -29,6 +29,10 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 	defer log.Printf("[shadowsocks] stopped listening on %v\n", ln.Addr())
 	defer ln.Close()
 
+	type Cipher struct {
+		core.Cipher
+	}
+
 	var (
 		dial   atomic.Value
 		cipher atomic.Value
@@ -46,7 +50,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 			}
 		}
 
-		c = cipher.(core.Cipher).StreamConn(c)
+		c = cipher.(Cipher).StreamConn(c)
 		addr, err := socks.ReadAddr(c)
 		if err != nil {
 			log.Printf("[shadowsocks] read addr: %v\n", err)
@@ -79,7 +83,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 					if c, err := core.PickCipher(new.Method, nil, new.Password); err != nil {
 						log.Printf("[shadowsocks] pick cipher: %v\n", err)
 					} else {
-						cipher.Store(c)
+						cipher.Store(Cipher{c})
 					}
 				}
 				if !new.ProxyList.Equals(old.ProxyList) {
