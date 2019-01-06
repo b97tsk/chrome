@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -108,6 +109,14 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 		done := make(chan struct{})
 		events := make(chan interface{})
 		go func() {
+			defer func() {
+				if err := recover(); err != nil {
+					log.Printf(
+						"[services] job %q panic: %v\n%v\n",
+						name, err, string(debug.Stack()),
+					)
+				}
+			}()
 			defer cancel()
 			defer close(done)
 			service.Run(ServiceCtx{listenAddr, ctx.Done(), events})
