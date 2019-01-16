@@ -16,7 +16,7 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/net/proxy"
+	"github.com/b97tsk/chrome/internal/proxy"
 	"gopkg.in/yaml.v2"
 )
 

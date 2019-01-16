@@ -1,0 +1,13 @@
+package proxy
+
+import (
+	"encoding/base64"
+)
+
+func decodeBase64String(s string) ([]byte, error) {
+	enc := base64.StdEncoding
+	if len(s)%4 != 0 {
+		enc = base64.RawStdEncoding
+	}
+	return enc.DecodeString(s)
+}
