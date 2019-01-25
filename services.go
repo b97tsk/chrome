@@ -87,7 +87,7 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 		return fmt.Errorf("ignore %v", name)
 	}
 
-	serviceName, listenAddr := fields[0], fields[1]+":"+fields[2]
+	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
 	service, ok := sm.services[serviceName]
 	if !ok {
 		return fmt.Errorf("service %q not found", serviceName)
