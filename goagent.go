@@ -228,6 +228,7 @@ func (h *goagentHandler) SetAppIDList(appIDList []string) {
 		return
 	}
 
+	// Keep currently in used appID at the beginning.
 	for i, appID := range h.appIDList {
 		if appID == appIDInUsed {
 			if i != 0 {
@@ -250,7 +251,7 @@ func (h *goagentHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		_, port, err := net.SplitHostPort(req.RequestURI)
-		if err == nil && port == "80" {
+		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
 			rw.WriteHeader(http.StatusOK)
 			rw.(http.Flusher).Flush()
 
@@ -286,6 +287,7 @@ func (h *goagentHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Enable transparent http proxy.
 	if req.URL.Scheme == "" {
 		if req.TLS != nil && req.ProtoMajor == 1 {
 			req.URL.Scheme = "https"
@@ -306,8 +308,9 @@ func (h *goagentHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	h.autoRange(req, resp)
+
 	appID := appIDFromRequest(resp.Request)
-	autoRangeStarted := h.autoRange(req, resp)
 	log.Printf("[goagent] (%v) %v %v: %v\n", appID, req.Method, req.URL, resp.Status)
 
 	for key, values := range resp.Header {
@@ -325,11 +328,7 @@ func (h *goagentHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	resp.Body.Close()
 
 	if err != nil {
-		if autoRangeStarted {
-			log.Printf("[goagent] (%v) AUTORANGE %v: %v\n", appID, req.URL, err)
-		} else {
-			log.Printf("[goagent] (%v) RECV %v: %v\n", appID, req.URL, err)
-		}
+		log.Printf("[goagent] (%v) RECV %v: %v\n", appID, req.URL, err)
 	}
 }
 
@@ -422,7 +421,8 @@ func (h *goagentHandler) autoRange(req *http.Request, resp *http.Response) (yes 
 	}
 
 	shallowCopy := *resp
-	resp.Body = goagentNewAutoRangeBody(h, req, &shallowCopy, requestRangeFirst, requestRangeLast)
+	bodySize := contentRangeLast - contentRangeFirst + 1
+	resp.Body = goagentNewAutoRangeBody(h, req, &shallowCopy, bodySize, requestRangeFirst, requestRangeLast)
 	resp.ContentLength = requestRangeLast - requestRangeFirst + 1
 	resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	if requestRange != nil {
@@ -551,6 +551,7 @@ func (h *goagentHandler) putBadAppID(badAppID string) {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
 
+	// Try to remove badAppID from h.appIDList.
 	appIDList := h.appIDList[:0]
 	for _, appID := range h.appIDList {
 		if appID != badAppID {
@@ -565,28 +566,55 @@ func (h *goagentHandler) putBadAppID(badAppID string) {
 	h.badAppIDList = append(h.badAppIDList, badAppID)
 
 	if len(h.appIDList) == 0 {
+		// Swap both lists, start over again.
 		h.appIDList, h.badAppIDList = h.badAppIDList, h.appIDList
 		shuffleAppIDList(h.appIDList)
 	}
 }
 
 type goagentAutoRangeBody struct {
-	h          *goagentHandler
-	req        *http.Request
-	resp       *http.Response
-	rangeFirst int64
-	rangeLast  int64
-	readSize   int64
-	err        error
+	h       *goagentHandler
+	req     *http.Request
+	resp    *http.Response
+	reqlist []*goagentAutoRangeRequest
+	err     error
 }
 
-func goagentNewAutoRangeBody(h *goagentHandler, req *http.Request, resp *http.Response, rangeFirst, rangeLast int64) *goagentAutoRangeBody {
+func goagentNewAutoRangeBody(
+	h *goagentHandler, req *http.Request, resp *http.Response,
+	bodySize, rangeFirst, rangeLast int64,
+) *goagentAutoRangeBody {
+	reqlist := []*goagentAutoRangeRequest{
+		&goagentAutoRangeRequest{
+			h:          h,
+			req:        req,
+			resp:       resp,
+			rangeFirst: rangeFirst,
+			rangeLast:  rangeFirst + bodySize - 1,
+		},
+	}
+
+	rangeFirst += bodySize
+	for rangeFirst <= rangeLast {
+		size := rangeLast - rangeFirst + 1
+		if size > perRequestSize {
+			size = perRequestSize
+		}
+		reqlist = append(reqlist, &goagentAutoRangeRequest{
+			h:          h,
+			req:        req,
+			resp:       nil,
+			rangeFirst: rangeFirst,
+			rangeLast:  rangeFirst + size - 1,
+		})
+		rangeFirst += size
+	}
+
 	return &goagentAutoRangeBody{
-		h:          h,
-		req:        req,
-		resp:       resp,
-		rangeFirst: rangeFirst,
-		rangeLast:  rangeLast,
+		h:       h,
+		req:     req,
+		resp:    resp,
+		reqlist: reqlist,
 	}
 }
 
@@ -594,61 +622,197 @@ func (b *goagentAutoRangeBody) Read(p []byte) (n int, err error) {
 	if b.err != nil {
 		return 0, b.err
 	}
-	n, err = b.resp.Body.Read(p)
-	if n > 0 {
-		b.readSize += int64(n)
-		b.rangeFirst += int64(n)
-	}
-	if err == nil {
-		return
-	}
-	if err != io.EOF {
-		b.err = err
-		return
-	}
-	appID := appIDFromRequest(b.resp.Request)
-	log.Printf("[goagent] (%v) AUTORANGE %v: recv %v bytes\n", appID, b.req.URL, b.readSize)
-	if b.rangeFirst > b.rangeLast {
-		b.err = io.EOF
-		return
-	}
-	const (
-		NRetries = 3
-		MaxSize  = 4 * 1024 * 1024
-	)
-	rangeFirst, rangeLast := b.rangeFirst, b.rangeLast
-	if rangeLast-rangeFirst+1 > MaxSize {
-		rangeLast = rangeFirst + MaxSize - 1
-	}
-	oldRange := b.req.Header.Get("Range")
-	defer setOrDeleteHeader(b.req.Header, "Range", oldRange)
-	b.req.Header.Set("Range", fmt.Sprintf("bytes=%v-%v", rangeFirst, rangeLast))
-	for i := 0; i < NRetries; i++ {
-		resp, err := b.h.roundTrip(b.req)
-		if err != nil {
-			if i+1 == NRetries || isRequestCanceled(b.req) {
-				b.err = err
-				return n, err
+	for i, req := range b.reqlist {
+		n, err = req.Read(p)
+		if err == nil {
+			if i+1 < len(b.reqlist) && req.AlmostComplete() {
+				// Start next range request in advance.
+				b.reqlist[i+1].Init()
 			}
-			continue
-		}
-		b.resp.Body.Close()
-		b.resp = resp
-		b.readSize = 0
-		if resp.StatusCode != http.StatusPartialContent {
-			if i+1 == NRetries || isRequestCanceled(b.req) {
-				b.err = fmt.Errorf("request bytes=%v-%v: %v", rangeFirst, rangeLast, resp.Status)
-				return n, b.err
+			if i > 0 {
+				// Remove finished requests.
+				b.reqlist = b.reqlist[i:]
 			}
-			continue
+			return
 		}
-		return n, nil
+		if err != io.EOF {
+			b.err = err
+			return
+		}
+		if n > 0 {
+			if i+1 == len(b.reqlist) { // Final request?
+				b.err = io.EOF
+				return
+			}
+			// No, we have more.
+			// Remove finished requests.
+			b.reqlist = b.reqlist[i+1:]
+			return n, nil
+		}
 	}
-	panic("should not happen")
+	b.err = io.EOF
+	return 0, b.err
 }
 
 func (b *goagentAutoRangeBody) Close() error {
 	return b.resp.Body.Close()
+}
+
+type goagentAutoRangeRequest struct {
+	h          *goagentHandler
+	req        *http.Request
+	resp       *http.Response
+	rangeFirst int64
+	rangeLast  int64
+
+	once      sync.Once
+	done      chan struct{}
+	buffers   chan []byte
+	startTime time.Time
+	readSize  int64
+	buf       []byte
+	err       atomic.Value
+}
+
+func (r *goagentAutoRangeRequest) Init() {
+	r.once.Do(r.init)
+}
+
+func (r *goagentAutoRangeRequest) init() {
+	r.done = make(chan struct{})
+	r.buffers = make(chan []byte, 1)
+	r.startTime = time.Now()
+	go func() {
+		defer close(r.done)
+
+		requestSize := r.rangeLast - r.rangeFirst + 1
+		if requestSize > perRequestSize {
+			r.buf = make([]byte, requestSize)
+		} else {
+			r.buf = reqBufferPool.Get().([]byte)
+		}
+		buf := r.buf[:requestSize]
+
+		readResponse := func(resp *http.Response) {
+			for len(buf) > 0 {
+				n, err := resp.Body.Read(buf)
+				if n > 0 {
+					for b := buf[:n]; b != nil; {
+						select {
+						case r.buffers <- b:
+							b = nil
+						case buf := <-r.buffers:
+							b = buf[:len(buf)+len(b)]
+						}
+					}
+					buf = buf[n:]
+				}
+				if err != nil {
+					break
+				}
+			}
+		}
+
+		if r.resp != nil { // Handle first response.
+			readResponse(r.resp)
+			r.resp.Body.Close()
+			if len(buf) == 0 {
+				r.err.Store(&io.EOF)
+				return
+			}
+			if isRequestCanceled(r.req) {
+				r.err.Store(&context.Canceled)
+				return
+			}
+		}
+
+		const NRetries = 3
+		req := copyRequestAndHeader(r.req)
+		for i := 0; i < NRetries; i++ {
+			rangeFirst, rangeLast := r.rangeLast-int64(len(buf))+1, r.rangeLast
+			req.Header.Set("Range", fmt.Sprintf("bytes=%v-%v", rangeFirst, rangeLast))
+			resp, err := r.h.roundTrip(req)
+			if err != nil {
+				if i+1 == NRetries || isRequestCanceled(req) {
+					r.err.Store(&err)
+					return
+				}
+				continue
+			}
+			if resp.StatusCode != http.StatusPartialContent {
+				resp.Body.Close()
+				if i+1 == NRetries || isRequestCanceled(req) {
+					err := errors.New(resp.Status)
+					r.err.Store(&err)
+					return
+				}
+				continue
+			}
+			readResponse(resp)
+			resp.Body.Close()
+			if len(buf) == 0 {
+				r.err.Store(&io.EOF)
+				return
+			}
+			if isRequestCanceled(req) {
+				r.err.Store(&context.Canceled)
+				return
+			}
+			i = -1 // Start over.
+		}
+
+		panic("should not happen")
+	}()
+}
+
+func (r *goagentAutoRangeRequest) Read(p []byte) (n int, err error) {
+	r.Init()
+	select {
+	case <-r.done:
+		err = *r.err.Load().(*error)
+		if err != io.EOF {
+			if r.buf != nil {
+				reqBufferPool.Put(r.buf)
+				r.buf = nil
+			}
+			return // Result in an error.
+		}
+		if len(r.buffers) > 0 {
+			buf := <-r.buffers
+			n = copy(p, buf)
+			r.readSize += int64(n)
+			if n < len(buf) {
+				r.buffers <- buf[n:]
+				return n, nil
+			}
+		}
+		if r.buf != nil {
+			reqBufferPool.Put(r.buf)
+			r.buf = nil
+		}
+		return // EOF
+	case buf := <-r.buffers:
+		n = copy(p, buf)
+		r.readSize += int64(n)
+		if n < len(buf) {
+			for b := buf[n:]; b != nil; {
+				select {
+				case r.buffers <- b:
+					b = nil
+				case buf := <-r.buffers:
+					b = b[:len(b)+len(buf)]
+				}
+			}
+		}
+		return
+	}
+}
+
+func (r *goagentAutoRangeRequest) AlmostComplete() bool {
+	readTime := time.Since(r.startTime)
+	sizeLeft := (r.rangeLast - r.rangeFirst + 1) - r.readSize
+	timeLeft := readTime * time.Duration(float64(sizeLeft)/float64(r.readSize))
+	return timeLeft < 3*time.Second
 }
 
 type bytesReadCloser struct {
@@ -674,6 +838,15 @@ func setOrDeleteHeader(header http.Header, key, value string) {
 	} else {
 		header.Del(key)
 	}
+}
+
+func copyRequestAndHeader(req *http.Request) *http.Request {
+	new := *req
+	new.Header = make(http.Header)
+	for k, v := range req.Header {
+		new.Header[k] = v
+	}
+	return &new
 }
 
 func isRequestCanceled(req *http.Request) (yes bool) {
@@ -722,4 +895,12 @@ var (
 		"Connection":          true,
 		"Cache-Control":       true,
 	}
+
+	reqBufferPool = sync.Pool{
+		New: func() interface{} {
+			return make([]byte, perRequestSize)
+		},
+	}
 )
+
+const perRequestSize = 4 * 1024 * 1024
