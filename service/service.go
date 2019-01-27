@@ -29,6 +29,7 @@ type Context struct {
 	ListenAddr string
 	Done       <-chan struct{}
 	Events     <-chan interface{}
+	Manager    *Manager
 }
 
 type Job struct {
@@ -118,7 +119,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 			}()
 			defer cancel()
 			defer close(done)
-			service.Run(Context{listenAddr, ctx.Done(), events})
+			service.Run(Context{listenAddr, ctx.Done(), events, man})
 		}()
 		job = Job{serviceName, done, events, cancel}
 		man.jobs[name] = job

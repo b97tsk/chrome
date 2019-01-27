@@ -13,8 +13,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-var services = service.NewManager()
-
 func main() {
 	var configFile string
 	flag.StringVar(&configFile, "conf", "chrome.yaml", "config file")
@@ -35,6 +33,7 @@ func main() {
 
 	os.Setenv("ConfigDir", filepath.Dir(configFile))
 
+	services := service.NewManager()
 	addServices(services)
 	services.Load(configFile)
 	defer services.Shutdown()

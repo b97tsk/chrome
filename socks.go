@@ -35,7 +35,7 @@ func (socksService) Run(ctx service.Context) {
 	var dial atomic.Value
 	dial.Store(direct.Dial)
 
-	services.ServeListener(ln, func(c net.Conn) {
+	ctx.Manager.ServeListener(ln, func(c net.Conn) {
 		addr, err := socks.Handshake(c)
 		if err != nil {
 			log.Printf("[socks] socks handshake: %v\n", err)

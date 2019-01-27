@@ -35,7 +35,7 @@ func (tcptunService) Run(ctx service.Context) {
 
 	var connect atomic.Value
 
-	services.ServeListener(ln, func(c net.Conn) {
+	ctx.Manager.ServeListener(ln, func(c net.Conn) {
 		connectLoad := connect.Load
 		connect := connectLoad()
 		if connect == nil {

@@ -46,7 +46,7 @@ func (shadowsocksService) Run(ctx service.Context) {
 	)
 	dial.Store(direct.Dial)
 
-	services.ServeListener(ln, func(c net.Conn) {
+	ctx.Manager.ServeListener(ln, func(c net.Conn) {
 		cipherLoad := cipher.Load
 		cipher := cipherLoad()
 		if cipher == nil {
