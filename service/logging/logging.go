@@ -19,6 +19,10 @@ func (Service) Name() string {
 	return "logging"
 }
 
+func (Service) Aliases() []string {
+	return nil
+}
+
 func (Service) Run(ctx service.Context) {
 	var options Options
 	var logfile *os.File

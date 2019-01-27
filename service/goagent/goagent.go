@@ -40,6 +40,10 @@ func (Service) Name() string {
 	return "goagent"
 }
 
+func (Service) Aliases() []string {
+	return nil
+}
+
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {

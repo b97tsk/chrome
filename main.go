@@ -66,15 +66,11 @@ func main() {
 }
 
 func addServices(services *service.Manager) {
-	services.Add("goagent", goagent.Service{})
-	services.Add("httpfs", httpfs.Service{})
-	services.Add("logging", logging.Service{})
-	services.Add("shadowsocks", shadowsocks.Service{})
-
-	var service socks.Service
-	services.Add("socks", service)
-	services.Add("socks5", service)
-
-	services.Add("tcptun", tcptun.Service{})
-	services.Add("vmess", vmess.Service{})
+	services.Add(goagent.Service{})
+	services.Add(httpfs.Service{})
+	services.Add(logging.Service{})
+	services.Add(shadowsocks.Service{})
+	services.Add(socks.Service{})
+	services.Add(tcptun.Service{})
+	services.Add(vmess.Service{})
 }

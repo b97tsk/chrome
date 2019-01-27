@@ -28,6 +28,10 @@ func (Service) Name() string {
 	return "vmess"
 }
 
+func (Service) Aliases() []string {
+	return nil
+}
+
 func (Service) Run(ctx service.Context) {
 	localAddr, localPort, err := net.SplitHostPort(ctx.ListenAddr)
 	if err != nil {

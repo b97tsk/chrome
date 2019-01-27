@@ -21,6 +21,7 @@ import (
 
 type Service interface {
 	Name() string
+	Aliases() []string
 	Run(Context)
 	UnmarshalOptions([]byte) (interface{}, error)
 }
@@ -77,8 +78,11 @@ func NewManager() *Manager {
 	}
 }
 
-func (man *Manager) Add(name string, service Service) {
-	man.services[name] = service
+func (man *Manager) Add(service Service) {
+	man.services[service.Name()] = service
+	for _, alias := range service.Aliases() {
+		man.services[alias] = service
+	}
 }
 
 func (man *Manager) setOptions(name string, data interface{}) error {
