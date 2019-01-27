@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
@@ -219,7 +220,7 @@ func (sm *ServiceManager) ServeListener(ln net.Listener, handle func(net.Conn)) 
 				}
 				return
 			}
-			utility.TCPKeepAlive(c, direct.KeepAlive)
+			utility.TCPKeepAlive(c, configure.KeepAlive)
 			sm.connections.Store(c, struct{}{})
 			sm.connections.Add(1)
 			go func() {

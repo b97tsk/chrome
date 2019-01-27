@@ -2,10 +2,11 @@ package main
 
 import (
 	"net"
-	"time"
+
+	"github.com/b97tsk/chrome/configure"
 )
 
 var direct = &net.Dialer{
-	Timeout:   30 * time.Second,
-	KeepAlive: 30 * time.Second,
+	Timeout:   configure.Timeout,
+	KeepAlive: configure.KeepAlive,
 }

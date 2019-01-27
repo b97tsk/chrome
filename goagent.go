@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
@@ -136,7 +137,7 @@ func (l *goagentListener) init() {
 				}
 				return
 			}
-			utility.TCPKeepAlive(conn, direct.KeepAlive)
+			utility.TCPKeepAlive(conn, configure.KeepAlive)
 			lane <- conn
 		}
 	}()
