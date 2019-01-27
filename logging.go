@@ -74,7 +74,3 @@ func (loggingService) UnmarshalOptions(text []byte) (interface{}, error) {
 	}
 	return options, nil
 }
-
-func init() {
-	services.Add("logging", loggingService{})
-}

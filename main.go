@@ -35,6 +35,7 @@ func main() {
 
 	os.Setenv("ConfigDir", filepath.Dir(configFile))
 
+	addServices(services)
 	services.Load(configFile)
 	defer services.Shutdown()
 
@@ -56,4 +57,18 @@ func main() {
 			return
 		}
 	}
+}
+
+func addServices(services *service.Manager) {
+	services.Add("logging", loggingService{})
+	services.Add("goagent", goagentService{})
+	services.Add("httpfs", httpfsService{})
+	services.Add("shadowsocks", shadowsocksService{})
+
+	var service socksService
+	services.Add("socks", service)
+	services.Add("socks5", service)
+
+	services.Add("tcptun", tcptunService{})
+	services.Add("vmess", vmessService{})
 }

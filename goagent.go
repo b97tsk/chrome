@@ -99,10 +99,6 @@ func (goagentService) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
-func init() {
-	services.Add("goagent", goagentService{})
-}
-
 type goagentListener struct {
 	mu   sync.Mutex
 	once sync.Once

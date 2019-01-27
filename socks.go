@@ -82,9 +82,3 @@ func (socksService) UnmarshalOptions(text []byte) (interface{}, error) {
 	}
 	return options, nil
 }
-
-func init() {
-	var service socksService
-	services.Add("socks", service)
-	services.Add("socks5", service)
-}

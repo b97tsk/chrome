@@ -92,10 +92,6 @@ func (vmessService) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
-func init() {
-	services.Add("vmess", vmessService{})
-}
-
 func vmessParseURL(rawurl, localAddr, localPort string) (*core.Instance, error) {
 	u, err := url.Parse(rawurl)
 	if err != nil || u.Scheme != "vmess" {
