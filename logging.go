@@ -14,6 +14,10 @@ type loggingOptions struct {
 
 type loggingService struct{}
 
+func (loggingService) Name() string {
+	return "logging"
+}
+
 func (loggingService) Run(ctx ServiceCtx) {
 	var options loggingOptions
 	var logfile *os.File
@@ -68,10 +72,6 @@ func (loggingService) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-func (loggingService) StandardName() string {
-	return "logging"
 }
 
 func init() {

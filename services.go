@@ -19,9 +19,9 @@ import (
 )
 
 type Service interface {
+	Name() string
 	Run(ServiceCtx)
 	UnmarshalOptions([]byte) (interface{}, error)
-	StandardName() string
 }
 
 type ServiceCtx struct {
@@ -91,7 +91,7 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 		return fmt.Errorf("service %q not found", serviceName)
 	}
 
-	serviceName = service.StandardName()
+	serviceName = service.Name()
 	fields[0] = serviceName
 	name = strings.Join(fields, "|")
 

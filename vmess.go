@@ -23,6 +23,10 @@ type vmessOptions struct {
 
 type vmessService struct{}
 
+func (vmessService) Name() string {
+	return "vmess"
+}
+
 func (vmessService) Run(ctx ServiceCtx) {
 	localAddr, localPort, err := net.SplitHostPort(ctx.ListenAddr)
 	if err != nil {
@@ -85,10 +89,6 @@ func (vmessService) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-func (vmessService) StandardName() string {
-	return "vmess"
 }
 
 func init() {

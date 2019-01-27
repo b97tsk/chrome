@@ -21,6 +21,10 @@ type shadowsocksOptions struct {
 
 type shadowsocksService struct{}
 
+func (shadowsocksService) Name() string {
+	return "shadowsocks"
+}
+
 func (shadowsocksService) Run(ctx ServiceCtx) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
@@ -105,10 +109,6 @@ func (shadowsocksService) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-func (shadowsocksService) StandardName() string {
-	return "shadowsocks"
 }
 
 func init() {

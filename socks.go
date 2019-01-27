@@ -17,6 +17,10 @@ type socksOptions struct {
 
 type socksService struct{}
 
+func (socksService) Name() string {
+	return "socks"
+}
+
 func (socksService) Run(ctx ServiceCtx) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
@@ -76,10 +80,6 @@ func (socksService) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-func (socksService) StandardName() string {
-	return "socks"
 }
 
 func init() {

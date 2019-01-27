@@ -34,6 +34,10 @@ type goagentOptions struct {
 
 type goagentService struct{}
 
+func (goagentService) Name() string {
+	return "goagent"
+}
+
 func (goagentService) Run(ctx ServiceCtx) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
@@ -91,10 +95,6 @@ func (goagentService) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-func (goagentService) StandardName() string {
-	return "goagent"
 }
 
 func init() {

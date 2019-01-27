@@ -17,6 +17,10 @@ type httpfsOptions struct {
 
 type httpfsService struct{}
 
+func (httpfsService) Name() string {
+	return "httpfs"
+}
+
 func (httpfsService) Run(ctx ServiceCtx) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
@@ -79,10 +83,6 @@ func (httpfsService) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-func (httpfsService) StandardName() string {
-	return "httpfs"
 }
 
 func init() {

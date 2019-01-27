@@ -18,6 +18,10 @@ type tcptunOptions struct {
 
 type tcptunService struct{}
 
+func (tcptunService) Name() string {
+	return "tcptun"
+}
+
 func (tcptunService) Run(ctx ServiceCtx) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
@@ -87,10 +91,6 @@ func (tcptunService) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-func (tcptunService) StandardName() string {
-	return "tcptun"
 }
 
 func init() {
