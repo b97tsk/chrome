@@ -1,4 +1,4 @@
-package main
+package tcptun
 
 import (
 	"log"
@@ -6,24 +6,25 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
-type tcptunOptions struct {
+type Options struct {
 	ForwardAddr string          `yaml:"for"`
 	ProxyList   proxy.ProxyList `yaml:"over"`
 }
 
-type tcptunService struct{}
+type Service struct{}
 
-func (tcptunService) Name() string {
+func (Service) Name() string {
 	return "tcptun"
 }
 
-func (tcptunService) Run(ctx service.Context) {
+func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[tcptun] %v\n", err)
@@ -60,12 +61,12 @@ func (tcptunService) Run(ctx service.Context) {
 
 	var (
 		dial    = direct.Dial
-		options tcptunOptions
+		options Options
 	)
 	for {
 		select {
 		case data := <-ctx.Events:
-			if new, ok := data.(tcptunOptions); ok {
+			if new, ok := data.(Options); ok {
 				old := options
 				options = new
 				shouldUpdate := new.ForwardAddr != old.ForwardAddr
@@ -86,10 +87,15 @@ func (tcptunService) Run(ctx service.Context) {
 	}
 }
 
-func (tcptunService) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options tcptunOptions
+func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options Options
 	if err := yaml.UnmarshalStrict(text, &options); err != nil {
 		return nil, err
 	}
 	return options, nil
+}
+
+var direct = &net.Dialer{
+	Timeout:   configure.Timeout,
+	KeepAlive: configure.KeepAlive,
 }
