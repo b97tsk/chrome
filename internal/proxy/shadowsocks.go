@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"golang.org/x/net/proxy"
@@ -17,7 +18,7 @@ func init() {
 func shadowsocksFromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
 	origin := u
 	if u.User == nil {
-		bytes, err := decodeBase64String(u.Host)
+		bytes, err := utility.DecodeBase64String(u.Host)
 		if err != nil {
 			return nil, shadowsocksUnknownSSError{origin}
 		}
@@ -29,7 +30,7 @@ func shadowsocksFromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) 
 	method := u.User.Username()
 	password, ok := u.User.Password()
 	if !ok {
-		bytes, err := decodeBase64String(method)
+		bytes, err := utility.DecodeBase64String(method)
 		if err != nil {
 			return nil, shadowsocksUnknownSSError{origin}
 		}
