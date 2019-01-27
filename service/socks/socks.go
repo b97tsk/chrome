@@ -1,10 +1,11 @@
-package main
+package socks
 
 import (
 	"log"
 	"net"
 	"sync/atomic"
 
+	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
@@ -12,17 +13,17 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type socksOptions struct {
+type Options struct {
 	ProxyList proxy.ProxyList `yaml:"over"`
 }
 
-type socksService struct{}
+type Service struct{}
 
-func (socksService) Name() string {
+func (Service) Name() string {
 	return "socks"
 }
 
-func (socksService) Run(ctx service.Context) {
+func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[socks] %v\n", err)
@@ -56,12 +57,12 @@ func (socksService) Run(ctx service.Context) {
 	})
 
 	var (
-		options socksOptions
+		options Options
 	)
 	for {
 		select {
 		case data := <-ctx.Events:
-			if new, ok := data.(socksOptions); ok {
+			if new, ok := data.(Options); ok {
 				old := options
 				options = new
 				if !new.ProxyList.Equals(old.ProxyList) {
@@ -75,10 +76,15 @@ func (socksService) Run(ctx service.Context) {
 	}
 }
 
-func (socksService) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options socksOptions
+func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options Options
 	if err := yaml.UnmarshalStrict(text, &options); err != nil {
 		return nil, err
 	}
 	return options, nil
+}
+
+var direct = &net.Dialer{
+	Timeout:   configure.Timeout,
+	KeepAlive: configure.KeepAlive,
 }
