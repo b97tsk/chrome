@@ -1,4 +1,4 @@
-package main
+package vmess
 
 import (
 	"bytes"
@@ -18,17 +18,17 @@ import (
 	"v2ray.com/ext/tools/conf"
 )
 
-type vmessOptions struct {
+type Options struct {
 	URL string
 }
 
-type vmessService struct{}
+type Service struct{}
 
-func (vmessService) Name() string {
+func (Service) Name() string {
 	return "vmess"
 }
 
-func (vmessService) Run(ctx service.Context) {
+func (Service) Run(ctx service.Context) {
 	localAddr, localPort, err := net.SplitHostPort(ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[vmess] %v\n", err)
@@ -48,12 +48,12 @@ func (vmessService) Run(ctx service.Context) {
 	}()
 
 	var (
-		options vmessOptions
+		options Options
 	)
 	for {
 		select {
 		case data := <-ctx.Events:
-			if new, ok := data.(vmessOptions); ok {
+			if new, ok := data.(Options); ok {
 				old := options
 				options = new
 				if new.URL != old.URL {
@@ -65,7 +65,7 @@ func (vmessService) Run(ctx service.Context) {
 						instance = nil
 						log.Printf("[vmess] stopped listening on %v\n", ctx.ListenAddr)
 					}
-					instance, err = vmessParseURL(new.URL, localAddr, localPort)
+					instance, err = parseURL(new.URL, localAddr, localPort)
 					if err != nil {
 						log.Printf("[vmess] parse url: %v\n", err)
 						break
@@ -84,15 +84,15 @@ func (vmessService) Run(ctx service.Context) {
 	}
 }
 
-func (vmessService) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options vmessOptions
+func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options Options
 	if err := yaml.UnmarshalStrict(text, &options.URL); err != nil {
 		return nil, err
 	}
 	return options, nil
 }
 
-func vmessParseURL(rawurl, localAddr, localPort string) (*core.Instance, error) {
+func parseURL(rawurl, localAddr, localPort string) (*core.Instance, error) {
 	u, err := url.Parse(rawurl)
 	if err != nil || u.Scheme != "vmess" {
 		return nil, errors.New("invalid vmess: " + rawurl)

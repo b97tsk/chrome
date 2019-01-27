@@ -15,6 +15,7 @@ import (
 	"github.com/b97tsk/chrome/service/shadowsocks"
 	"github.com/b97tsk/chrome/service/socks"
 	"github.com/b97tsk/chrome/service/tcptun"
+	"github.com/b97tsk/chrome/service/vmess"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -74,5 +75,5 @@ func addServices(services *service.Manager) {
 	services.Add("socks5", service)
 
 	services.Add("tcptun", tcptun.Service{})
-	services.Add("vmess", vmessService{})
+	services.Add("vmess", vmess.Service{})
 }
