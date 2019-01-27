@@ -1,4 +1,4 @@
-package main
+package service
 
 import (
 	"context"
@@ -21,24 +21,24 @@ import (
 
 type Service interface {
 	Name() string
-	Run(ServiceCtx)
+	Run(Context)
 	UnmarshalOptions([]byte) (interface{}, error)
 }
 
-type ServiceCtx struct {
+type Context struct {
 	ListenAddr string
 	Done       <-chan struct{}
 	Events     <-chan interface{}
 }
 
-type ServiceJob struct {
+type Job struct {
 	ServiceName string
 	Done        <-chan struct{}
 	Events      chan<- interface{}
 	Cancel      context.CancelFunc
 }
 
-func (job *ServiceJob) Active() bool {
+func (job *Job) Active() bool {
 	select {
 	case <-job.Done:
 		return false
@@ -47,7 +47,7 @@ func (job *ServiceJob) Active() bool {
 	}
 }
 
-func (job *ServiceJob) SendData(v interface{}) {
+func (job *Job) SendData(v interface{}) {
 	values := []interface{}{v, nil}
 	for _, v := range values {
 		select {
@@ -58,36 +58,36 @@ func (job *ServiceJob) SendData(v interface{}) {
 	}
 }
 
-type ServiceManager struct {
+type Manager struct {
 	mu          sync.Mutex
 	hash        uint32
 	services    map[string]Service
-	jobs        map[string]ServiceJob
+	jobs        map[string]Job
 	connections struct {
 		sync.Map
 		sync.WaitGroup
 	}
 }
 
-func newServiceManager() *ServiceManager {
-	return &ServiceManager{
+func NewManager() *Manager {
+	return &Manager{
 		services: make(map[string]Service),
-		jobs:     make(map[string]ServiceJob),
+		jobs:     make(map[string]Job),
 	}
 }
 
-func (sm *ServiceManager) Add(name string, service Service) {
-	sm.services[name] = service
+func (man *Manager) Add(name string, service Service) {
+	man.services[name] = service
 }
 
-func (sm *ServiceManager) setOptions(name string, data interface{}) error {
+func (man *Manager) setOptions(name string, data interface{}) error {
 	fields := strings.SplitN(name, "|", 3)
 	if len(fields) != 3 {
 		return fmt.Errorf("ignore %v", name)
 	}
 
 	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
-	service, ok := sm.services[serviceName]
+	service, ok := man.services[serviceName]
 	if !ok {
 		return fmt.Errorf("service %q not found", serviceName)
 	}
@@ -102,7 +102,7 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 		return fmt.Errorf("invalid options in %v", name)
 	}
 
-	job, ok := sm.jobs[name]
+	job, ok := man.jobs[name]
 	if !ok || !job.Active() {
 		ctx, cancel := context.WithCancel(context.TODO())
 		done := make(chan struct{})
@@ -118,22 +118,22 @@ func (sm *ServiceManager) setOptions(name string, data interface{}) error {
 			}()
 			defer cancel()
 			defer close(done)
-			service.Run(ServiceCtx{listenAddr, ctx.Done(), events})
+			service.Run(Context{listenAddr, ctx.Done(), events})
 		}()
-		job = ServiceJob{serviceName, done, events, cancel}
-		sm.jobs[name] = job
+		job = Job{serviceName, done, events, cancel}
+		man.jobs[name] = job
 	}
 
-	sm.mu.Unlock()
+	man.mu.Unlock()
 	job.SendData(options)
-	sm.mu.Lock()
+	man.mu.Lock()
 
 	return nil
 }
 
-func (sm *ServiceManager) Load(configFile string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+func (man *Manager) Load(configFile string) {
+	man.mu.Lock()
+	defer man.mu.Unlock()
 
 	file, err := os.Open(configFile)
 	if err != nil {
@@ -145,10 +145,10 @@ func (sm *ServiceManager) Load(configFile string) {
 	digest := crc32.NewIEEE()
 	io.Copy(digest, file)
 	hash := digest.Sum32()
-	if hash == sm.hash {
+	if hash == man.hash {
 		return
 	}
-	sm.hash = hash
+	man.hash = hash
 
 	var c struct {
 		Logfile string `yaml:"logging"`
@@ -186,11 +186,11 @@ func (sm *ServiceManager) Load(configFile string) {
 		}
 	}
 
-	if err := sm.setOptions("logging||", c.Logfile); err != nil {
+	if err := man.setOptions("logging||", c.Logfile); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
 	}
 
-	for name, job := range sm.jobs {
+	for name, job := range man.jobs {
 		if job.ServiceName == "logging" {
 			continue
 		}
@@ -199,10 +199,10 @@ func (sm *ServiceManager) Load(configFile string) {
 		}
 		job.Cancel()
 		<-job.Done
-		delete(sm.jobs, name)
+		delete(man.jobs, name)
 	}
 	for name, data := range c.Jobs {
-		if err := sm.setOptions(name, data); err != nil {
+		if err := man.setOptions(name, data); err != nil {
 			log.Printf("[services] loading %v: %v\n", configFile, err)
 		}
 	}
@@ -210,7 +210,7 @@ func (sm *ServiceManager) Load(configFile string) {
 	log.Printf("[services] loaded %v\n", configFile)
 }
 
-func (sm *ServiceManager) ServeListener(ln net.Listener, handle func(net.Conn)) {
+func (man *Manager) ServeListener(ln net.Listener, handle func(net.Conn)) {
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -221,13 +221,13 @@ func (sm *ServiceManager) ServeListener(ln net.Listener, handle func(net.Conn)) 
 				return
 			}
 			utility.TCPKeepAlive(c, configure.KeepAlive)
-			sm.connections.Store(c, struct{}{})
-			sm.connections.Add(1)
+			man.connections.Store(c, struct{}{})
+			man.connections.Add(1)
 			go func() {
 				defer func() {
 					c.Close()
-					sm.connections.Delete(c)
-					sm.connections.Done()
+					man.connections.Delete(c)
+					man.connections.Done()
 				}()
 				handle(c)
 			}()
@@ -235,39 +235,37 @@ func (sm *ServiceManager) ServeListener(ln net.Listener, handle func(net.Conn)) 
 	}()
 }
 
-func (sm *ServiceManager) Shutdown() {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+func (man *Manager) Shutdown() {
+	man.mu.Lock()
+	defer man.mu.Unlock()
 
-	for _, job := range sm.jobs {
+	for _, job := range man.jobs {
 		if job.ServiceName != "logging" {
 			job.Cancel()
 		}
 	}
-	for _, job := range sm.jobs {
+	for _, job := range man.jobs {
 		if job.ServiceName != "logging" {
 			<-job.Done
 		}
 	}
 
-	for _, job := range sm.jobs {
+	for _, job := range man.jobs {
 		if job.ServiceName == "logging" {
 			job.Cancel()
 		}
 	}
-	for _, job := range sm.jobs {
+	for _, job := range man.jobs {
 		if job.ServiceName == "logging" {
 			<-job.Done
 		}
 	}
 
-	sm.connections.Range(func(key, _ interface{}) bool {
+	man.connections.Range(func(key, _ interface{}) bool {
 		key.(net.Conn).Close()
 		return true
 	})
-	sm.connections.Wait()
+	man.connections.Wait()
 }
-
-var services = newServiceManager()
 
 var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)

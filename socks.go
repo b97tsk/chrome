@@ -7,6 +7,7 @@ import (
 
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
 )
@@ -21,7 +22,7 @@ func (socksService) Name() string {
 	return "socks"
 }
 
-func (socksService) Run(ctx ServiceCtx) {
+func (socksService) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[socks] %v\n", err)

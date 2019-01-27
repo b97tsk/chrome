@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync/atomic"
 
+	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
@@ -21,7 +22,7 @@ func (httpfsService) Name() string {
 	return "httpfs"
 }
 
-func (httpfsService) Run(ctx ServiceCtx) {
+func (httpfsService) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[httpfs] %v\n", err)

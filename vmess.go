@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"github.com/gogo/protobuf/proto"
 	"gopkg.in/yaml.v2"
 	"v2ray.com/core"
@@ -27,7 +28,7 @@ func (vmessService) Name() string {
 	return "vmess"
 }
 
-func (vmessService) Run(ctx ServiceCtx) {
+func (vmessService) Run(ctx service.Context) {
 	localAddr, localPort, err := net.SplitHostPort(ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[vmess] %v\n", err)

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
@@ -18,7 +19,7 @@ func (loggingService) Name() string {
 	return "logging"
 }
 
-func (loggingService) Run(ctx ServiceCtx) {
+func (loggingService) Run(ctx service.Context) {
 	var options loggingOptions
 	var logfile *os.File
 	defer func() {

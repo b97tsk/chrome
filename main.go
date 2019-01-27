@@ -9,8 +9,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/b97tsk/chrome/service"
 	"github.com/fsnotify/fsnotify"
 )
+
+var services = service.NewManager()
 
 func main() {
 	var configFile string

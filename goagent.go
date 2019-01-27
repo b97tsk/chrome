@@ -25,6 +25,7 @@ import (
 	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
@@ -39,7 +40,7 @@ func (goagentService) Name() string {
 	return "goagent"
 }
 
-func (goagentService) Run(ctx ServiceCtx) {
+func (goagentService) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[goagent] %v\n", err)

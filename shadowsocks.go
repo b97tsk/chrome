@@ -8,6 +8,7 @@ import (
 
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
@@ -25,7 +26,7 @@ func (shadowsocksService) Name() string {
 	return "shadowsocks"
 }
 
-func (shadowsocksService) Run(ctx ServiceCtx) {
+func (shadowsocksService) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[shadowsocks] %v\n", err)

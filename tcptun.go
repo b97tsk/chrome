@@ -8,6 +8,7 @@ import (
 
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
@@ -22,7 +23,7 @@ func (tcptunService) Name() string {
 	return "tcptun"
 }
 
-func (tcptunService) Run(ctx ServiceCtx) {
+func (tcptunService) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[tcptun] %v\n", err)
