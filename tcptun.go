@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
 
@@ -46,7 +47,7 @@ func (tcptunService) Run(ctx ServiceCtx) {
 		}
 		defer rc.Close()
 
-		if err = relay(rc, c); err != nil {
+		if err = utility.Relay(rc, c); err != nil {
 			log.Printf("[tcptun] relay: %v\n", err)
 		}
 	})

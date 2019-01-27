@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync/atomic"
 
+	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
 )
@@ -43,7 +44,7 @@ func (socksService) Run(ctx ServiceCtx) {
 		}
 		defer rc.Close()
 
-		if err = relay(rc, c); err != nil {
+		if err = utility.Relay(rc, c); err != nil {
 			log.Printf("[socks] relay: %v\n", err)
 		}
 	})

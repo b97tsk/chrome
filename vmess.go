@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/gogo/protobuf/proto"
 	"gopkg.in/yaml.v2"
 	"v2ray.com/core"
@@ -99,7 +100,7 @@ func vmessParseURL(rawurl, localAddr, localPort string) (*core.Instance, error) 
 	if err != nil || u.Scheme != "vmess" {
 		return nil, errors.New("invalid vmess: " + rawurl)
 	}
-	data, err := decodeBase64String(u.Host)
+	data, err := utility.DecodeBase64String(u.Host)
 	if err != nil {
 		return nil, errors.New("invalid vmess: " + rawurl)
 	}

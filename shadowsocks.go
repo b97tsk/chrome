@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
@@ -65,7 +66,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 		}
 		defer rc.Close()
 
-		if err = relay(rc, c); err != nil {
+		if err = utility.Relay(rc, c); err != nil {
 			log.Printf("[shadowsocks] relay: %v\n", err)
 		}
 	})

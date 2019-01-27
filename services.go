@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/b97tsk/chrome/internal/proxy"
+	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
 
@@ -216,12 +217,12 @@ func (sm *ServiceManager) ServeListener(ln net.Listener, handle func(net.Conn)) 
 		for {
 			c, err := ln.Accept()
 			if err != nil {
-				if isTemporary(err) {
+				if utility.IsTemporary(err) {
 					continue
 				}
 				return
 			}
-			tcpKeepAlive(c, direct.KeepAlive)
+			utility.TCPKeepAlive(c, direct.KeepAlive)
 			sm.connections.Store(c, struct{}{})
 			sm.connections.Add(1)
 			go func() {

@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
 
@@ -129,12 +130,12 @@ func (l *goagentListener) init() {
 		for {
 			conn, err := l.ln.Accept()
 			if err != nil {
-				if isTemporary(err) {
+				if utility.IsTemporary(err) {
 					continue
 				}
 				return
 			}
-			tcpKeepAlive(conn, direct.KeepAlive)
+			utility.TCPKeepAlive(conn, direct.KeepAlive)
 			lane <- conn
 		}
 	}()
@@ -281,7 +282,7 @@ func (h *goagentHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 		defer conn.Close()
 
-		if err := relay(remote, conn); err != nil {
+		if err := utility.Relay(remote, conn); err != nil {
 			log.Printf("[goagent] relay: %v\n", err)
 		}
 		return
