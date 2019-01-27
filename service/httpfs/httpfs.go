@@ -1,4 +1,4 @@
-package main
+package httpfs
 
 import (
 	"context"
@@ -12,17 +12,17 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type httpfsOptions struct {
+type Options struct {
 	Dir string
 }
 
-type httpfsService struct{}
+type Service struct{}
 
-func (httpfsService) Name() string {
+func (Service) Name() string {
 	return "httpfs"
 }
 
-func (httpfsService) Run(ctx service.Context) {
+func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[httpfs] %v\n", err)
@@ -57,12 +57,12 @@ func (httpfsService) Run(ctx service.Context) {
 		close(serverDown)
 	}()
 
-	var options httpfsOptions
+	var options Options
 
 	for {
 		select {
 		case data := <-ctx.Events:
-			if new, ok := data.(httpfsOptions); ok {
+			if new, ok := data.(Options); ok {
 				old := options
 				options = new
 				if new.Dir != old.Dir {
@@ -78,8 +78,8 @@ func (httpfsService) Run(ctx service.Context) {
 	}
 }
 
-func (httpfsService) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options httpfsOptions
+func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options Options
 	if err := yaml.UnmarshalStrict(text, &options); err != nil {
 		return nil, err
 	}

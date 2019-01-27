@@ -11,6 +11,7 @@ import (
 
 	"github.com/b97tsk/chrome/service"
 	"github.com/b97tsk/chrome/service/goagent"
+	"github.com/b97tsk/chrome/service/httpfs"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -62,7 +63,7 @@ func main() {
 func addServices(services *service.Manager) {
 	services.Add("logging", loggingService{})
 	services.Add("goagent", goagent.Service{})
-	services.Add("httpfs", httpfsService{})
+	services.Add("httpfs", httpfs.Service{})
 	services.Add("shadowsocks", shadowsocksService{})
 
 	var service socksService
