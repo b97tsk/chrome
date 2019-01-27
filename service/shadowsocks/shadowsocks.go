@@ -1,4 +1,4 @@
-package main
+package shadowsocks
 
 import (
 	"log"
@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
@@ -14,19 +15,19 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type shadowsocksOptions struct {
+type Options struct {
 	Method    string
 	Password  string
 	ProxyList proxy.ProxyList `yaml:"over"`
 }
 
-type shadowsocksService struct{}
+type Service struct{}
 
-func (shadowsocksService) Name() string {
+func (Service) Name() string {
 	return "shadowsocks"
 }
 
-func (shadowsocksService) Run(ctx service.Context) {
+func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[shadowsocks] %v\n", err)
@@ -78,12 +79,12 @@ func (shadowsocksService) Run(ctx service.Context) {
 	})
 
 	var (
-		options shadowsocksOptions
+		options Options
 	)
 	for {
 		select {
 		case data := <-ctx.Events:
-			if new, ok := data.(shadowsocksOptions); ok {
+			if new, ok := data.(Options); ok {
 				old := options
 				options = new
 				if new.Method != old.Method || new.Password != old.Password {
@@ -104,10 +105,15 @@ func (shadowsocksService) Run(ctx service.Context) {
 	}
 }
 
-func (shadowsocksService) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options shadowsocksOptions
+func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options Options
 	if err := yaml.UnmarshalStrict(text, &options); err != nil {
 		return nil, err
 	}
 	return options, nil
+}
+
+var direct = &net.Dialer{
+	Timeout:   configure.Timeout,
+	KeepAlive: configure.KeepAlive,
 }
