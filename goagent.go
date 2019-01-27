@@ -22,13 +22,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
 
 type goagentOptions struct {
-	AppIDList []string  `yaml:"appids"`
-	ProxyList ProxyList `yaml:"over"`
+	AppIDList []string        `yaml:"appids"`
+	ProxyList proxy.ProxyList `yaml:"over"`
 }
 
 type goagentService struct{}
@@ -71,7 +72,7 @@ func (goagentService) Run(ctx ServiceCtx) {
 					handler.SetAppIDList(new.AppIDList)
 				}
 				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.Dialer(direct)
+					d, _ := new.ProxyList.NewDialer(direct)
 					handler.SetDialFunc(d.Dial)
 				}
 			}

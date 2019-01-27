@@ -2,13 +2,11 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"log"
 	"net"
-	"net/url"
 	"os"
 	"regexp"
 	"runtime/debug"
@@ -16,7 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
@@ -268,67 +265,6 @@ func (sm *ServiceManager) Shutdown() {
 		return true
 	})
 	sm.connections.Wait()
-}
-
-type Proxy struct {
-	URL *url.URL
-	Raw string
-}
-
-type ProxyList []Proxy
-
-func (pl ProxyList) Equals(other ProxyList) bool {
-	if len(pl) != len(other) {
-		return false
-	}
-	for i, p := range other {
-		if p.Raw != pl[i].Raw {
-			return false
-		}
-	}
-	return true
-}
-
-func (pl ProxyList) Dialer(forward proxy.Dialer) (proxy.Dialer, error) {
-	var firstErr error
-	for i := len(pl) - 1; i > -1; i-- {
-		d, err := proxy.FromURL(pl[i].URL, forward)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		forward = d
-	}
-	return forward, firstErr
-}
-
-func (pl *ProxyList) UnmarshalYAML(unmarshal func(interface{}) error) error {
-	var rawurl string
-	if err := unmarshal(&rawurl); err == nil {
-		u, err := url.Parse(rawurl)
-		if err != nil {
-			return errors.New("invalid proxy: " + rawurl)
-		}
-		*pl = []Proxy{{u, rawurl}}
-		_, err = pl.Dialer(direct)
-		return err
-	}
-	var slice []string
-	if err := unmarshal(&slice); err == nil {
-		*pl = nil
-		for _, rawurl := range slice {
-			u, err := url.Parse(rawurl)
-			if err != nil {
-				return errors.New("invalid proxy: " + rawurl)
-			}
-			*pl = append(*pl, Proxy{u, rawurl})
-		}
-		_, err = pl.Dialer(direct)
-		return err
-	}
-	return errors.New("invalid proxy list")
 }
 
 var services = newServiceManager()

@@ -5,13 +5,14 @@ import (
 	"net"
 	"sync/atomic"
 
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
 )
 
 type socksOptions struct {
-	ProxyList ProxyList `yaml:"over"`
+	ProxyList proxy.ProxyList `yaml:"over"`
 }
 
 type socksService struct{}
@@ -59,7 +60,7 @@ func (socksService) Run(ctx ServiceCtx) {
 				old := options
 				options = new
 				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.Dialer(direct)
+					d, _ := new.ProxyList.NewDialer(direct)
 					dial.Store(d.Dial)
 				}
 			}

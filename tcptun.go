@@ -6,13 +6,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
 
 type tcptunOptions struct {
-	ForwardAddr string    `yaml:"for"`
-	ProxyList   ProxyList `yaml:"over"`
+	ForwardAddr string          `yaml:"for"`
+	ProxyList   proxy.ProxyList `yaml:"over"`
 }
 
 type tcptunService struct{}
@@ -64,7 +65,7 @@ func (tcptunService) Run(ctx ServiceCtx) {
 				options = new
 				shouldUpdate := new.ForwardAddr != old.ForwardAddr
 				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.Dialer(direct)
+					d, _ := new.ProxyList.NewDialer(direct)
 					dial = d.Dial
 					shouldUpdate = true
 				}

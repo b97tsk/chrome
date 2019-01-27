@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
@@ -15,7 +16,7 @@ import (
 type shadowsocksOptions struct {
 	Method    string
 	Password  string
-	ProxyList ProxyList `yaml:"over"`
+	ProxyList proxy.ProxyList `yaml:"over"`
 }
 
 type shadowsocksService struct{}
@@ -88,7 +89,7 @@ func (shadowsocksService) Run(ctx ServiceCtx) {
 					}
 				}
 				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.Dialer(direct)
+					d, _ := new.ProxyList.NewDialer(direct)
 					dial.Store(d.Dial)
 				}
 			}
