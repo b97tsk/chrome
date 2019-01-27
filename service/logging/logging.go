@@ -1,4 +1,4 @@
-package main
+package logging
 
 import (
 	"io"
@@ -9,18 +9,18 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type loggingOptions struct {
+type Options struct {
 	Logfile string
 }
 
-type loggingService struct{}
+type Service struct{}
 
-func (loggingService) Name() string {
+func (Service) Name() string {
 	return "logging"
 }
 
-func (loggingService) Run(ctx service.Context) {
-	var options loggingOptions
+func (Service) Run(ctx service.Context) {
+	var options Options
 	var logfile *os.File
 	defer func() {
 		if logfile != nil {
@@ -33,7 +33,7 @@ func (loggingService) Run(ctx service.Context) {
 	for {
 		select {
 		case data := <-ctx.Events:
-			if new, ok := data.(loggingOptions); ok {
+			if new, ok := data.(Options); ok {
 				old := options
 				options = new
 				if new.Logfile != old.Logfile {
@@ -67,8 +67,8 @@ func (loggingService) Run(ctx service.Context) {
 	}
 }
 
-func (loggingService) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options loggingOptions
+func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options Options
 	if err := yaml.UnmarshalStrict(text, &options.Logfile); err != nil {
 		return nil, err
 	}
