@@ -1,4 +1,4 @@
-package main
+package goagent
 
 import (
 	"bufio"
@@ -29,18 +29,18 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type goagentOptions struct {
+type Options struct {
 	AppIDList []string        `yaml:"appids"`
 	ProxyList proxy.ProxyList `yaml:"over"`
 }
 
-type goagentService struct{}
+type Service struct{}
 
-func (goagentService) Name() string {
+func (Service) Name() string {
 	return "goagent"
 }
 
-func (goagentService) Run(ctx service.Context) {
+func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[goagent] %v\n", err)
@@ -49,8 +49,8 @@ func (goagentService) Run(ctx service.Context) {
 	log.Printf("[goagent] listening on %v\n", ln.Addr())
 	defer log.Printf("[goagent] stopped listening on %v\n", ln.Addr())
 
-	listener := goagentNewListener(ln, ctx.Done)
-	handler := goagentNewHandler(listener)
+	listener := NewListener(ln, ctx.Done)
+	handler := NewHandler(listener)
 	server := http.Server{
 		Handler: handler,
 	}
@@ -66,12 +66,12 @@ func (goagentService) Run(ctx service.Context) {
 		close(serverDown)
 	}()
 
-	var options goagentOptions
+	var options Options
 
 	for {
 		select {
 		case data := <-ctx.Events:
-			if new, ok := data.(goagentOptions); ok {
+			if new, ok := data.(Options); ok {
 				old := options
 				options = new
 				if !isTwoAppIDListsIdentical(new.AppIDList, old.AppIDList) {
@@ -79,7 +79,7 @@ func (goagentService) Run(ctx service.Context) {
 				}
 				if !new.ProxyList.Equals(old.ProxyList) {
 					d, _ := new.ProxyList.NewDialer(direct)
-					handler.SetDialFunc(d.Dial)
+					handler.SetDial(d.Dial)
 				}
 			}
 		case err := <-serverDown:
@@ -91,15 +91,15 @@ func (goagentService) Run(ctx service.Context) {
 	}
 }
 
-func (goagentService) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options goagentOptions
+func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
+	var options Options
 	if err := yaml.UnmarshalStrict(text, &options); err != nil {
 		return nil, err
 	}
 	return options, nil
 }
 
-type goagentListener struct {
+type Listener struct {
 	mu   sync.Mutex
 	once sync.Once
 	ln   net.Listener
@@ -107,11 +107,11 @@ type goagentListener struct {
 	lane chan net.Conn
 }
 
-func goagentNewListener(ln net.Listener, done <-chan struct{}) *goagentListener {
-	return &goagentListener{ln: ln, done: done}
+func NewListener(ln net.Listener, done <-chan struct{}) *Listener {
+	return &Listener{ln: ln, done: done}
 }
 
-func (l *goagentListener) init() {
+func (l *Listener) init() {
 	lane := make(chan net.Conn, 64)
 	l.mu.Lock()
 	l.lane = lane
@@ -140,7 +140,7 @@ func (l *goagentListener) init() {
 	}()
 }
 
-func (l *goagentListener) Inject(conn net.Conn) {
+func (l *Listener) Inject(conn net.Conn) {
 	l.mu.Lock()
 	if l.lane != nil {
 		l.lane <- conn
@@ -150,7 +150,7 @@ func (l *goagentListener) Inject(conn net.Conn) {
 	l.mu.Unlock()
 }
 
-func (l *goagentListener) Accept() (net.Conn, error) {
+func (l *Listener) Accept() (net.Conn, error) {
 	l.once.Do(l.init)
 
 	l.mu.Lock()
@@ -170,16 +170,16 @@ func (l *goagentListener) Accept() (net.Conn, error) {
 	return nil, errors.New("service stopped")
 }
 
-func (l *goagentListener) Close() error {
+func (l *Listener) Close() error {
 	return l.ln.Close()
 }
 
-func (l *goagentListener) Addr() net.Addr {
+func (l *Listener) Addr() net.Addr {
 	return l.ln.Addr()
 }
 
-type goagentHandler struct {
-	l            *goagentListener
+type Handler struct {
+	l            *Listener
 	tr           *http.Transport
 	dial         atomic.Value
 	appIDMutex   sync.Mutex
@@ -187,8 +187,8 @@ type goagentHandler struct {
 	badAppIDList []string
 }
 
-func goagentNewHandler(l *goagentListener) *goagentHandler {
-	h := &goagentHandler{l: l}
+func NewHandler(l *Listener) *Handler {
+	h := &Handler{l: l}
 	h.dial.Store(direct.Dial)
 
 	dial := func(network, addr string) (net.Conn, error) {
@@ -207,11 +207,11 @@ func goagentNewHandler(l *goagentListener) *goagentHandler {
 	return h
 }
 
-func (h *goagentHandler) SetDialFunc(dial func(network, addr string) (net.Conn, error)) {
+func (h *Handler) SetDial(dial func(network, addr string) (net.Conn, error)) {
 	h.dial.Store(dial)
 }
 
-func (h *goagentHandler) SetAppIDList(appIDList []string) {
+func (h *Handler) SetAppIDList(appIDList []string) {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
 
@@ -239,7 +239,7 @@ func (h *goagentHandler) SetAppIDList(appIDList []string) {
 	}
 }
 
-func (h *goagentHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodConnect {
 		if _, ok := rw.(http.Hijacker); !ok {
 			http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
@@ -332,7 +332,7 @@ func (h *goagentHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (h *goagentHandler) roundTrip(req *http.Request) (*http.Response, error) {
+func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 	const NRetries = 3
 	for i := 0; i < NRetries; i++ {
 		request, err := h.encodeRequest(req)
@@ -385,7 +385,7 @@ func (h *goagentHandler) roundTrip(req *http.Request) (*http.Response, error) {
 	panic("should not happen")
 }
 
-func (h *goagentHandler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
+func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 	if resp.StatusCode != http.StatusPartialContent {
 		return
 	}
@@ -422,7 +422,7 @@ func (h *goagentHandler) autoRange(req *http.Request, resp *http.Response) (yes 
 
 	shallowCopy := *resp
 	bodySize := contentRangeLast - contentRangeFirst + 1
-	resp.Body = goagentNewAutoRangeBody(h, req, &shallowCopy, bodySize, requestRangeFirst, requestRangeLast)
+	resp.Body = newAutoRangeBody(h, req, &shallowCopy, bodySize, requestRangeFirst, requestRangeLast)
 	resp.ContentLength = requestRangeLast - requestRangeFirst + 1
 	resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	if requestRange != nil {
@@ -430,12 +430,12 @@ func (h *goagentHandler) autoRange(req *http.Request, resp *http.Response) (yes 
 	} else {
 		resp.Header.Del("Content-Range")
 		resp.Status = "200 OK"
-		resp.StatusCode = 200
+		resp.StatusCode = http.StatusOK
 	}
 	return true
 }
 
-func (h *goagentHandler) encodeRequest(req *http.Request) (*http.Request, error) {
+func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 	var b bytes.Buffer
 	w, err := flate.NewWriter(&b, flate.BestCompression)
 	if err != nil {
@@ -488,7 +488,7 @@ func (h *goagentHandler) encodeRequest(req *http.Request) (*http.Request, error)
 	return request.WithContext(req.Context()), nil
 }
 
-func (h *goagentHandler) decodeResponse(resp *http.Response) (*http.Response, error) {
+func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 	var hdrLen uint16
 	if err := binary.Read(resp.Body, binary.BigEndian, &hdrLen); err != nil {
 		return nil, err
@@ -535,7 +535,7 @@ func (h *goagentHandler) decodeResponse(resp *http.Response) (*http.Response, er
 	return response, nil
 }
 
-func (h *goagentHandler) getAppID(req *http.Request) string {
+func (h *Handler) getAppID(req *http.Request) string {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
 	if len(h.appIDList) == 0 {
@@ -547,7 +547,7 @@ func (h *goagentHandler) getAppID(req *http.Request) string {
 	return h.appIDList[rand.Intn(len(h.appIDList))]
 }
 
-func (h *goagentHandler) putBadAppID(badAppID string) {
+func (h *Handler) putBadAppID(badAppID string) {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
 
@@ -572,20 +572,20 @@ func (h *goagentHandler) putBadAppID(badAppID string) {
 	}
 }
 
-type goagentAutoRangeBody struct {
-	h       *goagentHandler
+type autoRangeBody struct {
+	h       *Handler
 	req     *http.Request
 	resp    *http.Response
-	reqlist []*goagentAutoRangeRequest
+	reqlist []*autoRangeRequest
 	err     error
 }
 
-func goagentNewAutoRangeBody(
-	h *goagentHandler, req *http.Request, resp *http.Response,
+func newAutoRangeBody(
+	h *Handler, req *http.Request, resp *http.Response,
 	bodySize, rangeFirst, rangeLast int64,
-) *goagentAutoRangeBody {
-	reqlist := []*goagentAutoRangeRequest{
-		&goagentAutoRangeRequest{
+) *autoRangeBody {
+	reqlist := []*autoRangeRequest{
+		&autoRangeRequest{
 			h:          h,
 			req:        req,
 			resp:       resp,
@@ -600,7 +600,7 @@ func goagentNewAutoRangeBody(
 		if size > perRequestSize {
 			size = perRequestSize
 		}
-		reqlist = append(reqlist, &goagentAutoRangeRequest{
+		reqlist = append(reqlist, &autoRangeRequest{
 			h:          h,
 			req:        req,
 			resp:       nil,
@@ -610,7 +610,7 @@ func goagentNewAutoRangeBody(
 		rangeFirst += size
 	}
 
-	return &goagentAutoRangeBody{
+	return &autoRangeBody{
 		h:       h,
 		req:     req,
 		resp:    resp,
@@ -618,7 +618,7 @@ func goagentNewAutoRangeBody(
 	}
 }
 
-func (b *goagentAutoRangeBody) Read(p []byte) (n int, err error) {
+func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 	if b.err != nil {
 		return 0, b.err
 	}
@@ -654,12 +654,12 @@ func (b *goagentAutoRangeBody) Read(p []byte) (n int, err error) {
 	return 0, b.err
 }
 
-func (b *goagentAutoRangeBody) Close() error {
+func (b *autoRangeBody) Close() error {
 	return b.resp.Body.Close()
 }
 
-type goagentAutoRangeRequest struct {
-	h          *goagentHandler
+type autoRangeRequest struct {
+	h          *Handler
 	req        *http.Request
 	resp       *http.Response
 	rangeFirst int64
@@ -674,11 +674,11 @@ type goagentAutoRangeRequest struct {
 	err       atomic.Value
 }
 
-func (r *goagentAutoRangeRequest) Init() {
+func (r *autoRangeRequest) Init() {
 	r.once.Do(r.init)
 }
 
-func (r *goagentAutoRangeRequest) init() {
+func (r *autoRangeRequest) init() {
 	r.done = make(chan struct{})
 	r.buffers = make(chan []byte, 1)
 	r.startTime = time.Now()
@@ -765,7 +765,7 @@ func (r *goagentAutoRangeRequest) init() {
 	}()
 }
 
-func (r *goagentAutoRangeRequest) Read(p []byte) (n int, err error) {
+func (r *autoRangeRequest) Read(p []byte) (n int, err error) {
 	r.Init()
 	select {
 	case <-r.done:
@@ -808,11 +808,11 @@ func (r *goagentAutoRangeRequest) Read(p []byte) (n int, err error) {
 	}
 }
 
-func (r *goagentAutoRangeRequest) AlmostComplete() bool {
+func (r *autoRangeRequest) AlmostComplete() bool {
 	readTime := time.Since(r.startTime)
 	sizeLeft := (r.rangeLast - r.rangeFirst + 1) - r.readSize
 	timeLeft := readTime * time.Duration(float64(sizeLeft)/float64(r.readSize))
-	return timeLeft < 3*time.Second
+	return timeLeft < 4*time.Second
 }
 
 type bytesReadCloser struct {
@@ -830,14 +830,6 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 	}
 	req.Body = &bytesReadCloser{body, ioutil.NopCloser(bytes.NewReader(body))}
 	return body, nil
-}
-
-func setOrDeleteHeader(header http.Header, key, value string) {
-	if value != "" {
-		header.Set(key, value)
-	} else {
-		header.Del(key)
-	}
 }
 
 func copyRequestAndHeader(req *http.Request) *http.Request {
@@ -900,6 +892,11 @@ var (
 		New: func() interface{} {
 			return make([]byte, perRequestSize)
 		},
+	}
+
+	direct = &net.Dialer{
+		Timeout:   configure.Timeout,
+		KeepAlive: configure.KeepAlive,
 	}
 )
 

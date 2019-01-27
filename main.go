@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/service"
+	"github.com/b97tsk/chrome/service/goagent"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -60,7 +61,7 @@ func main() {
 
 func addServices(services *service.Manager) {
 	services.Add("logging", loggingService{})
-	services.Add("goagent", goagentService{})
+	services.Add("goagent", goagent.Service{})
 	services.Add("httpfs", httpfsService{})
 	services.Add("shadowsocks", shadowsocksService{})
 
