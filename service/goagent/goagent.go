@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -629,7 +630,7 @@ func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 	for i, req := range b.reqlist {
 		n, err = req.Read(p)
 		if err == nil {
-			if i+1 < len(b.reqlist) && req.AlmostComplete() {
+			if i+1 < len(b.reqlist) && req.AboutToComplete() {
 				// Start next range request in advance.
 				b.reqlist[i+1].Init()
 			}
@@ -812,11 +813,22 @@ func (r *autoRangeRequest) Read(p []byte) (n int, err error) {
 	}
 }
 
-func (r *autoRangeRequest) AlmostComplete() bool {
+func (r *autoRangeRequest) Progress() float64 {
+	return float64(r.readSize) / float64(r.rangeLast-r.rangeFirst+1)
+}
+
+func (r *autoRangeRequest) TimeLeft() float64 {
 	readTime := time.Since(r.startTime)
+	if readTime < time.Second {
+		return math.MaxFloat64
+	}
 	sizeLeft := (r.rangeLast - r.rangeFirst + 1) - r.readSize
-	timeLeft := readTime * time.Duration(float64(sizeLeft)/float64(r.readSize))
-	return timeLeft < 4*time.Second
+	timeLeft := readTime.Seconds() * (float64(sizeLeft) / float64(r.readSize))
+	return timeLeft // in seconds
+}
+
+func (r *autoRangeRequest) AboutToComplete() bool {
+	return r.Progress() > .5 || r.TimeLeft() < 4
 }
 
 type bytesReadCloser struct {
