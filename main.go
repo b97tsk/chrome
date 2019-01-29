@@ -13,6 +13,7 @@ import (
 	"github.com/b97tsk/chrome/service/goagent"
 	"github.com/b97tsk/chrome/service/httpfs"
 	"github.com/b97tsk/chrome/service/logging"
+	"github.com/b97tsk/chrome/service/pprof"
 	"github.com/b97tsk/chrome/service/shadowsocks"
 	"github.com/b97tsk/chrome/service/socks"
 	"github.com/b97tsk/chrome/service/tcptun"
@@ -69,6 +70,7 @@ func addServices(services *service.Manager) {
 	services.Add(goagent.Service{})
 	services.Add(httpfs.Service{})
 	services.Add(logging.Service{})
+	services.Add(pprof.Service{})
 	services.Add(shadowsocks.Service{})
 	services.Add(socks.Service{})
 	services.Add(tcptun.Service{})
