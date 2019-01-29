@@ -27,10 +27,10 @@ type Service interface {
 }
 
 type Context struct {
-	ListenAddr string
 	Done       <-chan struct{}
 	Events     <-chan interface{}
 	Manager    *Manager
+	ListenAddr string
 }
 
 type Job struct {
@@ -49,7 +49,7 @@ func (job *Job) Active() bool {
 	}
 }
 
-func (job *Job) SendData(v interface{}) {
+func (job *Job) SetOptions(v interface{}) {
 	values := []interface{}{v, nil}
 	for _, v := range values {
 		select {
@@ -79,10 +79,12 @@ func NewManager() *Manager {
 }
 
 func (man *Manager) Add(service Service) {
+	man.mu.Lock()
 	man.services[service.Name()] = service
 	for _, alias := range service.Aliases() {
 		man.services[alias] = service
 	}
+	man.mu.Unlock()
 }
 
 func (man *Manager) setOptions(name string, data interface{}) error {
@@ -123,16 +125,12 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 			}()
 			defer cancel()
 			defer close(done)
-			service.Run(Context{listenAddr, ctx.Done(), events, man})
+			service.Run(Context{ctx.Done(), events, man, listenAddr})
 		}()
 		job = Job{serviceName, done, events, cancel}
 		man.jobs[name] = job
 	}
-
-	man.mu.Unlock()
-	job.SendData(options)
-	man.mu.Lock()
-
+	job.SetOptions(options)
 	return nil
 }
 
