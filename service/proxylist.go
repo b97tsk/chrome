@@ -1,10 +1,10 @@
-package proxy
+package service
 
 import (
 	"errors"
 	"net/url"
 
-	"golang.org/x/net/proxy"
+	"github.com/b97tsk/chrome/internal/proxy"
 )
 
 type Proxy struct {

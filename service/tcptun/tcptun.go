@@ -7,15 +7,14 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/configure"
-	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
-	ForwardAddr string          `yaml:"for"`
-	ProxyList   proxy.ProxyList `yaml:"over"`
+	ForwardAddr string            `yaml:"for"`
+	ProxyList   service.ProxyList `yaml:"over"`
 }
 
 type Service struct{}

@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 
 	"github.com/b97tsk/chrome/configure"
-	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
@@ -14,7 +13,7 @@ import (
 )
 
 type Options struct {
-	ProxyList proxy.ProxyList `yaml:"over"`
+	ProxyList service.ProxyList `yaml:"over"`
 }
 
 type Service struct{}

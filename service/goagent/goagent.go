@@ -24,15 +24,14 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/configure"
-	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
-	AppIDList []string        `yaml:"appids"`
-	ProxyList proxy.ProxyList `yaml:"over"`
+	AppIDList []string          `yaml:"appids"`
+	ProxyList service.ProxyList `yaml:"over"`
 }
 
 type Service struct{}

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/configure"
-	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/core"
@@ -18,7 +17,7 @@ import (
 type Options struct {
 	Method    string
 	Password  string
-	ProxyList proxy.ProxyList `yaml:"over"`
+	ProxyList service.ProxyList `yaml:"over"`
 }
 
 type Service struct{}
