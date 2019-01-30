@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -56,8 +57,10 @@ func (Service) Run(ctx service.Context) {
 	listener := NewListener(ln, ctx.Done)
 	handler := NewHandler(listener)
 	server := http.Server{
-		Handler: handler,
+		Handler:      handler,
+		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
 	}
+	defer handler.CloseIdleConnections()
 
 	serverDown := make(chan error, 1)
 	defer func() {
@@ -203,12 +206,17 @@ func NewHandler(l *Listener) *Handler {
 	h.tr = &http.Transport{
 		Dial:                  dial,
 		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       10 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
 	return h
+}
+
+func (h *Handler) CloseIdleConnections() {
+	h.tr.CloseIdleConnections()
 }
 
 func (h *Handler) SetDial(dial func(network, addr string) (net.Conn, error)) {
