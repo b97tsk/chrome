@@ -257,45 +257,44 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
 			return
 		}
-		if _, ok := rw.(http.Flusher); !ok {
-			http.Error(rw, "http.ResponseWriter does not implement http.Flusher.", http.StatusInternalServerError)
-			return
-		}
-
-		_, port, err := net.SplitHostPort(req.RequestURI)
-		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
-			rw.WriteHeader(http.StatusOK)
-			rw.(http.Flusher).Flush()
-
-			conn, _, err := rw.(http.Hijacker).Hijack()
-			if err != nil {
-				http.Error(rw, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			h.l.Inject(conn)
-			return
-		}
-
-		remote, err := h.tr.Dial("tcp", req.RequestURI)
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		defer remote.Close()
-
-		rw.WriteHeader(http.StatusOK)
-		rw.(http.Flusher).Flush()
-
 		conn, _, err := rw.(http.Hijacker).Hijack()
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		defer conn.Close()
+		go func() {
+			_, port, err := net.SplitHostPort(req.RequestURI)
+			if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
+				if _, err := conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n")); err != nil {
+					log.Printf("[goagent] write: %v\n", err)
+					conn.Close()
+					return
+				}
+				h.l.Inject(conn)
+				return
+			}
 
-		if err := utility.Relay(remote, conn); err != nil {
-			log.Printf("[goagent] relay: %v\n", err)
-		}
+			defer conn.Close()
+
+			remote, err := h.tr.Dial("tcp", req.RequestURI)
+			if err != nil {
+				if _, err := conn.Write([]byte("HTTP/1.1 503 Service Unavailable\r\n\r\n")); err != nil {
+					log.Printf("[goagent] write: %v\n", err)
+				}
+				return
+			}
+			defer remote.Close()
+
+			if _, err := conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n")); err != nil {
+				log.Printf("[goagent] write: %v\n", err)
+				return
+			}
+
+			if err := utility.Relay(remote, conn); err != nil {
+				log.Printf("[goagent] relay: %v\n", err)
+				return
+			}
+		}()
 		return
 	}
 
