@@ -149,7 +149,8 @@ func (set *MatchSet) parse(bytes []byte) []*atom {
 		}
 	}
 	if len(atoms) == 0 {
-		return nil
+		// Empty pattern matches any characters.
+		return []*atom{&atomSpecialDot}
 	}
 	if atoms[0] == &basicAtoms['.'] {
 		// Starting with '.' means it could match any characters at the beginning.
@@ -165,9 +166,6 @@ func (set *MatchSet) parse(bytes []byte) []*atom {
 func (set *MatchSet) Add(pattern string, data interface{}) {
 	set.lazyInit()
 	atoms := set.parse([]byte(pattern))
-	if len(atoms) == 0 {
-		return
-	}
 	// Reverse atoms for better performance, because in practice,
 	// patterns like ".abc" are much more frequently used than
 	// patterns like "abc.".

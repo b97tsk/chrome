@@ -115,7 +115,7 @@ func TestMatchSet(t *testing.T) {
 		{"a", "a*.", true},
 		{"a", "[a]", true},
 		{"a", "[^a]", false},
-		{"a", "", false},
+		{"a", "", true},
 		{"", "a", false},
 	}
 	for _, tt := range tests {
