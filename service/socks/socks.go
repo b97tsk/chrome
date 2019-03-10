@@ -2,6 +2,7 @@ package socks
 
 import (
 	"bufio"
+	"errors"
 	"hash/crc32"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,14 +26,17 @@ import (
 )
 
 type Options struct {
-	Routes    []Route
+	Routes    []RouteInfo
 	ProxyList service.ProxyList `yaml:"over"`
 }
 
-type Route struct {
+type RouteInfo struct {
 	File      string
 	ProxyList service.ProxyList `yaml:"over"`
+}
 
+type route struct {
+	RouteInfo
 	hash     uint32
 	dialer   proxy.Dialer
 	matchset atomic.Value
@@ -42,16 +47,15 @@ type patternConfig struct {
 	matchThosePorts []string
 }
 
-func (r *Route) use(r2 *Route) {
+func (r *route) Recycle(r2 *route) {
 	r.hash = r2.hash
 	r.matchset.Store(r2.matchset.Load())
 }
 
-func (r *Route) Init() {
+func (r *route) Init() error {
 	file, err := os.Open(r.File)
 	if err != nil {
-		log.Printf("[socks] %v\n", err)
-		return
+		return err
 	}
 	defer file.Close()
 
@@ -60,7 +64,7 @@ func (r *Route) Init() {
 	file.Seek(0, io.SeekStart)
 	hash := digest.Sum32()
 	if hash == r.hash {
-		return
+		return errNotModified
 	}
 	r.hash = hash
 
@@ -69,11 +73,11 @@ func (r *Route) Init() {
 
 	s := bufio.NewScanner(file)
 	for s.Scan() {
-		line := s.Text()
+		line := strings.TrimSpace(s.Text())
 		if line == "" || line[0] == '#' {
 			continue
 		}
-		portSuffix := regxMatchThePort.FindString(line)
+		portSuffix := regxPortSuffix.FindString(line)
 		pattern := line[:len(line)-len(portSuffix)]
 		config := patternConfigs[pattern]
 		if config == nil {
@@ -89,11 +93,11 @@ func (r *Route) Init() {
 		set.Add(pattern, config)
 	}
 	r.matchset.Store(&set)
-	log.Printf("[socks] loaded %v\n", r.File)
+	return nil
 }
 
-func (r *Route) Match(hostport string) bool {
-	matchset := r.matchset.Load().(*matchset.MatchSet)
+func (r *route) Match(hostport string) bool {
+	matchset, _ := r.matchset.Load().(*matchset.MatchSet)
 	if matchset == nil {
 		return false
 	}
@@ -112,7 +116,7 @@ func (r *Route) Match(hostport string) bool {
 	return false
 }
 
-func (r *Route) Dial(network, addr string) (net.Conn, error) {
+func (r *route) Dial(network, addr string) (net.Conn, error) {
 	if r.dialer == nil {
 		r.dialer, _ = r.ProxyList.NewDialer(direct)
 	}
@@ -156,14 +160,12 @@ func (Service) Run(ctx service.Context) {
 		dial := dial.Load().(func(network, addr string) (net.Conn, error))
 		hostport := addr.String()
 
-		if routes := routes.Load().(*[]Route); routes != nil {
+		if routes, _ := routes.Load().([]*route); routes != nil {
 			matches := matches.Load().(*sync.Map)
 			if r, ok := matches.Load(hostport); ok {
-				dial = r.(*Route).Dial
+				dial = r.(*route).Dial
 			} else {
-				routes := *routes
-				for i := range routes {
-					r := &routes[i]
+				for _, r := range routes {
 					if r.Match(hostport) {
 						log.Printf("[socks] %v matches %v\n", r.File, hostport)
 						dial = r.Dial
@@ -190,6 +192,7 @@ func (Service) Run(ctx service.Context) {
 		options     Options
 		watcher     *fsnotify.Watcher
 		watchEvents <-chan fsnotify.Event
+		watchErrors <-chan error
 		delayTimers = make(map[string]*time.Timer)
 		fileChanges = make(chan string)
 	)
@@ -209,45 +212,55 @@ func (Service) Run(ctx service.Context) {
 					d, _ := new.ProxyList.NewDialer(direct)
 					dial.Store(d.Dial)
 				}
-				routes.Store((*[]Route)(nil))
-				matches.Store((*sync.Map)(nil))
-				if len(new.Routes) != 0 {
+				if !routesEquals(new.Routes, old.Routes) {
 					if watcher == nil {
 						var err error
 						watcher, err = fsnotify.NewWatcher()
 						if watcher != nil {
 							watchEvents = watcher.Events
+							watchErrors = watcher.Errors
 						}
 						if err != nil {
 							log.Printf("[socks] %v\n", err)
 						}
 					}
+					newRoutes := make([]*route, len(new.Routes))
+					oldRoutes, _ := routes.Load().([]*route)
 					if watcher != nil {
-						for i := range old.Routes {
-							r := &old.Routes[i]
+						for _, r := range oldRoutes {
 							watcher.Remove(r.File)
 						}
 					}
-					for i := range new.Routes {
-						r := &new.Routes[i]
+					for i, r := range new.Routes {
 						r.File = filepath.Clean(os.ExpandEnv(r.File))
+						newRoutes[i] = &route{RouteInfo: r}
 						if watcher != nil {
 							err := watcher.Add(r.File)
 							if err != nil {
-								log.Printf("[socks] %v\n", err)
+								log.Printf("[socks] watcher: %v\n", err)
 							}
 						}
-						if i < len(old.Routes) {
-							r2 := &old.Routes[i]
+						didRecycle := false
+						for _, r2 := range oldRoutes {
 							if r.File == r2.File {
-								r.use(r2)
-								continue
+								newRoutes[i].Recycle(r2)
+								didRecycle = true
+								break
 							}
 						}
-						r.Init()
+						if !didRecycle {
+							switch err := newRoutes[i].Init(); err {
+							case nil:
+								log.Printf("[socks] loaded %v\n", r.File)
+							case errNotModified:
+							default:
+								log.Printf("[socks] fatal: %v\n", err)
+								return // Consider fatal here.
+							}
+						}
 					}
 					matches.Store(&sync.Map{})
-					routes.Store(&options.Routes)
+					routes.Store(newRoutes)
 				}
 			}
 		case e := <-watchEvents:
@@ -262,13 +275,21 @@ func (Service) Run(ctx service.Context) {
 					timer.Reset(time.Second)
 				}
 			}
+		case err := <-watchErrors:
+			log.Printf("[socks] watcher: %v\n", err)
 		case name := <-fileChanges:
+			routes, _ := routes.Load().([]*route)
 			routesChanged := false
-			for i := range options.Routes {
-				r := &options.Routes[i]
+			for _, r := range routes {
 				if r.File == name {
-					r.Init()
-					routesChanged = true
+					switch err := r.Init(); err {
+					case nil:
+						log.Printf("[socks] loaded %v\n", r.File)
+						routesChanged = true
+					case errNotModified:
+					default:
+						log.Printf("[socks] reload: %v\n", err)
+					}
 				}
 			}
 			delete(delayTimers, name)
@@ -297,11 +318,26 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
+func routesEquals(a, b []RouteInfo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		r1, r2 := &a[i], &b[i]
+		if r1.File != r2.File || !r1.ProxyList.Equals(r2.ProxyList) {
+			return false
+		}
+	}
+	return true
+}
+
 var (
 	direct = &net.Dialer{
 		Timeout:   configure.Timeout,
 		KeepAlive: configure.KeepAlive,
 	}
 
-	regxMatchThePort = regexp.MustCompile(`:\d+$`)
+	errNotModified = errors.New("not modified")
+
+	regxPortSuffix = regexp.MustCompile(`:\d+$`)
 )
