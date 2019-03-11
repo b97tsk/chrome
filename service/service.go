@@ -88,6 +88,9 @@ func (man *Manager) Add(service Service) {
 }
 
 func (man *Manager) setOptions(name string, data interface{}) error {
+	if strings.TrimPrefix(name, "alias") != name {
+		return nil // If name starts with "alias", silently ignores it.
+	}
 	fields := strings.SplitN(name, "|", 3)
 	if len(fields) != 3 {
 		return fmt.Errorf("ignore %v", name)
@@ -154,8 +157,7 @@ func (man *Manager) Load(configFile string) {
 	man.hash = hash
 
 	var c struct {
-		Logfile string `yaml:"logging"`
-		Aliases []interface{}
+		Logfile string                 `yaml:"logging"`
 		Jobs    map[string]interface{} `yaml:",inline"`
 	}
 
