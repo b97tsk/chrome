@@ -183,9 +183,7 @@ func (Service) Run(ctx service.Context) {
 		}
 		defer rc.Close()
 
-		if err = utility.Relay(rc, c); err != nil {
-			log.Printf("[socks] relay: %v\n", err)
-		}
+		utility.Relay(rc, c)
 	})
 
 	var (

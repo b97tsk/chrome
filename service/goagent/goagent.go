@@ -290,10 +290,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			if err := utility.Relay(remote, conn); err != nil {
-				log.Printf("[goagent] relay: %v\n", err)
-				return
-			}
+			utility.Relay(remote, conn)
 		}()
 		return
 	}
