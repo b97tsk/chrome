@@ -262,10 +262,16 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		requestURI := req.RequestURI
+		httpVersion := "HTTP/1.0"
+		if req.ProtoAtLeast(1, 1) {
+			httpVersion = "HTTP/1.1"
+		}
 		go func() {
-			_, port, err := net.SplitHostPort(req.RequestURI)
+			_, port, err := net.SplitHostPort(requestURI)
 			if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
-				if _, err := conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n")); err != nil {
+				responseString := httpVersion + " 200 OK\r\n\r\n"
+				if _, err := conn.Write([]byte(responseString)); err != nil {
 					log.Printf("[goagent] write: %v\n", err)
 					conn.Close()
 					return
@@ -276,16 +282,18 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			defer conn.Close()
 
-			remote, err := h.tr.Dial("tcp", req.RequestURI)
+			remote, err := h.tr.Dial("tcp", requestURI)
 			if err != nil {
-				if _, err := conn.Write([]byte("HTTP/1.1 503 Service Unavailable\r\n\r\n")); err != nil {
+				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
+				if _, err := conn.Write([]byte(responseString)); err != nil {
 					log.Printf("[goagent] write: %v\n", err)
 				}
 				return
 			}
 			defer remote.Close()
 
-			if _, err := conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n")); err != nil {
+			responseString := httpVersion + " 200 OK\r\n\r\n"
+			if _, err := conn.Write([]byte(responseString)); err != nil {
 				log.Printf("[goagent] write: %v\n", err)
 				return
 			}
