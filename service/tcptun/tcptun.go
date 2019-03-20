@@ -52,7 +52,7 @@ func (Service) Run(ctx service.Context) {
 
 		rc, err := connect.(func() (net.Conn, error))()
 		if err != nil {
-			log.Printf("[tcptun] %v\n", err)
+			// log.Printf("[tcptun] %v\n", err)
 			return
 		}
 		defer rc.Close()

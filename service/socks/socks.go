@@ -178,7 +178,7 @@ func (Service) Run(ctx service.Context) {
 
 		rc, err := dial("tcp", hostport)
 		if err != nil {
-			log.Printf("[socks] %v\n", err)
+			// log.Printf("[socks] %v\n", err)
 			return
 		}
 		defer rc.Close()

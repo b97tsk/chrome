@@ -71,7 +71,7 @@ func (Service) Run(ctx service.Context) {
 		dial := dial.Load().(func(network, addr string) (net.Conn, error))
 		rc, err := dial("tcp", addr.String())
 		if err != nil {
-			log.Printf("[shadowsocks] %v\n", err)
+			// log.Printf("[shadowsocks] %v\n", err)
 			return
 		}
 		defer rc.Close()
