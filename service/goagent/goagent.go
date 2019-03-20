@@ -686,7 +686,7 @@ type autoRangeRequest struct {
 	buffers   chan []byte
 	startTime time.Time
 	readSize  int64
-	buf       []byte
+	buf       *[]byte
 	err       atomic.Value
 }
 
@@ -703,11 +703,13 @@ func (r *autoRangeRequest) init() {
 
 		requestSize := r.rangeLast - r.rangeFirst + 1
 		if requestSize > perRequestSize {
-			r.buf = make([]byte, requestSize)
+			buf := make([]byte, requestSize)
+			r.buf = &buf
 		} else {
-			r.buf = reqBufferPool.Get().([]byte)
+			r.buf = reqBufferPool.Get().(*[]byte)
 		}
-		buf := r.buf[:requestSize]
+
+		buf := (*r.buf)[:requestSize]
 
 		readResponse := func(resp *http.Response) {
 			for len(buf) > 0 {
@@ -917,7 +919,8 @@ var (
 
 	reqBufferPool = sync.Pool{
 		New: func() interface{} {
-			return make([]byte, perRequestSize)
+			buf := make([]byte, perRequestSize)
+			return &buf
 		},
 	}
 
