@@ -6,10 +6,8 @@ import (
 	"errors"
 	"log"
 	"net"
-	"net/url"
 	"strings"
 
-	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"github.com/gogo/protobuf/proto"
 	"gopkg.in/yaml.v2"
@@ -19,7 +17,20 @@ import (
 )
 
 type Options struct {
-	URL string
+	Version    string `yaml:"v"`
+	Postscript string `yaml:"ps"`
+
+	Address string `yaml:"add"`
+	Port    string `yaml:"port"`
+	ID      string `yaml:"id"`
+	AlterID string `yaml:"aid"`
+
+	Net  string `yaml:"net"`
+	TLS  string `yaml:"tls"`
+	Type string `yaml:"type"`
+
+	Path string `yaml:"path"`
+	Host string `yaml:"host"`
 }
 
 type Service struct{}
@@ -60,7 +71,7 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := data.(Options); ok {
 				old := options
 				options = new
-				if new.URL != old.URL {
+				if new != old {
 					if instance != nil {
 						err := instance.Close()
 						if err != nil {
@@ -69,9 +80,9 @@ func (Service) Run(ctx service.Context) {
 						instance = nil
 						log.Printf("[vmess] stopped listening on %v\n", ctx.ListenAddr)
 					}
-					instance, err = parseURL(new.URL, localAddr, localPort)
+					instance, err = createInstance(new, localAddr, localPort)
 					if err != nil {
-						log.Printf("[vmess] parse url: %v\n", err)
+						log.Printf("[vmess] create instance: %v\n", err)
 						break
 					}
 					err = instance.Start()
@@ -90,44 +101,18 @@ func (Service) Run(ctx service.Context) {
 
 func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	var options Options
-	if err := yaml.UnmarshalStrict(text, &options.URL); err != nil {
+	if err := yaml.UnmarshalStrict(text, &options); err != nil {
 		return nil, err
 	}
 	return options, nil
 }
 
-func parseURL(rawurl, localAddr, localPort string) (*core.Instance, error) {
-	u, err := url.Parse(rawurl)
-	if err != nil || u.Scheme != "vmess" {
-		return nil, errors.New("invalid vmess: " + rawurl)
-	}
-	data, err := utility.DecodeBase64String(u.Host)
-	if err != nil {
-		return nil, errors.New("invalid vmess: " + rawurl)
-	}
-
-	var c struct {
-		Version string `json:"v"`
-
-		Net  string `json:"net"`
-		TLS  string `json:"tls"`
-		Type string `json:"type"`
-
-		Address string `json:"add"`
-		Port    string `json:"port"`
-		ID      string `json:"id"`
-		AlterID string `json:"aid"`
-
-		Path string `json:"path"`
-		Host string `json:"host"`
-
-		LocalAddr string `json:"-"`
-		LocalPort string `json:"-"`
-	}
-
-	if err := json.Unmarshal(data, &c); err != nil {
-		return nil, errors.New("invalid vmess: " + rawurl)
-	}
+func createInstance(options Options, localAddr, localPort string) (*core.Instance, error) {
+	c := struct {
+		Options
+		LocalAddr string
+		LocalPort string
+	}{options, localAddr, localPort}
 
 	var templateName string
 
@@ -182,10 +167,8 @@ func parseURL(rawurl, localAddr, localPort string) (*core.Instance, error) {
 
 	tpl := vmessTemplate.Lookup(templateName)
 	if tpl == nil {
-		return nil, errors.New("unknown vmess: " + rawurl)
+		return nil, errors.New("unknown vmess type: " + templateName)
 	}
-
-	c.LocalAddr, c.LocalPort = localAddr, localPort
 
 	buf := new(bytes.Buffer)
 
