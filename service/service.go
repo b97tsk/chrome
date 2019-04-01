@@ -21,7 +21,6 @@ import (
 
 type Service interface {
 	Name() string
-	Aliases() []string
 	Run(Context)
 	UnmarshalOptions([]byte) (interface{}, error)
 }
@@ -81,9 +80,6 @@ func NewManager() *Manager {
 func (man *Manager) Add(service Service) {
 	man.mu.Lock()
 	man.services[service.Name()] = service
-	for _, alias := range service.Aliases() {
-		man.services[alias] = service
-	}
 	man.mu.Unlock()
 }
 
@@ -93,7 +89,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	}
 	fields := strings.SplitN(name, "|", 3)
 	if len(fields) != 3 {
-		return fmt.Errorf("ignore %v", name)
+		return fmt.Errorf("ignored %v", name)
 	}
 
 	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
@@ -101,10 +97,6 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	if !ok {
 		return fmt.Errorf("service %q not found", serviceName)
 	}
-
-	serviceName = service.Name()
-	fields[0] = serviceName
-	name = strings.Join(fields, "|")
 
 	text, _ := yaml.Marshal(data)
 	options, err := service.UnmarshalOptions(text)
