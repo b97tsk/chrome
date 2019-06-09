@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net"
-	"strings"
 
 	"github.com/b97tsk/chrome/service"
 	"github.com/gogo/protobuf/proto"
@@ -17,9 +16,6 @@ import (
 )
 
 type Options struct {
-	Version    string `yaml:"v"`
-	Postscript string `yaml:"ps"`
-
 	Address string `yaml:"add"`
 	Port    string `yaml:"port"`
 	ID      string `yaml:"id"`
@@ -121,12 +117,6 @@ func createInstance(options Options, localAddr, localPort string) (*core.Instanc
 	case "tcp/", "tcp/none":
 		templateName = "tcp"
 		if c.Type == "http" {
-			if c.Version == "" {
-				fields := strings.SplitN(c.Path, ";", 2)
-				if len(fields) == 2 {
-					c.Path, c.Host = fields[0], fields[1]
-				}
-			}
 			if c.Path == "" {
 				c.Path = "/"
 			}
@@ -141,17 +131,8 @@ func createInstance(options Options, localAddr, localPort string) (*core.Instanc
 		}
 		templateName = "tcp/tls"
 	case "ws/", "ws/none":
-		if c.Version == "" && c.Path == "" {
-			c.Path = c.Host
-		}
 		templateName = "ws"
 	case "h2/tls", "ws/tls":
-		if c.Version == "" {
-			fields := strings.SplitN(c.Path, ";", 2)
-			if len(fields) == 2 {
-				c.Path, c.Host = fields[0], fields[1]
-			}
-		}
 		if c.Path == "" {
 			c.Path = "/"
 		}
