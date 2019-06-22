@@ -26,13 +26,13 @@ import (
 )
 
 type Options struct {
-	Routes    []RouteInfo
-	ProxyList service.ProxyList `yaml:"over"`
+	Routes []RouteInfo
+	Proxy  proxy.ProxyChain `yaml:"over"`
 }
 
 type RouteInfo struct {
-	File      string
-	ProxyList service.ProxyList `yaml:"over"`
+	File  string
+	Proxy proxy.ProxyChain `yaml:"over"`
 }
 
 type route struct {
@@ -118,7 +118,7 @@ func (r *route) Match(hostport string) bool {
 
 func (r *route) Dial(network, addr string) (net.Conn, error) {
 	if r.dialer == nil {
-		r.dialer, _ = r.ProxyList.NewDialer(direct)
+		r.dialer, _ = r.Proxy.NewDialer(direct)
 	}
 	return r.dialer.Dial(network, addr)
 }
@@ -202,8 +202,8 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := data.(Options); ok {
 				old := options
 				options = new
-				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.NewDialer(direct)
+				if !new.Proxy.Equals(old.Proxy) {
+					d, _ := new.Proxy.NewDialer(direct)
 					dial.Store(d.Dial)
 				}
 				if !routesEquals(new.Routes, old.Routes) {
@@ -318,7 +318,7 @@ func routesEquals(a, b []RouteInfo) bool {
 	}
 	for i := range a {
 		r1, r2 := &a[i], &b[i]
-		if r1.File != r2.File || !r1.ProxyList.Equals(r2.ProxyList) {
+		if r1.File != r2.File || !r1.Proxy.Equals(r2.Proxy) {
 			return false
 		}
 	}

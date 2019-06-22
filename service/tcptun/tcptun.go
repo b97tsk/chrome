@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/configure"
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
-	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
-	ForwardAddr string            `yaml:"for"`
-	ProxyList   service.ProxyList `yaml:"over"`
+	ForwardAddr string           `yaml:"for"`
+	Proxy       proxy.ProxyChain `yaml:"over"`
 }
 
 type Service struct{}
@@ -67,8 +67,8 @@ func (Service) Run(ctx service.Context) {
 				old := options
 				options = new
 				shouldUpdate := new.ForwardAddr != old.ForwardAddr
-				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.NewDialer(direct)
+				if !new.Proxy.Equals(old.Proxy) {
+					d, _ := new.Proxy.NewDialer(direct)
 					dial = d.Dial
 					shouldUpdate = true
 				}

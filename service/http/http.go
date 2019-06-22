@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/configure"
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
-	ProxyList service.ProxyList `yaml:"over"`
+	Proxy proxy.ProxyChain `yaml:"over"`
 }
 
 type Service struct{}
@@ -61,8 +62,8 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := data.(Options); ok {
 				old := options
 				options = new
-				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.NewDialer(direct)
+				if !new.Proxy.Equals(old.Proxy) {
+					d, _ := new.Proxy.NewDialer(direct)
 					handler.SetDial(d.Dial)
 				}
 			}

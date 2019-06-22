@@ -7,17 +7,17 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/configure"
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
-	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
-	Method    string
-	Password  string
-	ProxyList service.ProxyList `yaml:"over"`
+	Method   string
+	Password string
+	Proxy    proxy.ProxyChain `yaml:"over"`
 }
 
 type Service struct{}
@@ -91,8 +91,8 @@ func (Service) Run(ctx service.Context) {
 						cipher.Store(Cipher{c})
 					}
 				}
-				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.NewDialer(direct)
+				if !new.Proxy.Equals(old.Proxy) {
+					d, _ := new.Proxy.NewDialer(direct)
 					dial.Store(d.Dial)
 				}
 			}

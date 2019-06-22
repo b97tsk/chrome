@@ -25,14 +25,14 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/configure"
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
-	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
-	AppIDList []string          `yaml:"appids"`
-	ProxyList service.ProxyList `yaml:"over"`
+	AppIDList []string         `yaml:"appids"`
+	Proxy     proxy.ProxyChain `yaml:"over"`
 }
 
 type Service struct{}
@@ -80,8 +80,8 @@ func (Service) Run(ctx service.Context) {
 				if !isTwoAppIDListsIdentical(new.AppIDList, old.AppIDList) {
 					handler.SetAppIDList(new.AppIDList)
 				}
-				if !new.ProxyList.Equals(old.ProxyList) {
-					d, _ := new.ProxyList.NewDialer(direct)
+				if !new.Proxy.Equals(old.Proxy) {
+					d, _ := new.Proxy.NewDialer(direct)
 					handler.SetDial(d.Dial)
 				}
 			}
