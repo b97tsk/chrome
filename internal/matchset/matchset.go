@@ -183,12 +183,24 @@ func (set *MatchSet) Add(pattern string, data interface{}) {
 	set.patterns = append(set.patterns, atoms[:len(atoms)-1])
 }
 
+func (set *MatchSet) Empty() bool {
+	return len(set.patterns) == 0
+}
+
 func (set *MatchSet) Match(source string) (matches []interface{}) {
-	set.MatchFunc(source, func(data interface{}) { matches = append(matches, data) })
+	if set.Empty() {
+		return
+	}
+	set.MatchFunc(source, func(data interface{}) {
+		matches = append(matches, data)
+	})
 	return
 }
 
 func (set *MatchSet) MatchCount(source string) (count int) {
+	if set.Empty() {
+		return
+	}
 	set.MatchFunc(source, func(data interface{}) { count++ })
 	return
 }
