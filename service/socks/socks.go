@@ -40,6 +40,7 @@ type route struct {
 	hash     uint32
 	dialer   proxy.Dialer
 	matchset atomic.Value
+	excludes atomic.Value
 }
 
 type patternConfig struct {
@@ -50,6 +51,7 @@ type patternConfig struct {
 func (r *route) Recycle(r2 *route) {
 	r.hash = r2.hash
 	r.matchset.Store(r2.matchset.Load())
+	r.excludes.Store(r2.excludes.Load())
 }
 
 func (r *route) Init() error {
@@ -68,7 +70,7 @@ func (r *route) Init() error {
 	}
 	r.hash = hash
 
-	var set matchset.MatchSet
+	var set, excludes matchset.MatchSet
 	patternConfigs := make(map[string]*patternConfig)
 
 	s := bufio.NewScanner(file)
@@ -76,6 +78,10 @@ func (r *route) Init() error {
 		line := strings.TrimSpace(s.Text())
 		if line == "" || line[0] == '#' {
 			continue
+		}
+		exclude := line[0] == '!'
+		if exclude {
+			line = line[1:]
 		}
 		portSuffix := regxPortSuffix.FindString(line)
 		pattern := line[:len(line)-len(portSuffix)]
@@ -90,14 +96,26 @@ func (r *route) Init() error {
 		} else if !config.matchAllPorts {
 			config.matchThosePorts = append(config.matchThosePorts, portSuffix[1:])
 		}
-		set.Add(pattern, config)
+		if !exclude {
+			set.Add(pattern, config)
+		} else {
+			excludes.Add(pattern, config)
+		}
 	}
 	r.matchset.Store(&set)
+	r.excludes.Store(&excludes)
 	return nil
 }
 
 func (r *route) Match(hostport string) bool {
-	matchset, _ := r.matchset.Load().(*matchset.MatchSet)
+	if !r.match(&r.matchset, hostport) {
+		return false
+	}
+	return !r.match(&r.excludes, hostport)
+}
+
+func (r *route) match(set *atomic.Value, hostport string) bool {
+	matchset, _ := set.Load().(*matchset.MatchSet)
 	if matchset == nil {
 		return false
 	}
