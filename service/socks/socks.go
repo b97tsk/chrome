@@ -280,7 +280,10 @@ func (Service) Run(ctx service.Context) {
 				timer := delayTimers[e.Name]
 				if timer == nil {
 					timer = time.AfterFunc(time.Second, func() {
-						fileChanges <- e.Name
+						select {
+						case fileChanges <- e.Name:
+						case <-ctx.Done:
+						}
 					})
 					delayTimers[e.Name] = timer
 				} else {
