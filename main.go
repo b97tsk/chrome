@@ -23,8 +23,12 @@ import (
 )
 
 func main() {
+	base := filepath.Base(os.Args[0])
+	ext := filepath.Ext(base)
+	def := base[:len(base)-len(ext)] + ".yaml"
+
 	var configFile string
-	flag.StringVar(&configFile, "conf", "chrome.yaml", "config file")
+	flag.StringVar(&configFile, "conf", def, "config file")
 	flag.Parse()
 
 	watcher, err := fsnotify.NewWatcher()
