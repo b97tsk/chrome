@@ -8,22 +8,21 @@ var vmessTemplate *template.Template
 
 func init() {
 	vmessTemplate = template.New("vmess")
-	template.Must(vmessTemplate.New("h2/tls").Parse(vmess_h2_tls_jsonString))
-	template.Must(vmessTemplate.New("kcp").Parse(vmess_kcp_jsonString))
-	template.Must(vmessTemplate.New("tcp").Parse(vmess_tcp_jsonString))
-	template.Must(vmessTemplate.New("tcp/http").Parse(vmess_tcp_http_jsonString))
-	template.Must(vmessTemplate.New("tcp/tls").Parse(vmess_tcp_tls_jsonString))
-	template.Must(vmessTemplate.New("ws").Parse(vmess_ws_jsonString))
-	template.Must(vmessTemplate.New("ws/tls").Parse(vmess_ws_tls_jsonString))
+	template.Must(vmessTemplate.New("h2/tls").Parse(h2TLSJSONString))
+	template.Must(vmessTemplate.New("kcp").Parse(kcpJSONString))
+	template.Must(vmessTemplate.New("tcp").Parse(tcpJSONString))
+	template.Must(vmessTemplate.New("tcp/http").Parse(tcpHTTPJSONString))
+	template.Must(vmessTemplate.New("tcp/tls").Parse(tcpTLSJSONString))
+	template.Must(vmessTemplate.New("ws").Parse(wsJSONString))
+	template.Must(vmessTemplate.New("ws/tls").Parse(wsTLSJSONString))
 }
 
-var vmess_h2_tls_jsonString = `
+const h2TLSJSONString = `
 {
   "inbound": {
-    "port": {{.LocalPort}},
-    "listen": "{{.LocalAddr}}",
-    "protocol": "socks",
-    "settings": {}
+    "listen": "{{.ListenHost}}",
+    "port": {{.ListenPort}},
+    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -54,19 +53,21 @@ var vmess_h2_tls_jsonString = `
   },
   "policy": {
     "levels": {
-      "0": {"uplinkOnly": 0}
+      "0": {
+        "uplinkOnly": 0,
+        "downlinkOnly": 0
+      }
     }
   }
 }
 `
 
-var vmess_kcp_jsonString = `
+const kcpJSONString = `
 {
   "inbound": {
-    "port": {{.LocalPort}},
-    "listen": "{{.LocalAddr}}",
-    "protocol": "socks",
-    "settings": {}
+    "listen": "{{.ListenHost}}",
+    "port": {{.ListenPort}},
+    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -102,19 +103,21 @@ var vmess_kcp_jsonString = `
   },
   "policy": {
     "levels": {
-      "0": {"uplinkOnly": 0}
+      "0": {
+        "uplinkOnly": 0,
+        "downlinkOnly": 0
+      }
     }
   }
 }
 `
 
-var vmess_tcp_jsonString = `
+const tcpJSONString = `
 {
   "inbound": {
-    "port": {{.LocalPort}},
-    "listen": "{{.LocalAddr}}",
-    "protocol": "socks",
-    "settings": {}
+    "listen": "{{.ListenHost}}",
+    "port": {{.ListenPort}},
+    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -140,19 +143,21 @@ var vmess_tcp_jsonString = `
   },
   "policy": {
     "levels": {
-      "0": {"uplinkOnly": 0}
+      "0": {
+        "uplinkOnly": 0,
+        "downlinkOnly": 0
+      }
     }
   }
 }
 `
 
-var vmess_tcp_http_jsonString = `
+const tcpHTTPJSONString = `
 {
   "inbound": {
-    "port": {{.LocalPort}},
-    "listen": "{{.LocalAddr}}",
-    "protocol": "socks",
-    "settings": {}
+    "listen": "{{.ListenHost}}",
+    "port": {{.ListenPort}},
+    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -191,19 +196,21 @@ var vmess_tcp_http_jsonString = `
   },
   "policy": {
     "levels": {
-      "0": {"uplinkOnly": 0}
+      "0": {
+        "uplinkOnly": 0,
+        "downlinkOnly": 0
+      }
     }
   }
 }
 `
 
-var vmess_tcp_tls_jsonString = `
+const tcpTLSJSONString = `
 {
   "inbound": {
-    "port": {{.LocalPort}},
-    "listen": "{{.LocalAddr}}",
-    "protocol": "socks",
-    "settings": {}
+    "listen": "{{.ListenHost}}",
+    "port": {{.ListenPort}},
+    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -234,19 +241,21 @@ var vmess_tcp_tls_jsonString = `
   },
   "policy": {
     "levels": {
-      "0": {"uplinkOnly": 0}
+      "0": {
+        "uplinkOnly": 0,
+        "downlinkOnly": 0
+      }
     }
   }
 }
 `
 
-var vmess_ws_jsonString = `
+const wsJSONString = `
 {
   "inbound": {
-    "port": {{.LocalPort}},
-    "listen": "{{.LocalAddr}}",
-    "protocol": "socks",
-    "settings": {}
+    "listen": "{{.ListenHost}}",
+    "port": {{.ListenPort}},
+    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -269,26 +278,27 @@ var vmess_ws_jsonString = `
     "streamSettings": {
       "network": "ws",
       "wsSettings": {
-        "path": "{{.Path}}",
-        "headers": {}
+        "path": "{{.Path}}"
       }
     }
   },
   "policy": {
     "levels": {
-      "0": {"uplinkOnly": 0}
+      "0": {
+        "uplinkOnly": 0,
+        "downlinkOnly": 0
+      }
     }
   }
 }
 `
 
-var vmess_ws_tls_jsonString = `
+const wsTLSJSONString = `
 {
   "inbound": {
-    "port": {{.LocalPort}},
-    "listen": "{{.LocalAddr}}",
-    "protocol": "socks",
-    "settings": {}
+    "listen": "{{.ListenHost}}",
+    "port": {{.ListenPort}},
+    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -313,13 +323,18 @@ var vmess_ws_tls_jsonString = `
       "security": "tls",
       "wsSettings": {
         "path": "{{.Path}}",
-        "headers": {"Host": "{{.Host}}"}
+        "headers": {
+          "Host": "{{.Host}}"
+        }
       }
     }
   },
   "policy": {
     "levels": {
-      "0": {"uplinkOnly": 0}
+      "0": {
+        "uplinkOnly": 0,
+        "downlinkOnly": 0
+      }
     }
   }
 }

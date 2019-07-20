@@ -36,7 +36,7 @@ func (Service) Name() string {
 }
 
 func (Service) Run(ctx service.Context) {
-	localAddr, localPort, err := net.SplitHostPort(ctx.ListenAddr)
+	listenHost, listenPort, err := net.SplitHostPort(ctx.ListenAddr)
 	if err != nil {
 		log.Printf("[vmess] %v\n", err)
 		return
@@ -72,7 +72,7 @@ func (Service) Run(ctx service.Context) {
 						instance = nil
 						log.Printf("[vmess] stopped listening on %v\n", ctx.ListenAddr)
 					}
-					instance, err = createInstance(new, localAddr, localPort)
+					instance, err = createInstance(new, listenHost, listenPort)
 					if err != nil {
 						log.Printf("[vmess] create instance: %v\n", err)
 						break
@@ -99,12 +99,12 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
-func createInstance(options Options, localAddr, localPort string) (*core.Instance, error) {
+func createInstance(options Options, listenHost, listenPort string) (*core.Instance, error) {
 	c := struct {
 		Options
-		LocalAddr string
-		LocalPort string
-	}{options, localAddr, localPort}
+		ListenHost string
+		ListenPort string
+	}{options, listenHost, listenPort}
 
 	var templateName string
 
