@@ -28,7 +28,7 @@ func httpFromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
 	if u.Port() == "" {
 		host = net.JoinHostPort(host, "80")
 	}
-	return httpDialer{host, auth, forward}, nil
+	return &httpDialer{host, auth, forward}, nil
 }
 
 type httpDialer struct {
@@ -37,7 +37,7 @@ type httpDialer struct {
 	Forward proxy.Dialer
 }
 
-func (d httpDialer) Dial(network, addr string) (net.Conn, error) {
+func (d *httpDialer) Dial(network, addr string) (net.Conn, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		return d.DialTCP(network, addr)
@@ -46,7 +46,7 @@ func (d httpDialer) Dial(network, addr string) (net.Conn, error) {
 	}
 }
 
-func (d httpDialer) DialTCP(network, addr string) (net.Conn, error) {
+func (d *httpDialer) DialTCP(network, addr string) (net.Conn, error) {
 	conn, err := d.Forward.Dial("tcp", d.Server)
 	if err != nil {
 		return nil, err
