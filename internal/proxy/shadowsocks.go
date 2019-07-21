@@ -44,7 +44,7 @@ func shadowsocksFromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) 
 	if err != nil {
 		return nil, shadowsocksUnknownCipherError{origin}
 	}
-	return shadowsocksDialer{u.Host, cipher, forward}, nil
+	return &shadowsocksDialer{u.Host, cipher, forward}, nil
 }
 
 type shadowsocksDialer struct {
@@ -53,7 +53,7 @@ type shadowsocksDialer struct {
 	Forward proxy.Dialer
 }
 
-func (d shadowsocksDialer) Dial(network, addr string) (net.Conn, error) {
+func (d *shadowsocksDialer) Dial(network, addr string) (net.Conn, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 		return d.DialTCP(network, addr)
@@ -62,7 +62,7 @@ func (d shadowsocksDialer) Dial(network, addr string) (net.Conn, error) {
 	}
 }
 
-func (d shadowsocksDialer) DialTCP(network, addr string) (net.Conn, error) {
+func (d *shadowsocksDialer) DialTCP(network, addr string) (net.Conn, error) {
 	remoteAddr := socks.ParseAddr(addr)
 	if remoteAddr == nil {
 		return nil, shadowsocksParseAddrError(addr)
