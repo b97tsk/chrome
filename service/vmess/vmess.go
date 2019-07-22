@@ -2,17 +2,13 @@ package vmess
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"log"
 	"net"
 
+	"github.com/b97tsk/chrome/internal/v2ray"
 	"github.com/b97tsk/chrome/service"
-	"github.com/gogo/protobuf/proto"
 	"gopkg.in/yaml.v2"
-	"v2ray.com/core"
-	_ "v2ray.com/core/main/distro/all"
-	"v2ray.com/ext/tools/conf"
 )
 
 type Options struct {
@@ -42,7 +38,7 @@ func (Service) Run(ctx service.Context) {
 		return
 	}
 
-	var instance *core.Instance
+	var instance v2ray.Instance
 	defer func() {
 		if instance != nil {
 			err := instance.Close()
@@ -99,7 +95,7 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	return options, nil
 }
 
-func createInstance(options Options, listenHost, listenPort string) (*core.Instance, error) {
+func createInstance(options Options, listenHost, listenPort string) (v2ray.Instance, error) {
 	c := struct {
 		Options
 		ListenHost string
@@ -153,27 +149,5 @@ func createInstance(options Options, listenHost, listenPort string) (*core.Insta
 		return nil, err
 	}
 
-	config := conf.Config{}
-
-	if err := json.Unmarshal(buf.Bytes(), &config); err != nil {
-		return nil, err
-	}
-
-	pb, err := config.Build()
-	if err != nil {
-		return nil, err
-	}
-
-	pbBytes, err := proto.Marshal(pb)
-	if err != nil {
-		return nil, err
-	}
-
-	pbBuffer := bytes.NewBuffer(pbBytes)
-	coreConfig, err := core.LoadConfig("protobuf", ".pb", pbBuffer)
-	if err != nil {
-		return nil, err
-	}
-
-	return core.New(coreConfig)
+	return v2ray.NewInstanceFromJSON(buf.Bytes())
 }
