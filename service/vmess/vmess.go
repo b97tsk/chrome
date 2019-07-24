@@ -17,12 +17,14 @@ type Options struct {
 	ID      string `yaml:"id"`
 	AlterID string `yaml:"aid"`
 
-	Net  string `yaml:"net"`
-	TLS  string `yaml:"tls"`
-	Type string `yaml:"type"`
+	Net  string
+	TLS  string
+	Type string
 
-	Path string `yaml:"path"`
-	Host string `yaml:"host"`
+	Path string
+	Host string
+
+	Mux int
 }
 
 type Service struct{}
@@ -98,9 +100,20 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 func createInstance(options Options, listenHost, listenPort string) (v2ray.Instance, error) {
 	c := struct {
 		Options
-		ListenHost string
-		ListenPort string
-	}{options, listenHost, listenPort}
+		ListenHost     string
+		ListenPort     string
+		MuxEnabled     bool
+		MuxConcurrency int
+	}{
+		Options:    options,
+		ListenHost: listenHost,
+		ListenPort: listenPort,
+	}
+
+	if c.Mux > 0 {
+		c.MuxEnabled = true
+		c.MuxConcurrency = c.Mux
+	}
 
 	var templateName string
 
@@ -116,13 +129,13 @@ func createInstance(options Options, listenHost, listenPort string) (v2ray.Insta
 			if c.Path == "" {
 				c.Path = "/"
 			}
-			if c.Host == "" {
+			if c.Host == "" && net.ParseIP(c.Address) == nil {
 				c.Host = c.Address
 			}
 			templateName = "tcp/http"
 		}
 	case "tcp/tls":
-		if c.Host == "" {
+		if c.Host == "" && net.ParseIP(c.Address) == nil {
 			c.Host = c.Address
 		}
 		templateName = "tcp/tls"
@@ -132,7 +145,7 @@ func createInstance(options Options, listenHost, listenPort string) (v2ray.Insta
 		if c.Path == "" {
 			c.Path = "/"
 		}
-		if c.Host == "" {
+		if c.Host == "" && net.ParseIP(c.Address) == nil {
 			c.Host = c.Address
 		}
 		templateName = c.Net + "/" + c.TLS

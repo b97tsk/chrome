@@ -49,6 +49,10 @@ const h2TLSJSONString = `
         "host": ["{{.Host}}"],
         "path": "{{.Path}}"
       }
+    },
+    "mux": {
+      "enabled": {{.MuxEnabled}},
+      "concurrency": {{.MuxConcurrency}}
     }
   },
   "policy": {
@@ -99,6 +103,10 @@ const kcpJSONString = `
         "writeBufferSize": 2,
         "header": {"type": "{{.Type}}"}
       }
+    },
+    "mux": {
+      "enabled": {{.MuxEnabled}},
+      "concurrency": {{.MuxConcurrency}}
     }
   },
   "policy": {
@@ -139,6 +147,10 @@ const tcpJSONString = `
     },
     "streamSettings": {
       "network": "tcp"
+    },
+    "mux": {
+      "enabled": {{.MuxEnabled}},
+      "concurrency": {{.MuxConcurrency}}
     }
   },
   "policy": {
@@ -192,6 +204,10 @@ const tcpHTTPJSONString = `
           }
         }
       }
+    },
+    "mux": {
+      "enabled": {{.MuxEnabled}},
+      "concurrency": {{.MuxConcurrency}}
     }
   },
   "policy": {
@@ -237,6 +253,10 @@ const tcpTLSJSONString = `
         "serverName": "{{.Host}}",
         "allowInsecure": false
       }
+    },
+    "mux": {
+      "enabled": {{.MuxEnabled}},
+      "concurrency": {{.MuxConcurrency}}
     }
   },
   "policy": {
@@ -280,6 +300,10 @@ const wsJSONString = `
       "wsSettings": {
         "path": "{{.Path}}"
       }
+    },
+    "mux": {
+      "enabled": {{.MuxEnabled}},
+      "concurrency": {{.MuxConcurrency}}
     }
   },
   "policy": {
@@ -327,6 +351,10 @@ const wsTLSJSONString = `
           "Host": "{{.Host}}"
         }
       }
+    },
+    "mux": {
+      "enabled": {{.MuxEnabled}},
+      "concurrency": {{.MuxConcurrency}}
     }
   },
   "policy": {
