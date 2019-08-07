@@ -8,7 +8,10 @@ import (
 
 var Direct = proxy.Direct
 
-type Dialer = proxy.Dialer
+type (
+	Dialer        = proxy.Dialer
+	ContextDialer = proxy.ContextDialer
+)
 
 func FromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
 	return proxy.FromURL(u, forward)

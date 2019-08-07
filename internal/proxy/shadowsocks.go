@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"net"
 	"net/url"
 	"strings"
@@ -54,20 +55,24 @@ type shadowsocksDialer struct {
 }
 
 func (d *shadowsocksDialer) Dial(network, addr string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, addr)
+}
+
+func (d *shadowsocksDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
-		return d.DialTCP(network, addr)
+		return d.connect(ctx, network, addr)
 	default:
 		return nil, net.UnknownNetworkError(network)
 	}
 }
 
-func (d *shadowsocksDialer) DialTCP(network, addr string) (net.Conn, error) {
+func (d *shadowsocksDialer) connect(ctx context.Context, network, addr string) (net.Conn, error) {
 	remoteAddr := socks.ParseAddr(addr)
 	if remoteAddr == nil {
 		return nil, shadowsocksParseAddrError(addr)
 	}
-	conn, err := d.Forward.Dial("tcp", d.Server)
+	conn, err := Dial(ctx, d.Forward, "tcp", d.Server)
 	if err != nil {
 		return nil, err
 	}

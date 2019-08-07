@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -38,16 +39,20 @@ type httpDialer struct {
 }
 
 func (d *httpDialer) Dial(network, addr string) (net.Conn, error) {
+	return d.DialContext(context.Background(), network, addr)
+}
+
+func (d *httpDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
-		return d.DialTCP(network, addr)
+		return d.connect(ctx, network, addr)
 	default:
 		return nil, net.UnknownNetworkError(network)
 	}
 }
 
-func (d *httpDialer) DialTCP(network, addr string) (net.Conn, error) {
-	conn, err := d.Forward.Dial("tcp", d.Server)
+func (d *httpDialer) connect(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := Dial(ctx, d.Forward, "tcp", d.Server)
 	if err != nil {
 		return nil, err
 	}
