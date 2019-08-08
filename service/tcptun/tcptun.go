@@ -1,14 +1,14 @@
 package tcptun
 
 import (
+	"context"
 	"log"
 	"net"
-	"sync/atomic"
 	"time"
 
-	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
@@ -33,20 +33,45 @@ func (Service) Run(ctx service.Context) {
 	defer log.Printf("[tcptun] stopped listening on %v\n", ln.Addr())
 	defer ln.Close()
 
-	var connect atomic.Value
+	type X struct {
+		Options
+		Dialer proxy.Dialer
+	}
+	xin, xout := make(chan X), make(chan X)
+	defer func() {
+		close(xin)
+		for range xout {
+			// Let's wait until xout closes.
+			// Though this is not necessary.
+		}
+	}()
+	go func(x X) {
+		ok := true
+		for ok {
+			select {
+			case x, ok = <-xin:
+			case xout <- x:
+			}
+		}
+		close(xout)
+	}(X{Dialer: service.Direct})
 
 	ctx.Manager.ServeListener(ln, func(c net.Conn) {
-		connectLoad := connect.Load
-		connect := connectLoad()
-		if connect == nil {
+		x, ok := <-xout
+		if !ok {
+			return
+		}
+		if x.ForwardAddr == "" {
 			time.Sleep(time.Second)
-			connect = connectLoad()
-			if connect == nil {
+			x = <-xout
+			if x.ForwardAddr == "" {
 				return
 			}
 		}
 
-		rc, err := connect.(func() (net.Conn, error))()
+		ctx, c := service.CheckConnectivity(context.Background(), c)
+
+		rc, err := proxy.Dial(ctx, x.Dialer, "tcp", x.ForwardAddr)
 		if err != nil {
 			// log.Printf("[tcptun] %v\n", err)
 			return
@@ -56,27 +81,20 @@ func (Service) Run(ctx service.Context) {
 		utility.Relay(rc, c)
 	})
 
-	var (
-		dial    = direct.Dial
-		options Options
-	)
+	var options Options
 	for {
 		select {
 		case data := <-ctx.Events:
 			if new, ok := data.(Options); ok {
 				old := options
 				options = new
-				shouldUpdate := new.ForwardAddr != old.ForwardAddr
+				x := <-xout
+				x.Options = new
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(direct)
-					dial = d.Dial
-					shouldUpdate = true
+					d, _ := new.Proxy.NewDialer(service.Direct)
+					x.Dialer = d
 				}
-				if shouldUpdate {
-					dial := dial
-					addr := new.ForwardAddr
-					connect.Store(func() (net.Conn, error) { return dial("tcp", addr) })
-				}
+				xin <- x
 			}
 		case <-ctx.Done:
 			return
@@ -90,9 +108,4 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-var direct = &net.Dialer{
-	Timeout:   configure.Timeout,
-	KeepAlive: configure.KeepAlive,
 }
