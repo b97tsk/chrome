@@ -1,21 +1,21 @@
 package shadowsocks
 
 import (
+	"context"
 	"log"
 	"net"
 	"strings"
 	"time"
 
-	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
-	Server   string
 	Method   string
 	Password string
 	Proxy    proxy.ProxyChain `yaml:"over"`
@@ -59,7 +59,7 @@ func (Service) Run(ctx service.Context) {
 			}
 		}
 		close(xout)
-	}(X{Dialer: direct})
+	}(X{Dialer: service.Direct})
 
 	ctx.Manager.ServeListener(ln, func(c net.Conn) {
 		x, ok := <-xout
@@ -74,31 +74,6 @@ func (Service) Run(ctx service.Context) {
 			}
 		}
 
-		if x.Server != "" { // Client mode.
-			addr, err := socks.Handshake(c)
-			if err != nil {
-				log.Printf("[shadowsocks] socks handshake: %v\n", err)
-				return
-			}
-
-			rc, err := x.Dialer.Dial("tcp", x.Server)
-			if err != nil {
-				// log.Printf("[shadowsocks] %v\n", err)
-				return
-			}
-			defer rc.Close()
-
-			rc = x.Cipher.StreamConn(rc)
-			_, err = rc.Write(addr)
-			if err != nil {
-				// log.Printf("[shadowsocks] %v\n", err)
-				return
-			}
-
-			utility.Relay(rc, c)
-			return
-		}
-
 		c = x.Cipher.StreamConn(c)
 		addr, err := socks.ReadAddr(c)
 		if err != nil {
@@ -106,7 +81,9 @@ func (Service) Run(ctx service.Context) {
 			return
 		}
 
-		rc, err := x.Dialer.Dial("tcp", addr.String())
+		ctx, c := service.CheckConnectivity(context.Background(), c)
+
+		rc, err := proxy.Dial(ctx, x.Dialer, "tcp", addr.String())
 		if err != nil {
 			// log.Printf("[shadowsocks] %v\n", err)
 			return
@@ -143,7 +120,7 @@ func (Service) Run(ctx service.Context) {
 					x.Cipher = cipher
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(direct)
+					d, _ := new.Proxy.NewDialer(service.Direct)
 					x.Dialer = d
 				}
 				xin <- x
@@ -160,9 +137,4 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 		return nil, err
 	}
 	return options, nil
-}
-
-var direct = &net.Dialer{
-	Timeout:   configure.Timeout,
-	KeepAlive: configure.KeepAlive,
 }
