@@ -81,8 +81,12 @@ func (Service) Run(ctx service.Context) {
 					handler.SetAppIDList(new.AppIDList)
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(direct)
-					handler.SetDial(d.Dial)
+					d, _ := new.Proxy.NewDialer(service.Direct)
+					handler.SetDial(
+						func(ctx context.Context, network, addr string) (net.Conn, error) {
+							return proxy.Dial(ctx, d, network, addr)
+						},
+					)
 				}
 			}
 		case err := <-serverDown:
@@ -192,15 +196,19 @@ type Handler struct {
 
 func NewHandler(l *Listener) *Handler {
 	h := &Handler{l: l}
-	h.dial.Store(direct.Dial)
+	h.dial.Store(
+		func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return proxy.Dial(ctx, service.Direct, network, addr)
+		},
+	)
 
-	dial := func(network, addr string) (net.Conn, error) {
-		dial := h.dial.Load().(func(network, addr string) (net.Conn, error))
-		return dial(network, addr)
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dial := h.dial.Load().(func(context.Context, string, string) (net.Conn, error))
+		return dial(ctx, network, addr)
 	}
 
 	h.tr = &http.Transport{
-		Dial:                  dial,
+		DialContext:           dial,
 		MaxIdleConns:          100,
 		MaxIdleConnsPerHost:   10,
 		IdleConnTimeout:       10 * time.Second,
@@ -215,7 +223,7 @@ func (h *Handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
 }
 
-func (h *Handler) SetDial(dial func(network, addr string) (net.Conn, error)) {
+func (h *Handler) SetDial(dial func(context.Context, string, string) (net.Conn, error)) {
 	h.dial.Store(dial)
 }
 
@@ -278,7 +286,9 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			defer conn.Close()
 
-			remote, err := h.tr.Dial("tcp", requestURI)
+			ctx, conn := service.CheckConnectivity(context.Background(), conn)
+
+			remote, err := h.tr.DialContext(ctx, "tcp", requestURI)
 			if err != nil {
 				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
 				if _, err := conn.Write([]byte(responseString)); err != nil {
@@ -918,11 +928,6 @@ var (
 			buf := make([]byte, perRequestSize)
 			return &buf
 		},
-	}
-
-	direct = &net.Dialer{
-		Timeout:   configure.Timeout,
-		KeepAlive: configure.KeepAlive,
 	}
 )
 
