@@ -2,6 +2,7 @@ package socks
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"hash/crc32"
 	"io"
@@ -15,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
@@ -135,10 +135,14 @@ func (r *route) match(set *atomic.Value, hostport string) bool {
 }
 
 func (r *route) Dial(network, addr string) (net.Conn, error) {
+	return r.DialContext(context.Background(), network, addr)
+}
+
+func (r *route) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	if r.dialer == nil {
-		r.dialer, _ = r.Proxy.NewDialer(direct)
+		r.dialer, _ = r.Proxy.NewDialer(service.Direct)
 	}
-	return r.dialer.Dial(network, addr)
+	return proxy.Dial(ctx, r.dialer, network, addr)
 }
 
 type Service struct{}
@@ -162,7 +166,11 @@ func (Service) Run(ctx service.Context) {
 		routes  atomic.Value
 		matches atomic.Value
 	)
-	dial.Store(direct.Dial)
+	dial.Store(
+		func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return proxy.Dial(ctx, service.Direct, network, addr)
+		},
+	)
 
 	ctx.Manager.ServeListener(ln, func(c net.Conn) {
 		addr, err := socks.Handshake(c)
@@ -171,18 +179,18 @@ func (Service) Run(ctx service.Context) {
 			return
 		}
 
-		dial := dial.Load().(func(network, addr string) (net.Conn, error))
+		dial := dial.Load().(func(context.Context, string, string) (net.Conn, error))
 		hostport := addr.String()
 
 		if routes, _ := routes.Load().([]*route); routes != nil {
 			matches := matches.Load().(*sync.Map)
 			if r, ok := matches.Load(hostport); ok {
-				dial = r.(*route).Dial
+				dial = r.(*route).DialContext
 			} else {
 				for _, r := range routes {
 					if r.Match(hostport) {
 						log.Printf("[socks] %v matches %v\n", r.File, hostport)
-						dial = r.Dial
+						dial = r.DialContext
 						matches.Store(hostport, r)
 						break
 					}
@@ -190,7 +198,9 @@ func (Service) Run(ctx service.Context) {
 			}
 		}
 
-		rc, err := dial("tcp", hostport)
+		ctx, c := service.CheckConnectivity(context.Background(), c)
+
+		rc, err := dial(ctx, "tcp", hostport)
 		if err != nil {
 			// log.Printf("[socks] %v\n", err)
 			return
@@ -221,8 +231,12 @@ func (Service) Run(ctx service.Context) {
 				old := options
 				options = new
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(direct)
-					dial.Store(d.Dial)
+					d, _ := new.Proxy.NewDialer(service.Direct)
+					dial.Store(
+						func(ctx context.Context, network, addr string) (net.Conn, error) {
+							return proxy.Dial(ctx, d, network, addr)
+						},
+					)
 				}
 				if !routesEquals(new.Routes, old.Routes) {
 					if watcher == nil {
@@ -347,11 +361,6 @@ func routesEquals(a, b []RouteInfo) bool {
 }
 
 var (
-	direct = &net.Dialer{
-		Timeout:   configure.Timeout,
-		KeepAlive: configure.KeepAlive,
-	}
-
 	errNotModified = errors.New("not modified")
 
 	regxPortSuffix = regexp.MustCompile(`:\d+$`)
