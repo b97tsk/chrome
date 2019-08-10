@@ -11,7 +11,7 @@ const (
 	numTries      = 5
 	dialInterval  = 3 * time.Second
 	dialTimeout   = 6 * time.Second
-	dialKeepAlive = 30 * time.Second
+	dialKeepAlive = KeepAlivePeriod
 	poolTimeout   = 2 * time.Second
 )
 

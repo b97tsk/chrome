@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
@@ -217,7 +216,7 @@ func (man *Manager) ServeListener(ln net.Listener, handle func(net.Conn)) {
 				}
 				return
 			}
-			utility.TCPKeepAlive(c, configure.KeepAlive)
+			utility.TCPKeepAlive(c, KeepAlivePeriod)
 			man.connections.Store(c, struct{}{})
 			man.connections.Add(1)
 			go func() {

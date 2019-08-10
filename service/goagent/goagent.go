@@ -24,9 +24,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/b97tsk/chrome/configure"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
+	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
 
@@ -141,7 +141,7 @@ func (l *Listener) init() {
 				}
 				return
 			}
-			utility.TCPKeepAlive(conn, configure.KeepAlive)
+			utility.TCPKeepAlive(conn, service.KeepAlivePeriod)
 			lane <- conn
 		}
 	}()
