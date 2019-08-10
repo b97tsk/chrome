@@ -31,8 +31,8 @@ import (
 )
 
 type Options struct {
-	AppIDList []string         `yaml:"appids"`
-	Proxy     proxy.ProxyChain `yaml:"over"`
+	AppIDList []string           `yaml:"appids"`
+	Proxy     service.ProxyChain `yaml:"over"`
 }
 
 type Service struct{}

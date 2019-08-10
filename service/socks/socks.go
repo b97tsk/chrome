@@ -27,12 +27,12 @@ import (
 
 type Options struct {
 	Routes []RouteInfo
-	Proxy  proxy.ProxyChain `yaml:"over"`
+	Proxy  service.ProxyChain `yaml:"over"`
 }
 
 type RouteInfo struct {
 	File  string
-	Proxy proxy.ProxyChain `yaml:"over"`
+	Proxy service.ProxyChain `yaml:"over"`
 }
 
 type route struct {

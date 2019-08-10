@@ -18,7 +18,7 @@ import (
 type Options struct {
 	Method   string
 	Password string
-	Proxy    proxy.ProxyChain `yaml:"over"`
+	Proxy    service.ProxyChain `yaml:"over"`
 }
 
 type Service struct{}

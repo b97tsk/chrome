@@ -13,8 +13,8 @@ import (
 )
 
 type Options struct {
-	ForwardAddr string           `yaml:"for"`
-	Proxy       proxy.ProxyChain `yaml:"over"`
+	ForwardAddr string             `yaml:"for"`
+	Proxy       service.ProxyChain `yaml:"over"`
 }
 
 type Service struct{}
