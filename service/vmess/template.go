@@ -58,8 +58,8 @@ const h2TLSJSONString = `
   "policy": {
     "levels": {
       "0": {
-        "uplinkOnly": 0,
-        "downlinkOnly": 0
+        "uplinkOnly": 2,
+        "downlinkOnly": 2
       }
     }
   }
@@ -112,8 +112,8 @@ const kcpJSONString = `
   "policy": {
     "levels": {
       "0": {
-        "uplinkOnly": 0,
-        "downlinkOnly": 0
+        "uplinkOnly": 2,
+        "downlinkOnly": 2
       }
     }
   }
@@ -156,8 +156,8 @@ const tcpJSONString = `
   "policy": {
     "levels": {
       "0": {
-        "uplinkOnly": 0,
-        "downlinkOnly": 0
+        "uplinkOnly": 2,
+        "downlinkOnly": 2
       }
     }
   }
@@ -213,8 +213,8 @@ const tcpHTTPJSONString = `
   "policy": {
     "levels": {
       "0": {
-        "uplinkOnly": 0,
-        "downlinkOnly": 0
+        "uplinkOnly": 2,
+        "downlinkOnly": 2
       }
     }
   }
@@ -262,8 +262,8 @@ const tcpTLSJSONString = `
   "policy": {
     "levels": {
       "0": {
-        "uplinkOnly": 0,
-        "downlinkOnly": 0
+        "uplinkOnly": 2,
+        "downlinkOnly": 2
       }
     }
   }
@@ -309,8 +309,8 @@ const wsJSONString = `
   "policy": {
     "levels": {
       "0": {
-        "uplinkOnly": 0,
-        "downlinkOnly": 0
+        "uplinkOnly": 2,
+        "downlinkOnly": 2
       }
     }
   }
@@ -360,8 +360,8 @@ const wsTLSJSONString = `
   "policy": {
     "levels": {
       "0": {
-        "uplinkOnly": 0,
-        "downlinkOnly": 0
+        "uplinkOnly": 2,
+        "downlinkOnly": 2
       }
     }
   }
