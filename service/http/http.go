@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,8 +28,9 @@ import (
 )
 
 type Options struct {
-	Routes []RouteInfo
-	Proxy  service.ProxyChain `yaml:"over"`
+	Routes    []RouteInfo
+	Redirects map[string]string
+	Proxy     service.ProxyChain `yaml:"over"`
 }
 
 type RouteInfo struct {
@@ -256,6 +258,9 @@ func (Service) Run(ctx service.Context) {
 					}
 					handler.setRoutes(newRoutes)
 				}
+				if !redirectsEquals(new.Redirects, old.Redirects) {
+					handler.setRedirects(new.Redirects)
+				}
 			}
 		case err := <-serverDown:
 			log.Printf("[http] %v\n", err)
@@ -318,10 +323,11 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 }
 
 type Handler struct {
-	tr      *http.Transport
-	dial    atomic.Value
-	routes  atomic.Value
-	matches atomic.Value
+	tr        *http.Transport
+	dial      atomic.Value
+	routes    atomic.Value
+	matches   atomic.Value
+	redirects atomic.Value
 }
 
 func NewHandler() *Handler {
@@ -386,6 +392,10 @@ func (h *Handler) clearMatches() {
 	h.matches.Store(&sync.Map{})
 }
 
+func (h *Handler) setRedirects(redirects map[string]string) {
+	h.redirects.Store(redirects)
+}
+
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodConnect {
 		if _, ok := rw.(http.Hijacker); !ok {
@@ -433,6 +443,20 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	req.Header.Del("Proxy-Authenticate")
 	req.Header.Del("Proxy-Authorization")
 
+	redirects, _ := h.redirects.Load().(map[string]string)
+	if s := redirects[req.URL.Host]; s != "" {
+		u, err := url.Parse(s)
+		if err != nil {
+			http.Error(rw, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if u.Path == "" {
+			u.Path = req.URL.Path
+		}
+		http.Redirect(rw, req, u.String(), http.StatusFound)
+		return
+	}
+
 	resp, err := h.tr.RoundTrip(req)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusServiceUnavailable)
@@ -460,6 +484,18 @@ func routesEquals(a, b []RouteInfo) bool {
 	for i := range a {
 		r1, r2 := &a[i], &b[i]
 		if r1.File != r2.File || !r1.Proxy.Equals(r2.Proxy) {
+			return false
+		}
+	}
+	return true
+}
+
+func redirectsEquals(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
 			return false
 		}
 	}
