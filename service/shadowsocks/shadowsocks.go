@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/b97tsk/chrome/internal/proxy"
@@ -103,16 +102,7 @@ func (Service) Run(ctx service.Context) {
 				x := <-xout
 				x.Options = new
 				if new.Method != old.Method || new.Password != old.Password {
-					password := new.Password
-					if strings.HasPrefix(password, "base64:") {
-						bytes, err := utility.DecodeBase64String(password[7:])
-						if err != nil {
-							log.Println("[shadowsocks] fatal: password is not a valid base64 string")
-							return
-						}
-						password = string(bytes)
-					}
-					cipher, err := core.PickCipher(new.Method, nil, password)
+					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
 						log.Printf("[shadowsocks] fatal: pick cipher: %v\n", err)
 						return
