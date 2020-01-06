@@ -121,7 +121,7 @@ func TestMatchSet(t *testing.T) {
 	for _, tt := range tests {
 		var set MatchSet
 		set.Add(tt.pattern, struct{}{})
-		if tt.matched != (set.MatchCount(tt.source) > 0) {
+		if tt.matched != set.Test(tt.source) {
 			if tt.matched {
 				t.Error(tt.source, "SHOULD match", tt.pattern)
 			} else {

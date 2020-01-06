@@ -1,73 +1,68 @@
 package matchset
 
-type atom [8]uint32
+import (
+	"unicode/utf8"
+)
 
-func (t *atom) Add(by byte) {
+type charset [8]uint32
+
+func (set *charset) Add(by byte) {
 	idx := by / 32
 	bit := uint32(1) << (by - idx*32)
-	t[idx] |= bit
+	set[idx] |= bit
 }
 
-func (t *atom) Inverse() {
-	for i, u32 := range t {
-		t[i] = ^u32
+func (set *charset) Invert() {
+	for i, u32 := range set {
+		set[i] = ^u32
 	}
 }
 
-func (t atom) Contains(by byte) bool {
+func (set charset) Contains(by byte) bool {
 	idx := by / 32
 	bit := uint32(1) << (by - idx*32)
-	return t[idx]&bit != 0
+	return set[idx]&bit != 0
 }
 
-const specialDot = 256
+type atom = rune
+
+type pattern struct {
+	atoms []byte
+	data  interface{}
+}
+
+const specialDot = 0
 
 type MatchSet struct {
-	patterns   [][]uint16
-	knownAtoms map[atom]uint16
-	atomFromID map[uint16]atom
-	dataFromID map[uint32]interface{}
-	nextAtomID uint16
-	nextDataID uint32
+	patterns      []pattern
+	nextAtom      atom
+	charSetToAtom map[charset]atom
+	atomToCharSet map[atom]charset
 }
 
 func (set *MatchSet) lazyInit() {
-	if set.knownAtoms != nil {
+	if set.nextAtom != 0 {
 		return
 	}
-	set.knownAtoms = make(map[atom]uint16)
-	set.atomFromID = make(map[uint16]atom)
-	set.dataFromID = make(map[uint32]interface{})
-	set.nextAtomID = specialDot + 1
-	set.nextDataID = 1
+	set.nextAtom = 256
+	set.charSetToAtom = make(map[charset]atom)
+	set.atomToCharSet = make(map[atom]charset)
 }
 
-func (set *MatchSet) getNextAtomID() uint16 {
-	id := set.nextAtomID
-	if id == 0 {
-		panic("too many atoms")
-	}
-	set.nextAtomID++
-	return id
+func (set *MatchSet) getNextAtom() atom {
+	atom := set.nextAtom
+	set.nextAtom++
+	return atom
 }
 
-func (set *MatchSet) getNextDataID() uint32 {
-	id := set.nextDataID
-	if id == 0 {
-		panic("too many rules")
-	}
-	set.nextDataID++
-	return id
-}
-
-func atomFromGroup(bytes []byte) (atom, []byte) {
+func charSetFromGroup(bytes []byte) (charset, []byte) {
 	var (
-		char                 byte // Last character read.
-		charRead             bool // A character is read.
-		charRange            bool // A character range expected.
-		charSet              atom // Set of characters read.
-		charSetInversed      bool
-		charSetInversedMaybe bool
+		char                 byte    // Last character read.
+		charRead             bool    // A character is read.
+		charRange            bool    // A character range expected.
+		charSet              charset // Set of characters read.
+		charSetInverted      bool
+		charSetMayBeInverted bool
 	)
 	for i, by := range bytes {
 		switch by {
@@ -76,8 +71,8 @@ func atomFromGroup(bytes []byte) (atom, []byte) {
 				if charRead {
 					charSet.Add(char)
 				}
-				if charSetInversed {
-					charSet.Inverse()
+				if charSetInverted {
+					charSet.Invert()
 				}
 				return charSet, bytes[i+1:]
 			}
@@ -87,14 +82,14 @@ func atomFromGroup(bytes []byte) (atom, []byte) {
 				continue
 			}
 		}
-		if charSetInversedMaybe {
+		if charSetMayBeInverted {
 			// Skip first '^' character.
 			charRead = false
-			charSetInversed = true
-			charSetInversedMaybe = false
+			charSetInverted = true
+			charSetMayBeInverted = false
 		}
 		if i == 0 && by == '^' {
-			charSetInversedMaybe = true
+			charSetMayBeInverted = true
 		}
 		if charRange {
 			for ; char <= by; char++ {
@@ -113,31 +108,31 @@ func atomFromGroup(bytes []byte) (atom, []byte) {
 	if charRead {
 		charSet.Add(char)
 	}
-	if charSetInversed {
-		charSet.Inverse()
+	if charSetInverted {
+		charSet.Invert()
 	}
 	return charSet, nil
 }
 
-func (set *MatchSet) readAtom(bytes []byte) (uint16, []byte) {
+func (set *MatchSet) readAtom(bytes []byte) (atom, []byte) {
 	if bytes[0] == '[' {
-		t, bytesLeft := atomFromGroup(bytes[1:])
-		if known, yes := set.knownAtoms[t]; yes {
-			return known, bytesLeft
+		charSet, bytesLeft := charSetFromGroup(bytes[1:])
+		if atom, ok := set.charSetToAtom[charSet]; ok {
+			return atom, bytesLeft
 		}
-		atomID := set.getNextAtomID()
-		set.knownAtoms[t] = atomID
-		set.atomFromID[atomID] = t
-		return atomID, bytesLeft
+		atom := set.getNextAtom()
+		set.charSetToAtom[charSet] = atom
+		set.atomToCharSet[atom] = charSet
+		return atom, bytesLeft
 	}
-	return uint16(bytes[0]), bytes[1:]
+	return atom(bytes[0]), bytes[1:]
 }
 
-func (set *MatchSet) parse(bytes []byte) []uint16 {
+func (set *MatchSet) parse(bytes []byte) []atom {
 	var (
-		atoms        []uint16
-		currentAtom  uint16
-		lastReadAtom uint16
+		atoms        []atom
+		currentAtom  atom
+		lastReadAtom atom
 	)
 	for len(bytes) > 0 {
 		currentAtom, bytes = set.readAtom(bytes)
@@ -162,7 +157,7 @@ func (set *MatchSet) parse(bytes []byte) []uint16 {
 	}
 	if len(atoms) == 0 {
 		// Empty pattern matches any characters.
-		return []uint16{specialDot}
+		return []atom{specialDot}
 	}
 	if atoms[0] == '.' {
 		// Starting with '.' means it could match any characters at the beginning.
@@ -175,9 +170,9 @@ func (set *MatchSet) parse(bytes []byte) []uint16 {
 	return atoms
 }
 
-func (set *MatchSet) Add(pattern string, data interface{}) {
+func (set *MatchSet) Add(patt string, data interface{}) {
 	set.lazyInit()
-	atoms := set.parse([]byte(pattern))
+	atoms := set.parse([]byte(patt))
 	// Reverse atoms for better performance, because in practice,
 	// patterns like ".abc" are much more frequently used than
 	// patterns like "abc.".
@@ -189,54 +184,28 @@ func (set *MatchSet) Add(pattern string, data interface{}) {
 			atoms[i], atoms[i+1] = atoms[i+1], atoms[i]
 		}
 	}
-	dataID := set.getNextDataID()
-	set.dataFromID[dataID] = data
-	atoms = append(atoms, uint16(dataID), uint16(dataID>>16))
-	if len(atoms) < cap(atoms) {
-		// Reduce memory use.
-		new := make([]uint16, len(atoms))
-		copy(new, atoms)
-		atoms = new
-	}
-	set.patterns = append(set.patterns, atoms[:len(atoms)-2])
+	bytes := []byte(string(atoms)) // For reducing memory usage purpose.
+	set.patterns = append(set.patterns, pattern{bytes, data})
 }
 
 func (set *MatchSet) Empty() bool {
 	return len(set.patterns) == 0
 }
 
-func (set *MatchSet) Match(source string) (matches []interface{}) {
-	if set.Empty() {
-		return
-	}
-	set.MatchFunc(source, func(data interface{}) {
-		matches = append(matches, data)
-	})
-	return
-}
-
-func (set *MatchSet) MatchCount(source string) (count int) {
-	if set.Empty() {
-		return
-	}
-	set.MatchFunc(source, func(data interface{}) { count++ })
-	return
-}
-
-func (set *MatchSet) MatchFunc(source string, accumulate func(interface{})) {
+func (set *MatchSet) Match(source string, accumulate func(interface{})) {
 	bytes := []byte(source)
 	// Also reverse source bytes, since all patterns are reversed.
 	for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
 		bytes[i], bytes[j] = bytes[j], bytes[i]
 	}
-	var patterns, matches [][]uint16
-	for _, atoms := range set.patterns {
+	var patterns, matches []pattern
+	for _, patt := range set.patterns {
 		patterns = patterns[:0]
-		patterns = append(patterns, atoms)
+		patterns = append(patterns, patt)
 		for i := range bytes {
 			matches = matches[:0]
-			for _, atoms := range patterns {
-				matches = set.checkPattern(atoms, bytes, i, matches, accumulate)
+			for _, patt := range patterns {
+				matches = set.checkPattern(patt, bytes, i, matches, accumulate)
 			}
 			patterns, matches = matches, patterns
 			if len(patterns) == 0 {
@@ -247,76 +216,88 @@ func (set *MatchSet) MatchFunc(source string, accumulate func(interface{})) {
 }
 
 func (set *MatchSet) checkPattern(
-	atoms []uint16,
+	patt pattern,
 	bytes []byte, i int,
-	matches [][]uint16,
+	matches []pattern,
 	accumulate func(interface{}),
-) [][]uint16 {
+) []pattern {
+	atom, size := utf8.DecodeRune(patt.atoms)
+	nextpatt := pattern{patt.atoms[size:], patt.data}
 	switch {
-	case atoms[0] == specialDot:
-		if len(atoms) == 1 {
+	case atom == specialDot:
+		if len(nextpatt.atoms) == 0 {
 			if i == 0 || bytes[i] == '.' {
-				accumulate(set.extractData(atoms))
+				accumulate(patt.data)
 			}
 			return matches
 		}
 		if i == 0 {
-			matches = set.checkPattern(atoms[1:], bytes[i:], 0, matches, accumulate)
+			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
 		if bytes[i] == '.' {
-			matches = append(matches, atoms[1:])
+			matches = append(matches, nextpatt)
 		}
-		matches = append(matches, atoms)
-	case atoms[0] == '*':
-		if len(atoms) > 1 {
-			matches = set.checkPattern(atoms[1:], bytes[i:], 0, matches, accumulate)
+		matches = append(matches, patt)
+	case atom == '*':
+		if len(nextpatt.atoms) > 0 {
+			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
 		switch bytes[i] {
 		case '.', ':':
 			return matches // '*' does not match '.' or ':'.
 		}
 		if i+1 == len(bytes) {
-			if len(atoms) == 1 {
-				accumulate(set.extractData(atoms))
+			if len(nextpatt.atoms) == 0 {
+				accumulate(patt.data)
 			}
 			return matches
 		}
-		matches = append(matches, atoms)
-	case atoms[0] == '?':
+		matches = append(matches, patt)
+	case atom == '?':
 		switch bytes[i] {
 		case '.', ':':
 			return matches // '?' does not match '.' or ':'.
 		}
 		fallthrough
-	case atoms[0] == uint16(bytes[i]) || set.atomFromID[atoms[0]].Contains(bytes[i]):
+	case atom == rune(bytes[i]) || set.atomToCharSet[atom].Contains(bytes[i]):
 		if i+1 == len(bytes) {
-			switch len(atoms) {
+			switch len(nextpatt.atoms) {
+			case 0:
+				accumulate(patt.data)
 			case 1:
-				accumulate(set.extractData(atoms))
-			case 2:
-				switch atoms[1] {
+				switch nextpatt.atoms[0] {
 				case specialDot, '*':
-					accumulate(set.extractData(atoms))
+					accumulate(patt.data)
 				}
-			case 3:
-				if atoms[1] == '*' && atoms[2] == specialDot {
-					accumulate(set.extractData(atoms))
+			case 2:
+				if nextpatt.atoms[0] == '*' && nextpatt.atoms[1] == specialDot {
+					accumulate(patt.data)
 				}
 			}
 			return matches
 		}
-		if len(atoms) == 1 {
+		if len(nextpatt.atoms) == 0 {
 			return matches
 		}
-		matches = append(matches, atoms[1:])
+		matches = append(matches, nextpatt)
 	}
 	return matches
 }
 
-func (set *MatchSet) extractData(atoms []uint16) interface{} {
-	n := len(atoms)
-	atoms = atoms[:n+2]
-	lo, hi := atoms[n], atoms[n+1]
-	dataID := uint32(lo) + uint32(hi)<<16
-	return set.dataFromID[dataID]
+func (set *MatchSet) MatchAll(source string) (matches []interface{}) {
+	if set.Empty() {
+		return
+	}
+	set.Match(source, func(data interface{}) {
+		matches = append(matches, data)
+	})
+	return
+}
+
+func (set *MatchSet) Test(source string) (ok bool) {
+	if set.Empty() {
+		return
+	}
+	set.Match(source, func(data interface{}) { ok = true })
+	return
 }

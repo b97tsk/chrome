@@ -123,7 +123,7 @@ func (r *route) match(set *atomic.Value, hostport string) bool {
 		return false
 	}
 	host, port, _ := net.SplitHostPort(hostport)
-	for _, c := range matchset.Match(host) {
+	for _, c := range matchset.MatchAll(host) {
 		config := c.(*patternConfig)
 		if config.matchAllPorts {
 			return true
