@@ -33,14 +33,14 @@ func main() {
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Println("[watcher]", err)
+		log.Println("[main]", err)
 		return
 	}
 	defer watcher.Close()
 
 	err = watcher.Add(configFile)
 	if err != nil {
-		log.Println("[watcher]", err)
+		log.Println("[main]", err)
 		return
 	}
 
@@ -62,6 +62,8 @@ func main() {
 			if e.Op&fsnotify.Write != 0 {
 				delay = time.After(1 * time.Second)
 			}
+		case err := <-watcher.Errors:
+			log.Println("[main]", err)
 		case <-delay:
 			services.Load(configFile)
 			delay = nil
