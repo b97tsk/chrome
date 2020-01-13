@@ -19,6 +19,9 @@ func init() {
 
 const h2TLSJSONString = `
 {
+  "log": {
+    "loglevel": "none"
+  },
   "inbound": {
     "listen": "{{.ListenHost}}",
     "port": {{.ListenPort}},
@@ -68,6 +71,9 @@ const h2TLSJSONString = `
 
 const kcpJSONString = `
 {
+  "log": {
+    "loglevel": "none"
+  },
   "inbound": {
     "listen": "{{.ListenHost}}",
     "port": {{.ListenPort}},
@@ -122,6 +128,9 @@ const kcpJSONString = `
 
 const tcpJSONString = `
 {
+  "log": {
+    "loglevel": "none"
+  },
   "inbound": {
     "listen": "{{.ListenHost}}",
     "port": {{.ListenPort}},
@@ -166,6 +175,9 @@ const tcpJSONString = `
 
 const tcpHTTPJSONString = `
 {
+  "log": {
+    "loglevel": "none"
+  },
   "inbound": {
     "listen": "{{.ListenHost}}",
     "port": {{.ListenPort}},
@@ -223,6 +235,9 @@ const tcpHTTPJSONString = `
 
 const tcpTLSJSONString = `
 {
+  "log": {
+    "loglevel": "none"
+  },
   "inbound": {
     "listen": "{{.ListenHost}}",
     "port": {{.ListenPort}},
@@ -272,6 +287,9 @@ const tcpTLSJSONString = `
 
 const wsJSONString = `
 {
+  "log": {
+    "loglevel": "none"
+  },
   "inbound": {
     "listen": "{{.ListenHost}}",
     "port": {{.ListenPort}},
@@ -319,6 +337,9 @@ const wsJSONString = `
 
 const wsTLSJSONString = `
 {
+  "log": {
+    "loglevel": "none"
+  },
   "inbound": {
     "listen": "{{.ListenHost}}",
     "port": {{.ListenPort}},
