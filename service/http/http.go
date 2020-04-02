@@ -34,8 +34,23 @@ type Options struct {
 }
 
 type RouteInfo struct {
-	File  string
-	Proxy service.ProxyChain `yaml:"over"`
+	File     string
+	Proxy    service.ProxyChain `yaml:"over"`
+	hashCode uint32
+}
+
+func (r *RouteInfo) Equals(other *RouteInfo) bool {
+	return r.File == other.File &&
+		r.hashCode == other.hashCode &&
+		r.Proxy.Equals(other.Proxy)
+}
+
+func (r *RouteInfo) Init() error {
+	hashCode, err := getHashCode(r.File)
+	if err == nil {
+		r.hashCode = hashCode
+	}
+	return err
 }
 
 type route struct {
@@ -58,20 +73,19 @@ func (r *route) Recycle(r2 *route) {
 }
 
 func (r *route) Init() error {
+	hashCode, err := getHashCode(r.File)
+	if err != nil {
+		return err
+	}
+	if r.hash == hashCode {
+		return errNotModified
+	}
+
 	file, err := os.Open(r.File)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-
-	digest := crc32.NewIEEE()
-	io.Copy(digest, file)
-	file.Seek(0, io.SeekStart)
-	hash := digest.Sum32()
-	if hash == r.hash {
-		return errNotModified
-	}
-	r.hash = hash
 
 	var set, excludes matchset.MatchSet
 	patternConfigs := make(map[string]*patternConfig)
@@ -105,6 +119,7 @@ func (r *route) Init() error {
 			excludes.Add(pattern, config)
 		}
 	}
+	r.hash = hashCode
 	r.matchset.Store(&set)
 	r.excludes.Store(&excludes)
 	return nil
@@ -201,6 +216,9 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := data.(Options); ok {
 				old := options
 				options = new
+				for i := range new.Routes {
+					new.Routes[i].Init()
+				}
 				if !new.Proxy.Equals(old.Proxy) {
 					d, _ := new.Proxy.NewDialer(service.Direct)
 					handler.SetDial(
@@ -239,7 +257,7 @@ func (Service) Run(ctx service.Context) {
 						}
 						didRecycle := false
 						for _, r2 := range oldRoutes {
-							if r.File == r2.File {
+							if r.File == r2.File && r.hashCode == r2.hashCode {
 								newRoutes[i].Recycle(r2)
 								didRecycle = true
 								break
@@ -477,13 +495,26 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+func getHashCode(name string) (hashCode uint32, err error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return
+	}
+	digest := crc32.NewIEEE()
+	_, err = io.Copy(digest, file)
+	if err == nil {
+		hashCode = digest.Sum32()
+	}
+	file.Close()
+	return
+}
+
 func routesEquals(a, b []RouteInfo) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		r1, r2 := &a[i], &b[i]
-		if r1.File != r2.File || !r1.Proxy.Equals(r2.Proxy) {
+		if !a[i].Equals(&b[i]) {
 			return false
 		}
 	}
