@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"hash/crc32"
-	"io"
 	"log"
 	"net"
 	"os"
@@ -60,7 +58,6 @@ func (job *Job) SetOptions(v interface{}) {
 
 type Manager struct {
 	mu          sync.Mutex
-	hash        uint32
 	services    map[string]Service
 	jobs        map[string]Job
 	connections struct {
@@ -139,14 +136,6 @@ func (man *Manager) Load(configFile string) {
 	}
 	defer file.Close()
 
-	digest := crc32.NewIEEE()
-	io.Copy(digest, file)
-	hash := digest.Sum32()
-	if hash == man.hash {
-		return
-	}
-	man.hash = hash
-
 	var c struct {
 		Logfile string                 `yaml:"logging"`
 		Jobs    map[string]interface{} `yaml:",inline"`
@@ -154,7 +143,6 @@ func (man *Manager) Load(configFile string) {
 
 	dec := yaml.NewDecoder(file)
 	dec.SetStrict(true)
-	file.Seek(0, io.SeekStart)
 
 	if err := dec.Decode(&c); err != nil {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
