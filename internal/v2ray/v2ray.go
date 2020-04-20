@@ -6,8 +6,8 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"v2ray.com/core"
+	"v2ray.com/core/infra/conf"
 	_ "v2ray.com/core/main/distro/all"
-	"v2ray.com/ext/tools/conf"
 )
 
 type Instance interface {
