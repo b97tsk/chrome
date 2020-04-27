@@ -141,7 +141,6 @@ func (l *Listener) init() {
 				}
 				return
 			}
-			utility.TCPKeepAlive(conn, service.KeepAlivePeriod)
 			lane <- conn
 		}
 	}()

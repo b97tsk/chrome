@@ -16,13 +16,6 @@ func DecodeBase64String(s string) ([]byte, error) {
 	return enc.DecodeString(s)
 }
 
-func TCPKeepAlive(c net.Conn, d time.Duration) {
-	if tcp, ok := c.(*net.TCPConn); ok && d > 0 {
-		tcp.SetKeepAlive(true)
-		tcp.SetKeepAlivePeriod(d)
-	}
-}
-
 func IsTemporary(err error) bool {
 	e, ok := err.(interface {
 		Temporary() bool
