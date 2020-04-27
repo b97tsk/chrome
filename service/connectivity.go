@@ -4,9 +4,8 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"os"
 	"time"
-
-	"github.com/b97tsk/chrome/internal/utility"
 )
 
 const (
@@ -84,7 +83,7 @@ func CheckConnectivity(ctx context.Context, conn net.Conn) (context.Context, net
 						conn.SetReadDeadline(c.deadline)
 					}
 					c.cbr <- br
-					if err != nil && err != bufio.ErrBufferFull && !utility.IsTimeout(err) {
+					if err != nil && err != bufio.ErrBufferFull && !os.IsTimeout(err) {
 						return
 					}
 				default:

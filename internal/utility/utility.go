@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"io"
 	"net"
+	"os"
 	"time"
 )
 
@@ -29,13 +30,6 @@ func IsTemporary(err error) bool {
 	return ok && e.Temporary()
 }
 
-func IsTimeout(err error) bool {
-	e, ok := err.(interface {
-		Timeout() bool
-	})
-	return ok && e.Timeout()
-}
-
 func Relay(left, right net.Conn) error {
 	c := make(chan error, 2)
 	go func() {
@@ -49,10 +43,10 @@ func Relay(left, right net.Conn) error {
 		right.SetReadDeadline(time.Now())
 	}()
 	e1, e2 := <-c, <-c
-	if e1 != nil && !IsTimeout(e1) {
+	if e1 != nil && !os.IsTimeout(e1) {
 		return e1
 	}
-	if e2 != nil && !IsTimeout(e2) {
+	if e2 != nil && !os.IsTimeout(e2) {
 		return e2
 	}
 	return nil
