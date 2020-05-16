@@ -51,7 +51,7 @@ func (Service) Run(ctx service.Context) {
 	defer log.Printf("[goagent] stopped listening on %v\n", ln.Addr())
 
 	listener := NewListener(ln, ctx.Done)
-	handler := NewHandler(listener)
+	handler := NewHandler(listener, ctx.Manager)
 	server := http.Server{
 		Handler:      handler,
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
@@ -81,12 +81,8 @@ func (Service) Run(ctx service.Context) {
 					handler.SetAppIDList(new.AppIDList)
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(service.Direct)
-					handler.SetDial(
-						func(ctx context.Context, network, addr string) (net.Conn, error) {
-							return proxy.Dial(ctx, d, network, addr)
-						},
-					)
+					d, _ := new.Proxy.NewDialer(proxy.Direct)
+					handler.SetDialer(d)
 				}
 			}
 		case err := <-serverDown:
@@ -187,23 +183,23 @@ func (l *Listener) Addr() net.Addr {
 type Handler struct {
 	l            *Listener
 	tr           *http.Transport
-	dial         atomic.Value
+	dialer       atomic.Value
 	appIDMutex   sync.Mutex
 	appIDList    []string
 	badAppIDList []string
 }
 
-func NewHandler(l *Listener) *Handler {
+type dialer struct {
+	proxy.Dialer
+}
+
+func NewHandler(l *Listener, man *service.Manager) *Handler {
 	h := &Handler{l: l}
-	h.dial.Store(
-		func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return proxy.Dial(ctx, service.Direct, network, addr)
-		},
-	)
+	h.SetDialer(proxy.Direct)
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		dial := h.dial.Load().(func(context.Context, string, string) (net.Conn, error))
-		return dial(ctx, network, addr)
+		d := h.dialer.Load().(*dialer).Dialer
+		return man.Dial(ctx, d, network, addr)
 	}
 
 	h.tr = &http.Transport{
@@ -222,8 +218,8 @@ func (h *Handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
 }
 
-func (h *Handler) SetDial(dial func(context.Context, string, string) (net.Conn, error)) {
-	h.dial.Store(dial)
+func (h *Handler) SetDialer(d proxy.Dialer) {
+	h.dialer.Store(&dialer{d})
 }
 
 func (h *Handler) SetAppIDList(appIDList []string) {
@@ -605,15 +601,13 @@ func newAutoRangeBody(
 	h *Handler, req *http.Request, resp *http.Response,
 	bodySize, rangeFirst, rangeLast int64,
 ) *autoRangeBody {
-	reqlist := []*autoRangeRequest{
-		&autoRangeRequest{
-			h:          h,
-			req:        req,
-			resp:       resp,
-			rangeFirst: rangeFirst,
-			rangeLast:  rangeFirst + bodySize - 1,
-		},
-	}
+	reqlist := []*autoRangeRequest{{
+		h:          h,
+		req:        req,
+		resp:       resp,
+		rangeFirst: rangeFirst,
+		rangeLast:  rangeFirst + bodySize - 1,
+	}}
 
 	rangeFirst += bodySize
 	for rangeFirst <= rangeLast {
@@ -875,13 +869,8 @@ func copyRequestAndHeader(req *http.Request) *http.Request {
 	return &new
 }
 
-func isRequestCanceled(req *http.Request) (yes bool) {
-	select {
-	case <-req.Context().Done():
-		yes = true
-	default:
-	}
-	return
+func isRequestCanceled(req *http.Request) bool {
+	return req.Context().Err() != nil
 }
 
 func appIDFromRequest(req *http.Request) string {

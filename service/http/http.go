@@ -56,7 +56,7 @@ func (r *RouteInfo) Init() error {
 type route struct {
 	RouteInfo
 	hash     uint32
-	dialer   proxy.Dialer
+	dialer   atomic.Value
 	matchset atomic.Value
 	excludes atomic.Value
 }
@@ -152,15 +152,13 @@ func (r *route) match(set *atomic.Value, hostport string) bool {
 	return false
 }
 
-func (r *route) Dial(network, addr string) (net.Conn, error) {
-	return r.DialContext(context.Background(), network, addr)
-}
-
-func (r *route) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	if r.dialer == nil {
-		r.dialer, _ = r.Proxy.NewDialer(service.Direct)
+func (r *route) getDialer() proxy.Dialer {
+	if x := r.dialer.Load(); x != nil {
+		return x.(*dialer).Dialer
 	}
-	return proxy.Dial(ctx, r.dialer, network, addr)
+	d, _ := r.Proxy.NewDialer(proxy.Direct)
+	r.dialer.Store(&dialer{d})
+	return d
 }
 
 type Service struct{}
@@ -178,7 +176,7 @@ func (Service) Run(ctx service.Context) {
 	log.Printf("[http] listening on %v\n", ln.Addr())
 	defer log.Printf("[http] stopped listening on %v\n", ln.Addr())
 
-	handler := NewHandler()
+	handler := NewHandler(ctx.Manager)
 	server := http.Server{
 		Handler:      handler,
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
@@ -220,12 +218,8 @@ func (Service) Run(ctx service.Context) {
 					new.Routes[i].Init()
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(service.Direct)
-					handler.SetDial(
-						func(ctx context.Context, network, addr string) (net.Conn, error) {
-							return proxy.Dial(ctx, d, network, addr)
-						},
-					)
+					d, _ := new.Proxy.NewDialer(proxy.Direct)
+					handler.SetDialer(d)
 				}
 				if !routesEquals(new.Routes, old.Routes) {
 					if watcher == nil {
@@ -342,38 +336,38 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 
 type Handler struct {
 	tr        *http.Transport
-	dial      atomic.Value
+	dialer    atomic.Value
 	routes    atomic.Value
 	matches   atomic.Value
 	redirects atomic.Value
 }
 
-func NewHandler() *Handler {
+type dialer struct {
+	proxy.Dialer
+}
+
+func NewHandler(man *service.Manager) *Handler {
 	h := &Handler{}
-	h.dial.Store(
-		func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return proxy.Dial(ctx, service.Direct, network, addr)
-		},
-	)
+	h.SetDialer(proxy.Direct)
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		dial := h.dial.Load().(func(context.Context, string, string) (net.Conn, error))
+		d := h.dialer.Load().(*dialer).Dialer
 		if routes, _ := h.routes.Load().([]*route); routes != nil {
 			matches := h.matches.Load().(*sync.Map)
 			if r, ok := matches.Load(addr); ok {
-				dial = r.(*route).DialContext
+				d = r.(*route).getDialer()
 			} else {
 				for _, r := range routes {
 					if r.Match(addr) {
 						log.Printf("[http] %v matches %v\n", r.File, addr)
-						dial = r.DialContext
+						d = r.getDialer()
 						matches.Store(addr, r)
 						break
 					}
 				}
 			}
 		}
-		return dial(ctx, network, addr)
+		return man.Dial(ctx, d, network, addr)
 	}
 
 	h.tr = &http.Transport{
@@ -392,8 +386,8 @@ func (h *Handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
 }
 
-func (h *Handler) SetDial(dial func(context.Context, string, string) (net.Conn, error)) {
-	h.dial.Store(dial)
+func (h *Handler) SetDialer(d proxy.Dialer) {
+	h.dialer.Store(&dialer{d})
 }
 
 func (h *Handler) getRoutes() []*route {

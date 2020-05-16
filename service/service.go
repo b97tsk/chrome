@@ -11,7 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
@@ -60,6 +63,7 @@ type Manager struct {
 	mu          sync.Mutex
 	services    map[string]Service
 	jobs        map[string]Job
+	dialTimeout int64
 	connections struct {
 		sync.Map
 		sync.WaitGroup
@@ -137,8 +141,11 @@ func (man *Manager) Load(configFile string) {
 	defer file.Close()
 
 	var c struct {
-		Logfile string                 `yaml:"logging"`
-		Jobs    map[string]interface{} `yaml:",inline"`
+		Logfile string `yaml:"logging"`
+		Dial    struct {
+			Timeout time.Duration
+		}
+		Jobs map[string]interface{} `yaml:",inline"`
 	}
 
 	dec := yaml.NewDecoder(file)
@@ -148,6 +155,12 @@ func (man *Manager) Load(configFile string) {
 		log.Printf("[services] loading %v: %v\n", configFile, err)
 		return
 	}
+
+	if err := man.setOptions("logging||", c.Logfile); err != nil {
+		log.Printf("[services] loading %v: %v\n", configFile, err)
+	}
+
+	atomic.StoreInt64(&man.dialTimeout, int64(c.Dial.Timeout))
 
 	for name, data := range c.Jobs {
 		if r := reNumberPlus.FindStringIndex(name); r != nil {
@@ -168,10 +181,6 @@ func (man *Manager) Load(configFile string) {
 			}
 			delete(c.Jobs, name)
 		}
-	}
-
-	if err := man.setOptions("logging||", c.Logfile); err != nil {
-		log.Printf("[services] loading %v: %v\n", configFile, err)
 	}
 
 	for name, job := range man.jobs {
@@ -251,4 +260,25 @@ func (man *Manager) Shutdown() {
 	man.connections.Wait()
 }
 
+func (man *Manager) Dial(ctx context.Context, d proxy.Dialer, network, address string) (conn net.Conn, err error) {
+	dialTimeout := defaultDialTimeout
+	if timeout := atomic.LoadInt64(&man.dialTimeout); timeout > 0 {
+		dialTimeout = time.Duration(timeout)
+	}
+	for {
+		err = ctx.Err()
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+		conn, err = proxy.Dial(ctx, d, network, address)
+		cancel()
+		if err == nil || !utility.IsTemporary(err) {
+			return
+		}
+	}
+}
+
 var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)
+
+const defaultDialTimeout = 30 * time.Second

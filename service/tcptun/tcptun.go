@@ -54,9 +54,11 @@ func (Service) Run(ctx service.Context) {
 			}
 		}
 		close(xout)
-	}(X{Dialer: service.Direct})
+	}(X{Dialer: proxy.Direct})
 
-	ctx.Manager.ServeListener(ln, func(c net.Conn) {
+	man := ctx.Manager
+
+	man.ServeListener(ln, func(c net.Conn) {
 		x, ok := <-xout
 		if !ok {
 			return
@@ -71,7 +73,7 @@ func (Service) Run(ctx service.Context) {
 
 		ctx, c := service.CheckConnectivity(context.Background(), c)
 
-		rc, err := proxy.Dial(ctx, x.Dialer, "tcp", x.ForwardAddr)
+		rc, err := man.Dial(ctx, x.Dialer, "tcp", x.ForwardAddr)
 		if err != nil {
 			// log.Printf("[tcptun] %v\n", err)
 			return
@@ -91,7 +93,7 @@ func (Service) Run(ctx service.Context) {
 				x := <-xout
 				x.Options = new
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(service.Direct)
+					d, _ := new.Proxy.NewDialer(proxy.Direct)
 					x.Dialer = d
 				}
 				xin <- x

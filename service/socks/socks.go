@@ -33,14 +33,16 @@ func (Service) Run(ctx service.Context) {
 	defer log.Printf("[socks] stopped listening on %v\n", ln.Addr())
 	defer ln.Close()
 
+	man := ctx.Manager
+
 	var dial atomic.Value
 	dial.Store(
 		func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return proxy.Dial(ctx, service.Direct, network, addr)
+			return man.Dial(ctx, proxy.Direct, network, addr)
 		},
 	)
 
-	ctx.Manager.ServeListener(ln, func(c net.Conn) {
+	man.ServeListener(ln, func(c net.Conn) {
 		addr, err := socks.Handshake(c)
 		if err != nil {
 			log.Printf("[socks] socks handshake: %v\n", err)
@@ -68,10 +70,10 @@ func (Service) Run(ctx service.Context) {
 				old := options
 				options = new
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(service.Direct)
+					d, _ := new.Proxy.NewDialer(proxy.Direct)
 					dial.Store(
 						func(ctx context.Context, network, addr string) (net.Conn, error) {
-							return proxy.Dial(ctx, d, network, addr)
+							return man.Dial(ctx, d, network, addr)
 						},
 					)
 				}
