@@ -31,6 +31,13 @@ type Options struct {
 	Routes    []RouteInfo
 	Redirects map[string]string
 	Proxy     service.ProxyChain `yaml:"over"`
+	Dial      struct {
+		Timeout time.Duration
+	}
+
+	dialer  proxy.Dialer
+	routes  []*route
+	matches *sync.Map
 }
 
 type RouteInfo struct {
@@ -153,6 +160,9 @@ func (r *route) match(set *atomic.Value, hostport string) bool {
 }
 
 func (r *route) getDialer() proxy.Dialer {
+	type dialer struct {
+		proxy.Dialer
+	}
 	if x := r.dialer.Load(); x != nil {
 		return x.(*dialer).Dialer
 	}
@@ -176,7 +186,21 @@ func (Service) Run(ctx service.Context) {
 	log.Printf("[http] listening on %v\n", ln.Addr())
 	defer log.Printf("[http] stopped listening on %v\n", ln.Addr())
 
-	handler := NewHandler(ctx.Manager)
+	optsIn, optsOut := make(chan Options), make(chan Options)
+	defer close(optsIn)
+	go func() {
+		var opts Options
+		ok := true
+		for ok {
+			select {
+			case opts, ok = <-optsIn:
+			case optsOut <- opts:
+			}
+		}
+		close(optsOut)
+	}()
+
+	handler := NewHandler(ctx.Manager, optsOut)
 	server := http.Server{
 		Handler:      handler,
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
@@ -195,12 +219,12 @@ func (Service) Run(ctx service.Context) {
 	}()
 
 	var (
-		options     Options
-		watcher     *fsnotify.Watcher
-		watchEvents <-chan fsnotify.Event
-		watchErrors <-chan error
-		delayTimers = make(map[string]*time.Timer)
-		fileChanges = make(chan string)
+		watcher      *fsnotify.Watcher
+		watchEvents  <-chan fsnotify.Event
+		watchErrors  <-chan error
+		delayTimers  = make(map[string]*time.Timer)
+		fileChanges  = make(chan string)
+		resetMatches <-chan time.Time
 	)
 	defer func() {
 		if watcher != nil {
@@ -212,14 +236,15 @@ func (Service) Run(ctx service.Context) {
 		select {
 		case data := <-ctx.Events:
 			if new, ok := data.(Options); ok {
-				old := options
-				options = new
+				old := <-optsOut
+				new.dialer = old.dialer
+				new.routes = old.routes
+				new.matches = old.matches
 				for i := range new.Routes {
 					new.Routes[i].Init()
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(proxy.Direct)
-					handler.SetDialer(d)
+					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
 				}
 				if !routesEquals(new.Routes, old.Routes) {
 					if watcher == nil {
@@ -233,16 +258,16 @@ func (Service) Run(ctx service.Context) {
 							log.Printf("[http] %v\n", err)
 						}
 					}
-					newRoutes := make([]*route, len(new.Routes))
-					oldRoutes := handler.getRoutes()
+					new.routes = make([]*route, len(new.Routes))
+					new.matches = &sync.Map{}
 					if watcher != nil {
-						for _, r := range oldRoutes {
+						for _, r := range old.routes {
 							watcher.Remove(r.File)
 						}
 					}
 					for i, r := range new.Routes {
 						r.File = filepath.Clean(os.ExpandEnv(r.File))
-						newRoutes[i] = &route{RouteInfo: r}
+						new.routes[i] = &route{RouteInfo: r}
 						if watcher != nil {
 							err := watcher.Add(r.File)
 							if err != nil {
@@ -250,15 +275,15 @@ func (Service) Run(ctx service.Context) {
 							}
 						}
 						didRecycle := false
-						for _, r2 := range oldRoutes {
+						for _, r2 := range old.routes {
 							if r.File == r2.File && r.hashCode == r2.hashCode {
-								newRoutes[i].Recycle(r2)
+								new.routes[i].Recycle(r2)
 								didRecycle = true
 								break
 							}
 						}
 						if !didRecycle {
-							switch err := newRoutes[i].Init(); err {
+							switch err := new.routes[i].Init(); err {
 							case nil:
 								log.Printf("[http] loaded %v\n", r.File)
 							case errNotModified:
@@ -268,11 +293,11 @@ func (Service) Run(ctx service.Context) {
 							}
 						}
 					}
-					handler.setRoutes(newRoutes)
 				}
 				if !redirectsEquals(new.Redirects, old.Redirects) {
 					handler.setRedirects(new.Redirects)
 				}
+				optsIn <- new
 			}
 		case err := <-serverDown:
 			log.Printf("[http] %v\n", err)
@@ -297,8 +322,9 @@ func (Service) Run(ctx service.Context) {
 		case err := <-watchErrors:
 			log.Printf("[http] watcher: %v\n", err)
 		case name := <-fileChanges:
+			opts := <-optsOut
 			routesChanged := false
-			for _, r := range handler.getRoutes() {
+			for _, r := range opts.routes {
 				if r.File == name {
 					switch err := r.Init(); err {
 					case nil:
@@ -312,15 +338,13 @@ func (Service) Run(ctx service.Context) {
 			}
 			delete(delayTimers, name)
 			if routesChanged {
-				timer := delayTimers["<reset-matches>"]
-				if timer == nil {
-					timer = time.AfterFunc(time.Second, func() {
-						handler.clearMatches()
-					})
-					delayTimers["<reset-matches>"] = timer
-				} else {
-					timer.Reset(time.Second)
-				}
+				resetMatches = time.After(time.Second)
+			}
+		case <-resetMatches:
+			opts := <-optsOut
+			if opts.routes != nil {
+				opts.matches = &sync.Map{}
+				optsIn <- opts
 			}
 		}
 	}
@@ -336,38 +360,29 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 
 type Handler struct {
 	tr        *http.Transport
-	dialer    atomic.Value
-	routes    atomic.Value
-	matches   atomic.Value
 	redirects atomic.Value
 }
 
-type dialer struct {
-	proxy.Dialer
-}
-
-func NewHandler(man *service.Manager) *Handler {
+func NewHandler(man *service.Manager, opts <-chan Options) *Handler {
 	h := &Handler{}
-	h.SetDialer(proxy.Direct)
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		d := h.dialer.Load().(*dialer).Dialer
-		if routes, _ := h.routes.Load().([]*route); routes != nil {
-			matches := h.matches.Load().(*sync.Map)
-			if r, ok := matches.Load(addr); ok {
-				d = r.(*route).getDialer()
+		opts := <-opts
+		if opts.routes != nil {
+			if r, ok := opts.matches.Load(addr); ok {
+				opts.dialer = r.(*route).getDialer()
 			} else {
-				for _, r := range routes {
+				for _, r := range opts.routes {
 					if r.Match(addr) {
 						log.Printf("[http] %v matches %v\n", r.File, addr)
-						d = r.getDialer()
-						matches.Store(addr, r)
+						opts.dialer = r.getDialer()
+						opts.matches.Store(addr, r)
 						break
 					}
 				}
 			}
 		}
-		return man.Dial(ctx, d, network, addr)
+		return man.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
 	}
 
 	h.tr = &http.Transport{
@@ -384,24 +399,6 @@ func NewHandler(man *service.Manager) *Handler {
 
 func (h *Handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
-}
-
-func (h *Handler) SetDialer(d proxy.Dialer) {
-	h.dialer.Store(&dialer{d})
-}
-
-func (h *Handler) getRoutes() []*route {
-	routes, _ := h.routes.Load().([]*route)
-	return routes
-}
-
-func (h *Handler) setRoutes(routes []*route) {
-	h.routes.Store(routes)
-	h.matches.Store(&sync.Map{})
-}
-
-func (h *Handler) clearMatches() {
-	h.matches.Store(&sync.Map{})
 }
 
 func (h *Handler) setRedirects(redirects map[string]string) {

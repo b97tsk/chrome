@@ -33,6 +33,11 @@ import (
 type Options struct {
 	AppIDList []string           `yaml:"appids"`
 	Proxy     service.ProxyChain `yaml:"over"`
+	Dial      struct {
+		Timeout time.Duration
+	}
+
+	dialer proxy.Dialer
 }
 
 type Service struct{}
@@ -50,8 +55,22 @@ func (Service) Run(ctx service.Context) {
 	log.Printf("[goagent] listening on %v\n", ln.Addr())
 	defer log.Printf("[goagent] stopped listening on %v\n", ln.Addr())
 
+	optsIn, optsOut := make(chan Options), make(chan Options)
+	defer close(optsIn)
+	go func() {
+		var opts Options
+		ok := true
+		for ok {
+			select {
+			case opts, ok = <-optsIn:
+			case optsOut <- opts:
+			}
+		}
+		close(optsOut)
+	}()
+
 	listener := NewListener(ln, ctx.Done)
-	handler := NewHandler(listener, ctx.Manager)
+	handler := NewHandler(listener, ctx.Manager, optsOut)
 	server := http.Server{
 		Handler:      handler,
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
@@ -69,21 +88,19 @@ func (Service) Run(ctx service.Context) {
 		close(serverDown)
 	}()
 
-	var options Options
-
 	for {
 		select {
 		case data := <-ctx.Events:
 			if new, ok := data.(Options); ok {
-				old := options
-				options = new
+				old := <-optsOut
+				new.dialer = old.dialer
 				if !isTwoAppIDListsIdentical(new.AppIDList, old.AppIDList) {
 					handler.SetAppIDList(new.AppIDList)
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(proxy.Direct)
-					handler.SetDialer(d)
+					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
 				}
+				optsIn <- new
 			}
 		case err := <-serverDown:
 			log.Printf("[goagent] %v\n", err)
@@ -183,23 +200,17 @@ func (l *Listener) Addr() net.Addr {
 type Handler struct {
 	l            *Listener
 	tr           *http.Transport
-	dialer       atomic.Value
 	appIDMutex   sync.Mutex
 	appIDList    []string
 	badAppIDList []string
 }
 
-type dialer struct {
-	proxy.Dialer
-}
-
-func NewHandler(l *Listener, man *service.Manager) *Handler {
+func NewHandler(l *Listener, man *service.Manager, opts <-chan Options) *Handler {
 	h := &Handler{l: l}
-	h.SetDialer(proxy.Direct)
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		d := h.dialer.Load().(*dialer).Dialer
-		return man.Dial(ctx, d, network, addr)
+		opts := <-opts
+		return man.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
 	}
 
 	h.tr = &http.Transport{
@@ -216,10 +227,6 @@ func NewHandler(l *Listener, man *service.Manager) *Handler {
 
 func (h *Handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
-}
-
-func (h *Handler) SetDialer(d proxy.Dialer) {
-	h.dialer.Store(&dialer{d})
 }
 
 func (h *Handler) SetAppIDList(appIDList []string) {

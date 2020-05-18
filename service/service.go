@@ -260,9 +260,14 @@ func (man *Manager) Shutdown() {
 	man.connections.Wait()
 }
 
-func (man *Manager) Dial(ctx context.Context, d proxy.Dialer, network, address string) (conn net.Conn, err error) {
+func (man *Manager) Dial(ctx context.Context, d proxy.Dialer, network, address string, timeout time.Duration) (conn net.Conn, err error) {
+	if d == nil {
+		d = proxy.Direct
+	}
 	dialTimeout := defaultDialTimeout
-	if timeout := atomic.LoadInt64(&man.dialTimeout); timeout > 0 {
+	if timeout > 0 {
+		dialTimeout = timeout
+	} else if timeout := atomic.LoadInt64(&man.dialTimeout); timeout > 0 {
 		dialTimeout = time.Duration(timeout)
 	}
 	for {

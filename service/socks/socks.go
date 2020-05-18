@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
-	"sync/atomic"
+	"time"
 
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/internal/utility"
@@ -15,6 +15,11 @@ import (
 
 type Options struct {
 	Proxy service.ProxyChain `yaml:"over"`
+	Dial  struct {
+		Timeout time.Duration
+	}
+
+	dialer proxy.Dialer
 }
 
 type Service struct{}
@@ -33,25 +38,36 @@ func (Service) Run(ctx service.Context) {
 	defer log.Printf("[socks] stopped listening on %v\n", ln.Addr())
 	defer ln.Close()
 
+	optsIn, optsOut := make(chan Options), make(chan Options)
+	defer close(optsIn)
+	go func() {
+		var opts Options
+		ok := true
+		for ok {
+			select {
+			case opts, ok = <-optsIn:
+			case optsOut <- opts:
+			}
+		}
+		close(optsOut)
+	}()
+
 	man := ctx.Manager
 
-	var dial atomic.Value
-	dial.Store(
-		func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return man.Dial(ctx, proxy.Direct, network, addr)
-		},
-	)
-
 	man.ServeListener(ln, func(c net.Conn) {
+		opts, ok := <-optsOut
+		if !ok {
+			return
+		}
+
 		addr, err := socks.Handshake(c)
 		if err != nil {
 			log.Printf("[socks] socks handshake: %v\n", err)
 			return
 		}
 
-		dial := dial.Load().(func(context.Context, string, string) (net.Conn, error))
 		ctx, c := service.CheckConnectivity(context.Background(), c)
-		rc, err := dial(ctx, "tcp", addr.String())
+		rc, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 		if err != nil {
 			// log.Printf("[socks] %v\n", err)
 			return
@@ -61,22 +77,16 @@ func (Service) Run(ctx service.Context) {
 		utility.Relay(rc, c)
 	})
 
-	var options Options
-
 	for {
 		select {
 		case data := <-ctx.Events:
 			if new, ok := data.(Options); ok {
-				old := options
-				options = new
+				old := <-optsOut
+				new.dialer = old.dialer
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(proxy.Direct)
-					dial.Store(
-						func(ctx context.Context, network, addr string) (net.Conn, error) {
-							return man.Dial(ctx, d, network, addr)
-						},
-					)
+					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
 				}
+				optsIn <- new
 			}
 		case <-ctx.Done:
 			return

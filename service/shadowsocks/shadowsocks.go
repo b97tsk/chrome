@@ -18,6 +18,12 @@ type Options struct {
 	Method   string
 	Password string
 	Proxy    service.ProxyChain `yaml:"over"`
+	Dial     struct {
+		Timeout time.Duration
+	}
+
+	dialer proxy.Dialer
+	cipher core.Cipher
 }
 
 type Service struct{}
@@ -36,46 +42,36 @@ func (Service) Run(ctx service.Context) {
 	defer log.Printf("[shadowsocks] stopped listening on %v\n", ln.Addr())
 	defer ln.Close()
 
-	type X struct {
-		Options
-		Dialer proxy.Dialer
-		Cipher core.Cipher
-	}
-	xin, xout := make(chan X), make(chan X)
-	defer func() {
-		close(xin)
-		for range xout {
-			// Let's wait until xout closes.
-			// Though this is not necessary.
-		}
-	}()
-	go func(x X) {
+	optsIn, optsOut := make(chan Options), make(chan Options)
+	defer close(optsIn)
+	go func() {
+		var opts Options
 		ok := true
 		for ok {
 			select {
-			case x, ok = <-xin:
-			case xout <- x:
+			case opts, ok = <-optsIn:
+			case optsOut <- opts:
 			}
 		}
-		close(xout)
-	}(X{Dialer: proxy.Direct})
+		close(optsOut)
+	}()
 
 	man := ctx.Manager
 
 	man.ServeListener(ln, func(c net.Conn) {
-		x, ok := <-xout
+		opts, ok := <-optsOut
 		if !ok {
 			return
 		}
-		if x.Cipher == nil {
+		if opts.cipher == nil {
 			time.Sleep(time.Second)
-			x = <-xout
-			if x.Cipher == nil {
+			opts = <-optsOut
+			if opts.cipher == nil {
 				return
 			}
 		}
 
-		c = x.Cipher.StreamConn(c)
+		c = opts.cipher.StreamConn(c)
 		addr, err := socks.ReadAddr(c)
 		if err != nil {
 			log.Printf("[shadowsocks] read addr: %v\n", err)
@@ -84,7 +80,7 @@ func (Service) Run(ctx service.Context) {
 
 		ctx, c := service.CheckConnectivity(context.Background(), c)
 
-		rc, err := man.Dial(ctx, x.Dialer, "tcp", addr.String())
+		rc, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 		if err != nil {
 			// log.Printf("[shadowsocks] %v\n", err)
 			return
@@ -94,28 +90,25 @@ func (Service) Run(ctx service.Context) {
 		utility.Relay(rc, c)
 	})
 
-	var options Options
 	for {
 		select {
 		case data := <-ctx.Events:
 			if new, ok := data.(Options); ok {
-				old := options
-				options = new
-				x := <-xout
-				x.Options = new
+				old := <-optsOut
+				new.cipher = old.cipher
+				new.dialer = old.dialer
 				if new.Method != old.Method || new.Password != old.Password {
 					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
 						log.Printf("[shadowsocks] fatal: pick cipher: %v\n", err)
 						return
 					}
-					x.Cipher = cipher
+					new.cipher = cipher
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(proxy.Direct)
-					x.Dialer = d
+					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
 				}
-				xin <- x
+				optsIn <- new
 			}
 		case <-ctx.Done:
 			return

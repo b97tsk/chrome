@@ -15,6 +15,11 @@ import (
 type Options struct {
 	ForwardAddr string             `yaml:"for"`
 	Proxy       service.ProxyChain `yaml:"over"`
+	Dial        struct {
+		Timeout time.Duration
+	}
+
+	dialer proxy.Dialer
 }
 
 type Service struct{}
@@ -33,47 +38,38 @@ func (Service) Run(ctx service.Context) {
 	defer log.Printf("[tcptun] stopped listening on %v\n", ln.Addr())
 	defer ln.Close()
 
-	type X struct {
-		Options
-		Dialer proxy.Dialer
-	}
-	xin, xout := make(chan X), make(chan X)
-	defer func() {
-		close(xin)
-		for range xout {
-			// Let's wait until xout closes.
-			// Though this is not necessary.
-		}
-	}()
-	go func(x X) {
+	optsIn, optsOut := make(chan Options), make(chan Options)
+	defer close(optsIn)
+	go func() {
+		var opts Options
 		ok := true
 		for ok {
 			select {
-			case x, ok = <-xin:
-			case xout <- x:
+			case opts, ok = <-optsIn:
+			case optsOut <- opts:
 			}
 		}
-		close(xout)
-	}(X{Dialer: proxy.Direct})
+		close(optsOut)
+	}()
 
 	man := ctx.Manager
 
 	man.ServeListener(ln, func(c net.Conn) {
-		x, ok := <-xout
+		opts, ok := <-optsOut
 		if !ok {
 			return
 		}
-		if x.ForwardAddr == "" {
+		if opts.ForwardAddr == "" {
 			time.Sleep(time.Second)
-			x = <-xout
-			if x.ForwardAddr == "" {
+			opts = <-optsOut
+			if opts.ForwardAddr == "" {
 				return
 			}
 		}
 
 		ctx, c := service.CheckConnectivity(context.Background(), c)
 
-		rc, err := man.Dial(ctx, x.Dialer, "tcp", x.ForwardAddr)
+		rc, err := man.Dial(ctx, opts.dialer, "tcp", opts.ForwardAddr, opts.Dial.Timeout)
 		if err != nil {
 			// log.Printf("[tcptun] %v\n", err)
 			return
@@ -83,20 +79,16 @@ func (Service) Run(ctx service.Context) {
 		utility.Relay(rc, c)
 	})
 
-	var options Options
 	for {
 		select {
 		case data := <-ctx.Events:
 			if new, ok := data.(Options); ok {
-				old := options
-				options = new
-				x := <-xout
-				x.Options = new
+				old := <-optsOut
+				new.dialer = old.dialer
 				if !new.Proxy.Equals(old.Proxy) {
-					d, _ := new.Proxy.NewDialer(proxy.Direct)
-					x.Dialer = d
+					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
 				}
-				xin <- x
+				optsIn <- new
 			}
 		case <-ctx.Done:
 			return
