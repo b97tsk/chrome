@@ -41,7 +41,7 @@ type Options struct {
 }
 
 type RouteInfo struct {
-	File     string
+	File     service.String
 	Proxy    service.ProxyChain `yaml:"over"`
 	hashCode uint32
 }
@@ -53,7 +53,7 @@ func (r *RouteInfo) Equals(other *RouteInfo) bool {
 }
 
 func (r *RouteInfo) Init() error {
-	hashCode, err := getHashCode(r.File)
+	hashCode, err := getHashCode(r.File.String())
 	if err == nil {
 		r.hashCode = hashCode
 	}
@@ -80,7 +80,7 @@ func (r *route) Recycle(r2 *route) {
 }
 
 func (r *route) Init() error {
-	hashCode, err := getHashCode(r.File)
+	hashCode, err := getHashCode(r.File.String())
 	if err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func (r *route) Init() error {
 		return errNotModified
 	}
 
-	file, err := os.Open(r.File)
+	file, err := os.Open(r.File.String())
 	if err != nil {
 		return err
 	}
@@ -262,14 +262,14 @@ func (Service) Run(ctx service.Context) {
 					new.matches = &sync.Map{}
 					if watcher != nil {
 						for _, r := range old.routes {
-							watcher.Remove(r.File)
+							watcher.Remove(r.File.String())
 						}
 					}
 					for i, r := range new.Routes {
-						r.File = filepath.Clean(os.ExpandEnv(r.File))
+						r.File = service.String(filepath.Clean(r.File.String()))
 						new.routes[i] = &route{RouteInfo: r}
 						if watcher != nil {
-							err := watcher.Add(r.File)
+							err := watcher.Add(r.File.String())
 							if err != nil {
 								log.Printf("[http] watcher: %v\n", err)
 							}
@@ -325,7 +325,7 @@ func (Service) Run(ctx service.Context) {
 			opts := <-optsOut
 			routesChanged := false
 			for _, r := range opts.routes {
-				if r.File == name {
+				if r.File.String() == name {
 					switch err := r.Init(); err {
 					case nil:
 						log.Printf("[http] loaded %v\n", r.File)

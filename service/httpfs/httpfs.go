@@ -5,7 +5,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"sync/atomic"
 
 	"github.com/b97tsk/chrome/service"
@@ -13,7 +12,7 @@ import (
 )
 
 type Options struct {
-	Dir string
+	Dir service.String
 }
 
 type Service struct{}
@@ -66,7 +65,7 @@ func (Service) Run(ctx service.Context) {
 				old := options
 				options = new
 				if new.Dir != old.Dir {
-					handler.Store(http.FileServer(http.Dir(os.ExpandEnv(new.Dir))))
+					handler.Store(http.FileServer(http.Dir(new.Dir.String())))
 				}
 			}
 		case err := <-serverDown:

@@ -10,7 +10,7 @@ import (
 )
 
 type Options struct {
-	Logfile string
+	Logfile service.String
 }
 
 type Service struct{}
@@ -46,8 +46,7 @@ func (Service) Run(ctx service.Context) {
 						}
 					} else {
 						// log.Printf("[logging] opening %v\n", new.Logfile)
-						name := os.ExpandEnv(new.Logfile)
-						file, err := os.OpenFile(name, os.O_APPEND|os.O_CREATE, 0644)
+						file, err := os.OpenFile(new.Logfile.String(), os.O_APPEND|os.O_CREATE, 0644)
 						if err != nil {
 							log.Printf("[logging] %v", err)
 						} else {
