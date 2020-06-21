@@ -21,7 +21,6 @@ import (
 
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v2"
@@ -442,7 +441,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			utility.Relay(remote, conn)
+			service.Relay(remote, conn)
 		}()
 		return
 	}

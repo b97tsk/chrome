@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
@@ -74,7 +73,7 @@ func (Service) Run(ctx service.Context) {
 		}
 		defer rc.Close()
 
-		utility.Relay(rc, c)
+		service.Relay(rc, c)
 	})
 
 	for {

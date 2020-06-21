@@ -306,7 +306,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				return
 			}
 
-			utility.Relay(remote, conn)
+			service.Relay(remote, conn)
 		}()
 		return
 	}
