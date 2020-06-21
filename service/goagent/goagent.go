@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/internal/utility"
 	"github.com/b97tsk/chrome/service"
 	"gopkg.in/yaml.v2"
 )
@@ -149,7 +148,7 @@ func (l *Listener) init() {
 		for {
 			conn, err := l.ln.Accept()
 			if err != nil {
-				if utility.IsTemporary(err) {
+				if isTemporary(err) {
 					continue
 				}
 				return
@@ -888,6 +887,13 @@ func shuffleAppIDList(appIDList []string) {
 	rand.Shuffle(len(appIDList), func(i, j int) {
 		appIDList[i], appIDList[j] = appIDList[j], appIDList[i]
 	})
+}
+
+func isTemporary(err error) bool {
+	e, ok := err.(interface {
+		Temporary() bool
+	})
+	return ok && e.Temporary()
 }
 
 func isTwoAppIDListsIdentical(a, b []string) bool {

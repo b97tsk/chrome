@@ -11,10 +11,3 @@ func DecodeBase64String(s string) ([]byte, error) {
 	}
 	return enc.DecodeString(s)
 }
-
-func IsTemporary(err error) bool {
-	e, ok := err.(interface {
-		Temporary() bool
-	})
-	return ok && e.Temporary()
-}

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/internal/utility"
 	"gopkg.in/yaml.v2"
 )
 
@@ -208,7 +207,7 @@ func (man *Manager) ServeListener(ln net.Listener, handle func(net.Conn)) {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
-				if utility.IsTemporary(err) {
+				if isTemporary(err) {
 					continue
 				}
 				return
@@ -278,10 +277,17 @@ func (man *Manager) Dial(ctx context.Context, d proxy.Dialer, network, address s
 		ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 		conn, err = proxy.Dial(ctx, d, network, address)
 		cancel()
-		if err == nil || !utility.IsTemporary(err) {
+		if err == nil || !isTemporary(err) {
 			return
 		}
 	}
+}
+
+func isTemporary(err error) bool {
+	e, ok := err.(interface {
+		Temporary() bool
+	})
+	return ok && e.Temporary()
 }
 
 var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)
