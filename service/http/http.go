@@ -42,17 +42,22 @@ type Options struct {
 type RouteInfo struct {
 	File     service.String
 	Proxy    service.ProxyChain `yaml:"over"`
+	absFile  string
 	hashCode uint32
 }
 
 func (r *RouteInfo) Equals(other *RouteInfo) bool {
-	return r.File == other.File &&
+	return r.absFile == other.absFile &&
 		r.hashCode == other.hashCode &&
 		r.Proxy.Equals(other.Proxy)
 }
 
 func (r *RouteInfo) Init() error {
-	hashCode, err := getHashCode(r.File.String())
+	r.absFile = r.File.String()
+	if abs, err := filepath.Abs(r.absFile); err == nil {
+		r.absFile = abs
+	}
+	hashCode, err := getHashCode(r.absFile)
 	if err == nil {
 		r.hashCode = hashCode
 	}
@@ -64,22 +69,24 @@ type route struct {
 	hash     uint32
 	dialer   atomic.Value
 	matchset atomic.Value
-	excludes atomic.Value
+}
+
+type routeMatchSet struct {
+	includes matchset.MatchSet
+	excludes matchset.MatchSet
 }
 
 type patternConfig struct {
-	matchAllPorts   bool
-	matchThosePorts []string
+	ports []string
 }
 
 func (r *route) Recycle(r2 *route) {
 	r.hash = r2.hash
 	r.matchset.Store(r2.matchset.Load())
-	r.excludes.Store(r2.excludes.Load())
 }
 
 func (r *route) Init() error {
-	hashCode, err := getHashCode(r.File.String())
+	hashCode, err := getHashCode(r.absFile)
 	if err != nil {
 		return err
 	}
@@ -87,15 +94,14 @@ func (r *route) Init() error {
 		return errNotModified
 	}
 
-	file, err := os.Open(r.File.String())
+	file, err := os.Open(r.absFile)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	var set, excludes matchset.MatchSet
-	patternConfigs := make(map[string]*patternConfig)
-
+	var includes, excludes matchset.MatchSet
+	configMap := make(map[string]*patternConfig)
 	s := bufio.NewScanner(file)
 	for s.Scan() {
 		line := strings.TrimSpace(s.Text())
@@ -108,54 +114,44 @@ func (r *route) Init() error {
 		}
 		portSuffix := regxPortSuffix.FindString(line)
 		pattern := line[:len(line)-len(portSuffix)]
-		config := patternConfigs[pattern]
-		if config == nil {
-			config = &patternConfig{}
-			patternConfigs[pattern] = config
-		}
-		if portSuffix == "" {
-			config.matchAllPorts = true
-			config.matchThosePorts = nil
-		} else if !config.matchAllPorts {
-			config.matchThosePorts = append(config.matchThosePorts, portSuffix[1:])
+		config := configMap[pattern]
+		if portSuffix != "" {
+			if config == nil {
+				config = &patternConfig{}
+				configMap[pattern] = config
+			}
+			config.ports = append(config.ports, portSuffix[1:])
 		}
 		if !exclude {
-			set.Add(pattern, config)
+			includes.Add(pattern, config)
 		} else {
 			excludes.Add(pattern, config)
 		}
 	}
 	r.hash = hashCode
-	r.matchset.Store(&set)
-	r.excludes.Store(&excludes)
+	r.matchset.Store(&routeMatchSet{includes, excludes})
 	return nil
 }
 
-func (r *route) Match(hostport string) bool {
-	if !r.match(&r.matchset, hostport) {
-		return false
-	}
-	return !r.match(&r.excludes, hostport)
-}
-
-func (r *route) match(set *atomic.Value, hostport string) bool {
-	matchset, _ := set.Load().(*matchset.MatchSet)
-	if matchset == nil {
-		return false
-	}
-	host, port, _ := net.SplitHostPort(hostport)
-	for _, c := range matchset.MatchAll(host) {
+func match(set *matchset.MatchSet, host, port string) bool {
+	for _, c := range set.MatchAll(host) {
 		config := c.(*patternConfig)
-		if config.matchAllPorts {
+		if config == nil {
 			return true
 		}
-		for _, p := range config.matchThosePorts {
+		for _, p := range config.ports {
 			if p == port {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func (r *route) Match(hostport string) bool {
+	set, ok := r.matchset.Load().(*routeMatchSet)
+	host, port, _ := net.SplitHostPort(hostport)
+	return ok && match(&set.includes, host, port) && !match(&set.excludes, host, port)
 }
 
 func (r *route) getDialer() proxy.Dialer {
@@ -261,21 +257,20 @@ func (Service) Run(ctx service.Context) {
 					new.matches = &sync.Map{}
 					if watcher != nil {
 						for _, r := range old.routes {
-							watcher.Remove(r.File.String())
+							watcher.Remove(r.absFile)
 						}
 					}
 					for i, r := range new.Routes {
-						r.File = service.String(filepath.Clean(r.File.String()))
 						new.routes[i] = &route{RouteInfo: r}
 						if watcher != nil {
-							err := watcher.Add(r.File.String())
+							err := watcher.Add(r.absFile)
 							if err != nil {
 								log.Printf("[http] watcher: %v\n", err)
 							}
 						}
 						didRecycle := false
 						for _, r2 := range old.routes {
-							if r.File == r2.File && r.hashCode == r2.hashCode {
+							if r.hashCode == r2.hashCode {
 								new.routes[i].Recycle(r2)
 								didRecycle = true
 								break
@@ -324,7 +319,7 @@ func (Service) Run(ctx service.Context) {
 			opts := <-optsOut
 			routesChanged := false
 			for _, r := range opts.routes {
-				if r.File.String() == name {
+				if r.absFile == name {
 					switch err := r.Init(); err {
 					case nil:
 						log.Printf("[http] loaded %v\n", r.File)
@@ -423,21 +418,25 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		go func() {
 			defer conn.Close()
 
+			redirects, _ := h.redirects.Load().(map[string]string)
+			if s := redirects[requestURI]; s != "" {
+				if u, _ := url.Parse(s); u != nil && u.Path == "" && u.Port() != "" {
+					requestURI = u.Host
+				}
+			}
+
 			ctx, conn := service.CheckConnectivity(context.Background(), conn)
 
 			remote, err := h.tr.DialContext(ctx, "tcp", requestURI)
 			if err != nil {
 				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
-				if _, err := conn.Write([]byte(responseString)); err != nil {
-					log.Printf("[http] write: %v\n", err)
-				}
+				_, _ = conn.Write([]byte(responseString))
 				return
 			}
 			defer remote.Close()
 
 			responseString := httpVersion + " 200 OK\r\n\r\n"
 			if _, err := conn.Write([]byte(responseString)); err != nil {
-				log.Printf("[http] write: %v\n", err)
 				return
 			}
 
@@ -453,16 +452,13 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	redirects, _ := h.redirects.Load().(map[string]string)
 	if s := redirects[req.URL.Host]; s != "" {
-		u, err := url.Parse(s)
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
+		if u, _ := url.Parse(s); u != nil {
+			if u.Path == "" {
+				u.Path = req.URL.Path
+			}
+			http.Redirect(rw, req, u.String(), http.StatusFound)
 			return
 		}
-		if u.Path == "" {
-			u.Path = req.URL.Path
-		}
-		http.Redirect(rw, req, u.String(), http.StatusFound)
-		return
 	}
 
 	resp, err := h.tr.RoundTrip(req)
