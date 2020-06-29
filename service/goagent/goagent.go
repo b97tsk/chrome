@@ -97,7 +97,7 @@ func (Service) Run(ctx service.Context) {
 					handler.SetAppIDList(new.AppIDList)
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
+					new.dialer, _ = new.Proxy.NewDialer()
 				}
 				optsIn <- new
 			}

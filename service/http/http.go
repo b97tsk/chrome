@@ -161,7 +161,7 @@ func (r *route) getDialer() proxy.Dialer {
 	if x := r.dialer.Load(); x != nil {
 		return x.(*dialer).Dialer
 	}
-	d, _ := r.Proxy.NewDialer(proxy.Direct)
+	d, _ := r.Proxy.NewDialer()
 	r.dialer.Store(&dialer{d})
 	return d
 }
@@ -239,7 +239,7 @@ func (Service) Run(ctx service.Context) {
 					new.Routes[i].Init()
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
+					new.dialer, _ = new.Proxy.NewDialer()
 				}
 				if !routesEquals(new.Routes, old.Routes) {
 					if watcher == nil {

@@ -28,19 +28,16 @@ func (pc ProxyChain) Equals(other ProxyChain) bool {
 	return true
 }
 
-func (pc ProxyChain) NewDialer(forward proxy.Dialer) (proxy.Dialer, error) {
-	var firstErr error
+func (pc ProxyChain) NewDialer() (proxy.Dialer, error) {
+	var forward proxy.Dialer = proxy.Direct
 	for i := len(pc.s) - 1; i > -1; i-- {
 		d, err := proxy.FromURL(pc.s[i].URL, forward)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
+			return nil, err
 		}
 		forward = d
 	}
-	return forward, firstErr
+	return forward, nil
 }
 
 func (pc *ProxyChain) UnmarshalYAML(unmarshal func(interface{}) error) error {
@@ -51,7 +48,7 @@ func (pc *ProxyChain) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			return errors.New("invalid proxy: " + rawurl)
 		}
 		pc.s = []proxyData{{u, rawurl}}
-		_, err = pc.NewDialer(proxy.Direct)
+		_, err = pc.NewDialer()
 		return err
 	}
 	var slice []string
@@ -64,7 +61,7 @@ func (pc *ProxyChain) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			}
 			pc.s = append(pc.s, proxyData{u, rawurl})
 		}
-		_, err = pc.NewDialer(proxy.Direct)
+		_, err = pc.NewDialer()
 		return err
 	}
 	return errors.New("invalid proxy chain")

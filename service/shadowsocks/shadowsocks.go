@@ -105,7 +105,7 @@ func (Service) Run(ctx service.Context) {
 					new.cipher = cipher
 				}
 				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer, _ = new.Proxy.NewDialer(proxy.Direct)
+					new.dialer, _ = new.Proxy.NewDialer()
 				}
 				optsIn <- new
 			}
