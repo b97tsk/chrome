@@ -51,30 +51,37 @@ func (Service) Run(ctx service.Context) {
 		close(optsOut)
 	}()
 
-	man := ctx.Manager
-
-	man.ServeListener(ln, func(c net.Conn) {
-		opts, ok := <-optsOut
-		if !ok {
+	var initialized bool
+	initialize := func() {
+		if initialized {
 			return
 		}
+		initialized = true
 
-		addr, err := socks.Handshake(c)
-		if err != nil {
-			log.Printf("[socks] socks handshake: %v\n", err)
-			return
-		}
+		man := ctx.Manager
+		man.ServeListener(ln, func(c net.Conn) {
+			opts, ok := <-optsOut
+			if !ok {
+				return
+			}
 
-		ctx, c := service.CheckConnectivity(context.Background(), c)
-		rc, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
-		if err != nil {
-			// log.Printf("[socks] %v\n", err)
-			return
-		}
-		defer rc.Close()
+			addr, err := socks.Handshake(c)
+			if err != nil {
+				log.Printf("[socks] socks handshake: %v\n", err)
+				return
+			}
 
-		service.Relay(rc, c)
-	})
+			ctx, c := service.CheckConnectivity(context.Background(), c)
+			rc, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
+			if err != nil {
+				// log.Printf("[socks] %v\n", err)
+				return
+			}
+			defer rc.Close()
+
+			service.Relay(rc, c)
+		})
+	}
 
 	for {
 		select {
@@ -86,6 +93,7 @@ func (Service) Run(ctx service.Context) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
 				optsIn <- new
+				initialize()
 			}
 		case <-ctx.Done:
 			return

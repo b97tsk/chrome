@@ -70,21 +70,31 @@ func (Service) Run(ctx service.Context) {
 
 	listener := NewListener(ln, ctx.Done)
 	handler := NewHandler(listener, ctx.Manager, optsOut)
-	server := http.Server{
-		Handler:      handler,
-		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
-	}
 	defer handler.CloseIdleConnections()
 
-	serverDown := make(chan error, 1)
+	var (
+		server     *http.Server
+		serverDown chan error
+	)
+	initialize := func() {
+		if server != nil {
+			return
+		}
+		server = &http.Server{
+			Handler:      handler,
+			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
+		}
+		serverDown = make(chan error, 1)
+		go func() {
+			serverDown <- server.Serve(listener)
+			close(serverDown)
+		}()
+	}
 	defer func() {
-		server.Shutdown(context.TODO())
-		<-serverDown
-	}()
-
-	go func() {
-		serverDown <- server.Serve(listener)
-		close(serverDown)
+		if server != nil {
+			server.Shutdown(context.TODO())
+			<-serverDown
+		}
 	}()
 
 	for {
@@ -100,9 +110,9 @@ func (Service) Run(ctx service.Context) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
 				optsIn <- new
+				initialize()
 			}
-		case err := <-serverDown:
-			log.Printf("[goagent] %v\n", err)
+		case <-serverDown:
 			return
 		case <-ctx.Done:
 			return

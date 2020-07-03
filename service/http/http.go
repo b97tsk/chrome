@@ -196,21 +196,31 @@ func (Service) Run(ctx service.Context) {
 	}()
 
 	handler := NewHandler(ctx.Manager, optsOut)
-	server := http.Server{
-		Handler:      handler,
-		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
-	}
 	defer handler.CloseIdleConnections()
 
-	serverDown := make(chan error, 1)
+	var (
+		server     *http.Server
+		serverDown chan error
+	)
+	initialize := func() {
+		if server != nil {
+			return
+		}
+		server = &http.Server{
+			Handler:      handler,
+			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
+		}
+		serverDown = make(chan error, 1)
+		go func() {
+			serverDown <- server.Serve(ln)
+			close(serverDown)
+		}()
+	}
 	defer func() {
-		server.Shutdown(context.TODO())
-		<-serverDown
-	}()
-
-	go func() {
-		serverDown <- server.Serve(ln)
-		close(serverDown)
+		if server != nil {
+			server.Shutdown(context.TODO())
+			<-serverDown
+		}
 	}()
 
 	var (
@@ -292,9 +302,9 @@ func (Service) Run(ctx service.Context) {
 					handler.setRedirects(new.Redirects)
 				}
 				optsIn <- new
+				initialize()
 			}
-		case err := <-serverDown:
-			log.Printf("[http] %v\n", err)
+		case <-serverDown:
 			return
 		case <-ctx.Done:
 			return

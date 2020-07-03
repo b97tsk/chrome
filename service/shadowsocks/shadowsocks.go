@@ -55,39 +55,38 @@ func (Service) Run(ctx service.Context) {
 		close(optsOut)
 	}()
 
-	man := ctx.Manager
-
-	man.ServeListener(ln, func(c net.Conn) {
-		opts, ok := <-optsOut
-		if !ok {
+	var initialized bool
+	initialize := func() {
+		if initialized {
 			return
 		}
-		if opts.cipher == nil {
-			time.Sleep(time.Second)
-			opts = <-optsOut
-			if opts.cipher == nil {
+		initialized = true
+
+		man := ctx.Manager
+		man.ServeListener(ln, func(c net.Conn) {
+			opts, ok := <-optsOut
+			if !ok || opts.cipher == nil {
 				return
 			}
-		}
 
-		c = opts.cipher.StreamConn(c)
-		addr, err := socks.ReadAddr(c)
-		if err != nil {
-			log.Printf("[shadowsocks] read addr: %v\n", err)
-			return
-		}
+			c = opts.cipher.StreamConn(c)
+			addr, err := socks.ReadAddr(c)
+			if err != nil {
+				log.Printf("[shadowsocks] read addr: %v\n", err)
+				return
+			}
 
-		ctx, c := service.CheckConnectivity(context.Background(), c)
+			ctx, c := service.CheckConnectivity(context.Background(), c)
+			rc, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
+			if err != nil {
+				// log.Printf("[shadowsocks] %v\n", err)
+				return
+			}
+			defer rc.Close()
 
-		rc, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
-		if err != nil {
-			// log.Printf("[shadowsocks] %v\n", err)
-			return
-		}
-		defer rc.Close()
-
-		service.Relay(rc, c)
-	})
+			service.Relay(rc, c)
+		})
+	}
 
 	for {
 		select {
@@ -108,6 +107,7 @@ func (Service) Run(ctx service.Context) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
 				optsIn <- new
+				initialize()
 			}
 		case <-ctx.Done:
 			return

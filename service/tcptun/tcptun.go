@@ -51,32 +51,31 @@ func (Service) Run(ctx service.Context) {
 		close(optsOut)
 	}()
 
-	man := ctx.Manager
-
-	man.ServeListener(ln, func(c net.Conn) {
-		opts, ok := <-optsOut
-		if !ok {
+	var initialized bool
+	initialize := func() {
+		if initialized {
 			return
 		}
-		if opts.ForwardAddr == "" {
-			time.Sleep(time.Second)
-			opts = <-optsOut
-			if opts.ForwardAddr == "" {
+		initialized = true
+
+		man := ctx.Manager
+		man.ServeListener(ln, func(c net.Conn) {
+			opts, ok := <-optsOut
+			if !ok || opts.ForwardAddr == "" {
 				return
 			}
-		}
 
-		ctx, c := service.CheckConnectivity(context.Background(), c)
+			ctx, c := service.CheckConnectivity(context.Background(), c)
+			rc, err := man.Dial(ctx, opts.dialer, "tcp", opts.ForwardAddr, opts.Dial.Timeout)
+			if err != nil {
+				// log.Printf("[tcptun] %v\n", err)
+				return
+			}
+			defer rc.Close()
 
-		rc, err := man.Dial(ctx, opts.dialer, "tcp", opts.ForwardAddr, opts.Dial.Timeout)
-		if err != nil {
-			// log.Printf("[tcptun] %v\n", err)
-			return
-		}
-		defer rc.Close()
-
-		service.Relay(rc, c)
-	})
+			service.Relay(rc, c)
+		})
+	}
 
 	for {
 		select {
@@ -88,6 +87,7 @@ func (Service) Run(ctx service.Context) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
 				optsIn <- new
+				initialize()
 			}
 		case <-ctx.Done:
 			return
