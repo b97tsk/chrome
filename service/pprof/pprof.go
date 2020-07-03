@@ -31,7 +31,7 @@ func (Service) Run(ctx service.Context) {
 
 	for {
 		select {
-		case <-ctx.Events:
+		case <-ctx.Opts:
 		case <-ctx.Done:
 			return
 		}

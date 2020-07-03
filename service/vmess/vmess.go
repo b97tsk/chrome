@@ -52,13 +52,11 @@ func (Service) Run(ctx service.Context) {
 		}
 	}()
 
-	var (
-		options Options
-	)
+	var options Options
 	for {
 		select {
-		case data := <-ctx.Events:
-			if new, ok := data.(Options); ok {
+		case opts := <-ctx.Opts:
+			if new, ok := opts.(Options); ok {
 				old := options
 				options = new
 				if new != old {
@@ -90,14 +88,14 @@ func (Service) Run(ctx service.Context) {
 }
 
 func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options Options
-	if err := yaml.UnmarshalStrict(text, &options); err != nil {
+	var opts Options
+	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
 		return nil, err
 	}
-	return options, nil
+	return opts, nil
 }
 
-func createInstance(options Options, listenHost, listenPort string) (v2ray.Instance, error) {
+func createInstance(opts Options, listenHost, listenPort string) (v2ray.Instance, error) {
 	c := struct {
 		Options
 		ListenHost     string
@@ -105,7 +103,7 @@ func createInstance(options Options, listenHost, listenPort string) (v2ray.Insta
 		MuxEnabled     bool
 		MuxConcurrency int
 	}{
-		Options:    options,
+		Options:    opts,
 		ListenHost: listenHost,
 		ListenPort: listenPort,
 	}

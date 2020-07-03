@@ -229,8 +229,8 @@ func (Service) Run(ctx service.Context) {
 
 	for {
 		select {
-		case data := <-ctx.Events:
-			if new, ok := data.(Options); ok {
+		case opts := <-ctx.Opts:
+			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.dialer = old.dialer
 				new.routes = old.routes
@@ -345,11 +345,11 @@ func (Service) Run(ctx service.Context) {
 }
 
 func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options Options
-	if err := yaml.UnmarshalStrict(text, &options); err != nil {
+	var opts Options
+	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
 		return nil, err
 	}
-	return options, nil
+	return opts, nil
 }
 
 type Handler struct {

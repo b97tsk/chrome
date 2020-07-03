@@ -21,6 +21,7 @@ func (Service) Name() string {
 
 func (Service) Run(ctx service.Context) {
 	var options Options
+
 	var logfile *os.File
 	defer func() {
 		if logfile != nil {
@@ -32,8 +33,8 @@ func (Service) Run(ctx service.Context) {
 
 	for {
 		select {
-		case data := <-ctx.Events:
-			if new, ok := data.(Options); ok {
+		case opts := <-ctx.Opts:
+			if new, ok := opts.(Options); ok {
 				old := options
 				options = new
 				if new.Logfile != old.Logfile {
@@ -48,7 +49,7 @@ func (Service) Run(ctx service.Context) {
 						// log.Printf("[logging] opening %v\n", new.Logfile)
 						file, err := os.OpenFile(new.Logfile.String(), os.O_APPEND|os.O_CREATE, 0644)
 						if err != nil {
-							log.Printf("[logging] %v", err)
+							log.Printf("[logging] %v\n", err)
 						} else {
 							log.SetOutput(io.MultiWriter(file, os.Stderr))
 							if logfile != nil {
@@ -67,9 +68,9 @@ func (Service) Run(ctx service.Context) {
 }
 
 func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
-	var options Options
-	if err := yaml.UnmarshalStrict(text, &options.Logfile); err != nil {
+	var opts Options
+	if err := yaml.UnmarshalStrict(text, &opts.Logfile); err != nil {
 		return nil, err
 	}
-	return options, nil
+	return opts, nil
 }

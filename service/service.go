@@ -26,7 +26,7 @@ type Service interface {
 
 type Context struct {
 	Done       <-chan struct{}
-	Events     <-chan interface{}
+	Opts       <-chan interface{}
 	Manager    *Manager
 	ListenAddr string
 }
@@ -34,7 +34,7 @@ type Context struct {
 type Job struct {
 	ServiceName string
 	Done        <-chan struct{}
-	Events      chan<- interface{}
+	Opts        chan<- interface{}
 	Cancel      context.CancelFunc
 }
 
@@ -47,13 +47,12 @@ func (job *Job) Active() bool {
 	}
 }
 
-func (job *Job) SetOptions(v interface{}) {
-	values := []interface{}{v, nil}
-	for _, v := range values {
+func (job *Job) SendOpts(opts interface{}) {
+	for _, v := range []interface{}{opts, nil} {
 		select {
 		case <-job.Done:
 			return
-		case job.Events <- v:
+		case job.Opts <- v:
 		}
 	}
 }
@@ -98,7 +97,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	}
 
 	text, _ := yaml.Marshal(data)
-	options, err := service.UnmarshalOptions(text)
+	opts, err := service.UnmarshalOptions(text)
 	if err != nil {
 		return fmt.Errorf("invalid options in %v", name)
 	}
@@ -107,7 +106,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	if !ok || !job.Active() {
 		ctx, cancel := context.WithCancel(context.TODO())
 		done := make(chan struct{})
-		events := make(chan interface{})
+		copts := make(chan interface{})
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
@@ -119,12 +118,12 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 			}()
 			defer cancel()
 			defer close(done)
-			service.Run(Context{ctx.Done(), events, man, listenAddr})
+			service.Run(Context{ctx.Done(), copts, man, listenAddr})
 		}()
-		job = Job{serviceName, done, events, cancel}
+		job = Job{serviceName, done, copts, cancel}
 		man.jobs[name] = job
 	}
-	job.SetOptions(options)
+	job.SendOpts(opts)
 	return nil
 }
 
