@@ -2,20 +2,22 @@ package v2ray
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/gogo/protobuf/proto"
 	"v2ray.com/core"
+	"v2ray.com/core/common/net"
 	"v2ray.com/core/infra/conf"
 	_ "v2ray.com/core/main/distro/all"
 )
 
-type Instance interface {
-	Start() error
-	Close() error
+type Instance struct {
+	inst *core.Instance
 }
 
-func NewInstanceFromJSON(data []byte) (Instance, error) {
+func NewInstanceFromJSON(data []byte) (*Instance, error) {
 	var config conf.Config
 
 	if err := json.Unmarshal(data, &config); err != nil {
@@ -38,5 +40,38 @@ func NewInstanceFromJSON(data []byte) (Instance, error) {
 		return nil, err
 	}
 
-	return core.New(coreConfig)
+	inst, err := core.New(coreConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Instance{inst}, nil
+}
+
+func (v *Instance) Start() error {
+	return v.inst.Start()
+}
+
+func (v *Instance) Close() error {
+	return v.inst.Close()
+}
+
+func (v *Instance) Dial(network, addr string) (net.Conn, error) {
+	return v.DialContext(context.Background(), network, addr)
+}
+
+func (v *Instance) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		return v.dialTCP(ctx, network, addr)
+	}
+	return nil, errors.New("unsupported network " + network)
+}
+
+func (v *Instance) dialTCP(ctx context.Context, _, addr string) (net.Conn, error) {
+	dest, err := net.ParseDestination("tcp:" + addr)
+	if err != nil {
+		return nil, err
+	}
+	return core.Dial(ctx, v.inst, dest)
 }

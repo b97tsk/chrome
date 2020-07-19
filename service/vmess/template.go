@@ -22,11 +22,6 @@ const h2TLSJSONString = `
   "log": {
     "loglevel": "none"
   },
-  "inbound": {
-    "listen": "{{.ListenHost}}",
-    "port": {{.ListenPort}},
-    "protocol": "socks"
-  },
   "outbound": {
     "protocol": "vmess",
     "settings": {
@@ -51,11 +46,14 @@ const h2TLSJSONString = `
       "h2Settings": {
         "host": ["{{.Host}}"],
         "path": "{{.Path}}"
+      },
+      "sockopt": {
+        "tcpFastOpen": true
       }
     },
     "mux": {
-      "enabled": {{.MuxEnabled}},
-      "concurrency": {{.MuxConcurrency}}
+      "enabled": {{.Mux.Enabled}},
+      "concurrency": {{.Mux.Concurrency}}
     }
   },
   "policy": {
@@ -73,11 +71,6 @@ const kcpJSONString = `
 {
   "log": {
     "loglevel": "none"
-  },
-  "inbound": {
-    "listen": "{{.ListenHost}}",
-    "port": {{.ListenPort}},
-    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -108,11 +101,14 @@ const kcpJSONString = `
         "readBufferSize": 2,
         "writeBufferSize": 2,
         "header": {"type": "{{.Type}}"}
+      },
+      "sockopt": {
+        "tcpFastOpen": true
       }
     },
     "mux": {
-      "enabled": {{.MuxEnabled}},
-      "concurrency": {{.MuxConcurrency}}
+      "enabled": {{.Mux.Enabled}},
+      "concurrency": {{.Mux.Concurrency}}
     }
   },
   "policy": {
@@ -130,11 +126,6 @@ const tcpJSONString = `
 {
   "log": {
     "loglevel": "none"
-  },
-  "inbound": {
-    "listen": "{{.ListenHost}}",
-    "port": {{.ListenPort}},
-    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -155,11 +146,14 @@ const tcpJSONString = `
       ]
     },
     "streamSettings": {
-      "network": "tcp"
+      "network": "tcp",
+      "sockopt": {
+        "tcpFastOpen": true
+      }
     },
     "mux": {
-      "enabled": {{.MuxEnabled}},
-      "concurrency": {{.MuxConcurrency}}
+      "enabled": {{.Mux.Enabled}},
+      "concurrency": {{.Mux.Concurrency}}
     }
   },
   "policy": {
@@ -177,11 +171,6 @@ const tcpHTTPJSONString = `
 {
   "log": {
     "loglevel": "none"
-  },
-  "inbound": {
-    "listen": "{{.ListenHost}}",
-    "port": {{.ListenPort}},
-    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -215,11 +204,14 @@ const tcpHTTPJSONString = `
             }
           }
         }
+      },
+      "sockopt": {
+        "tcpFastOpen": true
       }
     },
     "mux": {
-      "enabled": {{.MuxEnabled}},
-      "concurrency": {{.MuxConcurrency}}
+      "enabled": {{.Mux.Enabled}},
+      "concurrency": {{.Mux.Concurrency}}
     }
   },
   "policy": {
@@ -237,11 +229,6 @@ const tcpTLSJSONString = `
 {
   "log": {
     "loglevel": "none"
-  },
-  "inbound": {
-    "listen": "{{.ListenHost}}",
-    "port": {{.ListenPort}},
-    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -267,11 +254,14 @@ const tcpTLSJSONString = `
       "tlsSettings": {
         "serverName": "{{.Host}}",
         "allowInsecure": false
+      },
+      "sockopt": {
+        "tcpFastOpen": true
       }
     },
     "mux": {
-      "enabled": {{.MuxEnabled}},
-      "concurrency": {{.MuxConcurrency}}
+      "enabled": {{.Mux.Enabled}},
+      "concurrency": {{.Mux.Concurrency}}
     }
   },
   "policy": {
@@ -289,11 +279,6 @@ const wsJSONString = `
 {
   "log": {
     "loglevel": "none"
-  },
-  "inbound": {
-    "listen": "{{.ListenHost}}",
-    "port": {{.ListenPort}},
-    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -317,11 +302,14 @@ const wsJSONString = `
       "network": "ws",
       "wsSettings": {
         "path": "{{.Path}}"
+      },
+      "sockopt": {
+        "tcpFastOpen": true
       }
     },
     "mux": {
-      "enabled": {{.MuxEnabled}},
-      "concurrency": {{.MuxConcurrency}}
+      "enabled": {{.Mux.Enabled}},
+      "concurrency": {{.Mux.Concurrency}}
     }
   },
   "policy": {
@@ -339,11 +327,6 @@ const wsTLSJSONString = `
 {
   "log": {
     "loglevel": "none"
-  },
-  "inbound": {
-    "listen": "{{.ListenHost}}",
-    "port": {{.ListenPort}},
-    "protocol": "socks"
   },
   "outbound": {
     "protocol": "vmess",
@@ -371,11 +354,14 @@ const wsTLSJSONString = `
         "headers": {
           "Host": "{{.Host}}"
         }
+      },
+      "sockopt": {
+        "tcpFastOpen": true
       }
     },
     "mux": {
-      "enabled": {{.MuxEnabled}},
-      "concurrency": {{.MuxConcurrency}}
+      "enabled": {{.Mux.Enabled}},
+      "concurrency": {{.Mux.Concurrency}}
     }
   },
   "policy": {
