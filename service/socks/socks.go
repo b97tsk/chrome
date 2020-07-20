@@ -1,7 +1,6 @@
 package socks
 
 import (
-	"context"
 	"log"
 	"net"
 	"time"
@@ -71,15 +70,16 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			ctx, c := service.CheckConnectivity(context.Background(), c)
-			rc, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
+			local, ctx := service.NewConnChecker(c)
+
+			remote, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
 				// log.Printf("[socks] %v\n", err)
 				return
 			}
-			defer rc.Close()
+			defer remote.Close()
 
-			service.Relay(rc, c)
+			service.Relay(local, remote)
 		})
 	}
 

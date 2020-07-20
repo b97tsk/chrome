@@ -435,22 +435,22 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				}
 			}
 
-			ctx, conn := service.CheckConnectivity(context.Background(), conn)
+			local, ctx := service.NewConnChecker(conn)
 
 			remote, err := h.tr.DialContext(ctx, "tcp", requestURI)
 			if err != nil {
 				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
-				_, _ = conn.Write([]byte(responseString))
+				_, _ = local.Write([]byte(responseString))
 				return
 			}
 			defer remote.Close()
 
 			responseString := httpVersion + " 200 OK\r\n\r\n"
-			if _, err := conn.Write([]byte(responseString)); err != nil {
+			if _, err := local.Write([]byte(responseString)); err != nil {
 				return
 			}
 
-			service.Relay(remote, conn)
+			service.Relay(local, remote)
 		}()
 		return
 	}

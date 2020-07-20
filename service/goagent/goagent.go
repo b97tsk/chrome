@@ -297,12 +297,12 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			defer conn.Close()
 
-			ctx, conn := service.CheckConnectivity(context.Background(), conn)
+			local, ctx := service.NewConnChecker(conn)
 
 			remote, err := h.tr.DialContext(ctx, "tcp", requestURI)
 			if err != nil {
 				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
-				if _, err := conn.Write([]byte(responseString)); err != nil {
+				if _, err := local.Write([]byte(responseString)); err != nil {
 					log.Printf("[goagent] write: %v\n", err)
 				}
 				return
@@ -310,12 +310,12 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			defer remote.Close()
 
 			responseString := httpVersion + " 200 OK\r\n\r\n"
-			if _, err := conn.Write([]byte(responseString)); err != nil {
+			if _, err := local.Write([]byte(responseString)); err != nil {
 				log.Printf("[goagent] write: %v\n", err)
 				return
 			}
 
-			service.Relay(remote, conn)
+			service.Relay(local, remote)
 		}()
 		return
 	}
