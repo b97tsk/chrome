@@ -45,14 +45,14 @@ func (d *httpDialer) Dial(network, addr string) (net.Conn, error) {
 func (d *httpDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
-		return d.connect(ctx, network, addr)
+		return d.dialTCP(ctx, network, addr)
 	default:
 		return nil, net.UnknownNetworkError(network)
 	}
 }
 
-func (d *httpDialer) connect(ctx context.Context, network, addr string) (net.Conn, error) {
-	conn, err := Dial(ctx, d.Forward, "tcp", d.Server)
+func (d *httpDialer) dialTCP(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := Dial(ctx, d.Forward, network, d.Server)
 	if err != nil {
 		return nil, err
 	}
