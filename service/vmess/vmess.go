@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/b97tsk/chrome/internal/v2ray"
@@ -17,22 +19,47 @@ import (
 )
 
 type Options struct {
-	Address string `yaml:"add"`
-	Port    string `yaml:"port"`
-	ID      string `yaml:"id"`
-	AlterID string `yaml:"aid"`
+	Type    string
+	Address string
+	Port    int `yaml:"-"`
+	ID      string
+	AlterID int `yaml:"aid"`
 
-	Net  string
-	TLS  string
-	Type string
+	HTTP struct {
+		Host []string
+		Path string
+	}
 
-	Path string
-	Host string
+	KCP struct {
+		Header string
+	}
+
+	TCP struct {
+		HTTP struct {
+			Path   string
+			Header http.Header
+		}
+		TLS struct {
+			ServerName string
+		}
+	}
+
+	WS struct {
+		Path   string
+		Header map[string]string
+	}
 
 	Mux struct {
-		Enabled     bool
-		Concurrency int
-		Ping        PingOptions
+		Enabled     bool        `json:"enabled"`
+		Concurrency int         `json:"concurrency,omitempty"`
+		Ping        PingOptions `json:"-"`
+	}
+
+	Policy struct {
+		Handshake    int `json:"handshake,omitempty"`
+		ConnIdle     int `json:"connIdle,omitempty"`
+		UplinkOnly   int `json:"uplinkOnly"`
+		DownlinkOnly int `json:"downlinkOnly"`
 	}
 
 	Dial struct {
@@ -165,7 +192,7 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.instance = old.instance
-				if new != old {
+				if shouldRestart(old, new) {
 					stopInstance()
 					startInstance(new)
 					new.instance = instance
@@ -193,60 +220,71 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	return opts, nil
 }
 
+func shouldRestart(x, y Options) bool {
+	var z Options
+	x.Dial, y.Dial = z.Dial, z.Dial
+	x.instance, y.instance = nil, nil
+	return !reflect.DeepEqual(x, y)
+}
+
 func createInstance(opts Options) (*v2ray.Instance, error) {
-	if opts.Mux.Enabled {
-		if opts.Mux.Concurrency < 1 {
-			opts.Mux.Concurrency = defaultMuxConcurrency
-		}
-		if opts.Mux.Ping.Enabled {
-			opts.Mux.Concurrency++
-		}
+	host, port, err := net.SplitHostPort(opts.Address)
+	if err != nil {
+		return nil, err
 	}
+	opts.Port, err = strconv.Atoi(port)
+	if err != nil {
+		return nil, errors.New("invalid port in address: " + opts.Address)
+	}
+	opts.Address = host
 
-	var templateName string
-
-	switch opts.Net + "/" + opts.TLS {
-	case "kcp/", "kcp/none":
-		if opts.Type == "" {
-			opts.Type = "none"
+	switch opts.Type {
+	case "http":
+		if len(opts.HTTP.Host) == 0 && net.ParseIP(opts.Address) == nil {
+			opts.HTTP.Host = []string{opts.Address}
 		}
-		templateName = "kcp"
-	case "tcp/", "tcp/none":
-		templateName = "tcp"
-		if opts.Type == "http" {
-			if opts.Path == "" {
-				opts.Path = "/"
+		if opts.HTTP.Path == "" {
+			opts.HTTP.Path = "/"
+		}
+	case "kcp":
+		if opts.KCP.Header == "" {
+			opts.KCP.Header = "none"
+		}
+	case "tcp", "tcp/tls":
+		if opts.TCP.HTTP.Path != "" {
+			if opts.TCP.HTTP.Header.Get("Host") == "" && net.ParseIP(opts.Address) == nil {
+				if opts.TCP.HTTP.Header == nil {
+					opts.TCP.HTTP.Header = make(http.Header)
+				}
+				opts.TCP.HTTP.Header.Set("Host", opts.Address)
 			}
-			if opts.Host == "" && net.ParseIP(opts.Address) == nil {
-				opts.Host = opts.Address
+		}
+		switch opts.Type {
+		case "tcp/tls":
+			if opts.TCP.TLS.ServerName == "" && net.ParseIP(opts.Address) == nil {
+				opts.TCP.TLS.ServerName = opts.Address
 			}
-			templateName = "tcp/http"
 		}
-	case "tcp/tls":
-		if opts.Host == "" && net.ParseIP(opts.Address) == nil {
-			opts.Host = opts.Address
+	case "ws", "ws/tls":
+		if opts.WS.Path == "" {
+			opts.WS.Path = "/"
 		}
-		templateName = "tcp/tls"
-	case "ws/", "ws/none":
-		templateName = "ws"
-	case "h2/tls", "ws/tls":
-		if opts.Path == "" {
-			opts.Path = "/"
+		switch opts.Type {
+		case "ws/tls":
+			if opts.WS.Header["Host"] == "" && net.ParseIP(opts.Address) == nil {
+				if opts.WS.Header == nil {
+					opts.WS.Header = make(map[string]string)
+				}
+				opts.WS.Header["Host"] = opts.Address
+			}
 		}
-		if opts.Host == "" && net.ParseIP(opts.Address) == nil {
-			opts.Host = opts.Address
-		}
-		templateName = opts.Net + "/" + opts.TLS
+	default:
+		return nil, errors.New("unknown vmess type: " + opts.Type)
 	}
 
-	tpl := vmessTemplate.Lookup(templateName)
-	if tpl == nil {
-		return nil, errors.New("unknown vmess type: " + templateName)
-	}
+	var buf bytes.Buffer
 
-	buf := new(bytes.Buffer)
-
-	if err := tpl.Execute(buf, &opts); err != nil {
+	if err := vmessTemplate.Execute(&buf, &opts); err != nil {
 		return nil, err
 	}
 
@@ -330,7 +368,6 @@ func startPing(ctx context.Context, opts PingOptions, instance *v2ray.Instance, 
 }
 
 const (
-	defaultMuxConcurrency    = 8
 	defaultPingURL           = "https://www.google.com/"
 	defaultPingNumber        = 4
 	defaultPingTimeout       = 5 * time.Second

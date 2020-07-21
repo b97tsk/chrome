@@ -1,23 +1,24 @@
 package vmess
 
 import (
+	"encoding/json"
 	"text/template"
 )
 
+func init() {
+	funcs := template.FuncMap{
+		"json": func(v interface{}) (string, error) {
+			bytes, err := json.Marshal(v)
+			return string(bytes), err
+		},
+	}
+	vmessTemplate = template.New("vmess").Funcs(funcs)
+	template.Must(vmessTemplate.Parse(vmessTemplateBody))
+}
+
 var vmessTemplate *template.Template
 
-func init() {
-	vmessTemplate = template.New("vmess")
-	template.Must(vmessTemplate.New("h2/tls").Parse(h2TLSJSONString))
-	template.Must(vmessTemplate.New("kcp").Parse(kcpJSONString))
-	template.Must(vmessTemplate.New("tcp").Parse(tcpJSONString))
-	template.Must(vmessTemplate.New("tcp/http").Parse(tcpHTTPJSONString))
-	template.Must(vmessTemplate.New("tcp/tls").Parse(tcpTLSJSONString))
-	template.Must(vmessTemplate.New("ws").Parse(wsJSONString))
-	template.Must(vmessTemplate.New("ws/tls").Parse(wsTLSJSONString))
-}
-
-const h2TLSJSONString = `
+const vmessTemplateBody = `
 {
   "log": {
     "loglevel": "none"
@@ -27,12 +28,12 @@ const h2TLSJSONString = `
     "settings": {
       "vnext": [
         {
-          "address": "{{.Address}}",
-          "port": {{.Port}},
+          "address": "{{ .Address }}",
+          "port": {{ .Port }},
           "users": [
             {
-              "id": "{{.ID}}",
-              "alterId": {{.AlterID}},
+              "id": "{{ .ID }}",
+              "alterId": {{ .AlterID }},
               "security": "auto",
               "level": 0
             }
@@ -41,56 +42,20 @@ const h2TLSJSONString = `
       ]
     },
     "streamSettings": {
-      "network": "h2",
+{{- if eq .Type "http" }}
+
+{{- /******** HTTP BEGIN ********/}}
+      "network": "http",
       "security": "tls",
-      "h2Settings": {
-        "host": ["{{.Host}}"],
-        "path": "{{.Path}}"
+      "httpSettings": {
+        "host": {{ .HTTP.Host | json }},
+        "path": "{{ .HTTP.Path }}"
       },
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    },
-    "mux": {
-      "enabled": {{.Mux.Enabled}},
-      "concurrency": {{.Mux.Concurrency}}
-    }
-  },
-  "policy": {
-    "levels": {
-      "0": {
-        "uplinkOnly": 2,
-        "downlinkOnly": 2
-      }
-    }
-  }
-}
-`
+{{- /******** HTTP END ********/}}
 
-const kcpJSONString = `
-{
-  "log": {
-    "loglevel": "none"
-  },
-  "outbound": {
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [
-        {
-          "address": "{{.Address}}",
-          "port": {{.Port}},
-          "users": [
-            {
-              "id": "{{.ID}}",
-              "alterId": {{.AlterID}},
-              "security": "auto",
-              "level": 0
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
+{{- else if eq .Type "kcp" }}
+
+{{- /******** KCP BEGIN ********/}}
       "network": "kcp",
       "kcpSettings": {
         "mtu": 1350,
@@ -100,276 +65,61 @@ const kcpJSONString = `
         "congestion": false,
         "readBufferSize": 2,
         "writeBufferSize": 2,
-        "header": {"type": "{{.Type}}"}
+        "header": {"type": "{{ .KCP.Header }}"}
       },
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    },
-    "mux": {
-      "enabled": {{.Mux.Enabled}},
-      "concurrency": {{.Mux.Concurrency}}
-    }
-  },
-  "policy": {
-    "levels": {
-      "0": {
-        "uplinkOnly": 2,
-        "downlinkOnly": 2
-      }
-    }
-  }
-}
-`
+{{- /******** KCP END ********/}}
 
-const tcpJSONString = `
-{
-  "log": {
-    "loglevel": "none"
-  },
-  "outbound": {
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [
-        {
-          "address": "{{.Address}}",
-          "port": {{.Port}},
-          "users": [
-            {
-              "id": "{{.ID}}",
-              "alterId": {{.AlterID}},
-              "security": "auto",
-              "level": 0
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    },
-    "mux": {
-      "enabled": {{.Mux.Enabled}},
-      "concurrency": {{.Mux.Concurrency}}
-    }
-  },
-  "policy": {
-    "levels": {
-      "0": {
-        "uplinkOnly": 2,
-        "downlinkOnly": 2
-      }
-    }
-  }
-}
-`
+{{- else if eq .Type "tcp" "tcp/tls" }}
 
-const tcpHTTPJSONString = `
-{
-  "log": {
-    "loglevel": "none"
-  },
-  "outbound": {
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [
-        {
-          "address": "{{.Address}}",
-          "port": {{.Port}},
-          "users": [
-            {
-              "id": "{{.ID}}",
-              "alterId": {{.AlterID}},
-              "security": "auto",
-              "level": 0
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
+{{- /******** TCP BEGIN ********/}}
       "network": "tcp",
+{{- if eq .Type "tcp/tls" }}
+      "security": "tls",
+{{- end }}
+{{- if ne .TCP.HTTP.Path "" }}
       "tcpSettings": {
         "header": {
           "type": "http",
           "request": {
             "version": "1.1",
             "method": "GET",
-            "path": ["{{.Path}}"],
-            "headers": {
-              "Host": ["{{.Host}}"]
-            }
+            "path": ["{{ .TCP.HTTP.Path }}"],
+            "headers": {{ .TCP.HTTP.Header | json }}
           }
         }
       },
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    },
-    "mux": {
-      "enabled": {{.Mux.Enabled}},
-      "concurrency": {{.Mux.Concurrency}}
-    }
-  },
-  "policy": {
-    "levels": {
-      "0": {
-        "uplinkOnly": 2,
-        "downlinkOnly": 2
-      }
-    }
-  }
-}
-`
-
-const tcpTLSJSONString = `
-{
-  "log": {
-    "loglevel": "none"
-  },
-  "outbound": {
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [
-        {
-          "address": "{{.Address}}",
-          "port": {{.Port}},
-          "users": [
-            {
-              "id": "{{.ID}}",
-              "alterId": {{.AlterID}},
-              "security": "auto",
-              "level": 0
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
-      "network": "tcp",
-      "security": "tls",
+{{- end }}
+{{- if eq .Type "tcp/tls" }}
       "tlsSettings": {
-        "serverName": "{{.Host}}",
+        "serverName": "{{ .TCP.TLS.ServerName }}",
         "allowInsecure": false
       },
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    },
-    "mux": {
-      "enabled": {{.Mux.Enabled}},
-      "concurrency": {{.Mux.Concurrency}}
-    }
-  },
-  "policy": {
-    "levels": {
-      "0": {
-        "uplinkOnly": 2,
-        "downlinkOnly": 2
-      }
-    }
-  }
-}
-`
+{{- end }}
+{{- /******** TCP END ********/}}
 
-const wsJSONString = `
-{
-  "log": {
-    "loglevel": "none"
-  },
-  "outbound": {
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [
-        {
-          "address": "{{.Address}}",
-          "port": {{.Port}},
-          "users": [
-            {
-              "id": "{{.ID}}",
-              "alterId": {{.AlterID}},
-              "security": "auto",
-              "level": 0
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
-      "network": "ws",
-      "wsSettings": {
-        "path": "{{.Path}}"
-      },
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    },
-    "mux": {
-      "enabled": {{.Mux.Enabled}},
-      "concurrency": {{.Mux.Concurrency}}
-    }
-  },
-  "policy": {
-    "levels": {
-      "0": {
-        "uplinkOnly": 2,
-        "downlinkOnly": 2
-      }
-    }
-  }
-}
-`
+{{- else if eq .Type "ws" "ws/tls" }}
 
-const wsTLSJSONString = `
-{
-  "log": {
-    "loglevel": "none"
-  },
-  "outbound": {
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [
-        {
-          "address": "{{.Address}}",
-          "port": {{.Port}},
-          "users": [
-            {
-              "id": "{{.ID}}",
-              "alterId": {{.AlterID}},
-              "security": "auto",
-              "level": 0
-            }
-          ]
-        }
-      ]
-    },
-    "streamSettings": {
+{{- /******** WS BEGIN ********/}}
       "network": "ws",
+{{- if eq .Type "ws/tls" }}
       "security": "tls",
+{{- end }}
       "wsSettings": {
-        "path": "{{.Path}}",
-        "headers": {
-          "Host": "{{.Host}}"
-        }
+        "path": "{{ .WS.Path }}",
+        "headers": {{ .WS.Header | json }}
       },
+{{- /******** WS END ********/}}
+
+{{- end }}
       "sockopt": {
         "tcpFastOpen": true
       }
     },
-    "mux": {
-      "enabled": {{.Mux.Enabled}},
-      "concurrency": {{.Mux.Concurrency}}
-    }
+    "mux": {{ .Mux | json }}
   },
   "policy": {
     "levels": {
-      "0": {
-        "uplinkOnly": 2,
-        "downlinkOnly": 2
-      }
+      "0": {{ .Policy | json }}
     }
   }
 }
