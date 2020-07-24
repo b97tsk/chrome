@@ -1,4 +1,4 @@
-package vmess
+package v2ray
 
 import (
 	"bytes"
@@ -19,35 +19,8 @@ import (
 )
 
 type Options struct {
-	Type    string
-	Address string
-	Port    int `yaml:"-"`
-	ID      string
-	AlterID int `yaml:"aid"`
-
-	HTTP struct {
-		Host []string
-		Path string
-	}
-
-	KCP struct {
-		Header string
-	}
-
-	TCP struct {
-		HTTP struct {
-			Path   string
-			Header http.Header
-		}
-		TLS struct {
-			ServerName string
-		}
-	}
-
-	WS struct {
-		Path   string
-		Header map[string]string
-	}
+	ProtocolOptions  `yaml:",inline"`
+	TransportOptions `yaml:",inline"`
 
 	Mux struct {
 		Enabled     bool        `json:"enabled"`
@@ -69,6 +42,46 @@ type Options struct {
 	instance *v2ray.Instance
 }
 
+type ProtocolOptions struct {
+	Protocol string
+
+	FREEDOM struct {
+		DomainStrategy string `json:"domainStrategy,omitempty"`
+		Redirect       string `json:"redirect,omitempty"`
+	}
+
+	VMESS struct {
+		Address string
+		Port    int `yaml:"-"`
+		ID      string
+		AlterID int `yaml:"aid"`
+	}
+}
+
+type TransportOptions struct {
+	Transport string
+
+	HTTP struct {
+		Host []string
+		Path string
+	}
+
+	KCP struct {
+		Header string
+	}
+
+	TCP struct{}
+
+	TLS struct {
+		ServerName string `json:"serverName"`
+	}
+
+	WS struct {
+		Path   string
+		Header map[string]string
+	}
+}
+
 type PingOptions struct {
 	Enabled  bool
 	URL      string
@@ -84,17 +97,17 @@ type PingOptions struct {
 type Service struct{}
 
 func (Service) Name() string {
-	return "vmess"
+	return "v2ray"
 }
 
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		log.Printf("[vmess] %v\n", err)
+		log.Printf("[v2ray] %v\n", err)
 		return
 	}
-	log.Printf("[vmess] listening on %v\n", ln.Addr())
-	defer log.Printf("[vmess] stopped listening on %v\n", ln.Addr())
+	log.Printf("[v2ray] listening on %v\n", ln.Addr())
+	defer log.Printf("[v2ray] stopped listening on %v\n", ln.Addr())
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
@@ -127,7 +140,7 @@ func (Service) Run(ctx service.Context) {
 
 			addr, err := socks.Handshake(c)
 			if err != nil {
-				log.Printf("[vmess] socks handshake: %v\n", err)
+				log.Printf("[v2ray] socks handshake: %v\n", err)
 				return
 			}
 
@@ -135,7 +148,7 @@ func (Service) Run(ctx service.Context) {
 
 			remote, err := man.Dial(ctx, opts.instance, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				// log.Printf("[vmess] %v\n", err)
+				// log.Printf("[v2ray] %v\n", err)
 				return
 			}
 			defer remote.Close()
@@ -158,7 +171,7 @@ func (Service) Run(ctx service.Context) {
 		if instance != nil {
 			err := instance.Close()
 			if err != nil {
-				log.Printf("[vmess] close instance: %v\n", err)
+				log.Printf("[v2ray] close instance: %v\n", err)
 			}
 			instance = nil
 		}
@@ -168,11 +181,11 @@ func (Service) Run(ctx service.Context) {
 	startInstance := func(opts Options) {
 		i, err := createInstance(opts)
 		if err != nil {
-			log.Printf("[vmess] create instance: %v\n", err)
+			log.Printf("[v2ray] create instance: %v\n", err)
 			return
 		}
 		if err := i.Start(); err != nil {
-			log.Printf("[vmess] start instance: %v\n", err)
+			log.Printf("[v2ray] start instance: %v\n", err)
 			return
 		}
 		instance = i
@@ -228,63 +241,37 @@ func shouldRestart(x, y Options) bool {
 }
 
 func createInstance(opts Options) (*v2ray.Instance, error) {
-	host, port, err := net.SplitHostPort(opts.Address)
-	if err != nil {
-		return nil, err
+	switch opts.Protocol {
+	case "freedom":
+	case "vmess":
+		host, port, err := net.SplitHostPort(opts.VMESS.Address)
+		if err != nil {
+			return nil, errors.New("invalid address: " + opts.VMESS.Address)
+		}
+		opts.VMESS.Port, err = strconv.Atoi(port)
+		if err != nil {
+			return nil, errors.New("invalid port in address: " + opts.VMESS.Address)
+		}
+		opts.VMESS.Address = host
+	default:
+		return nil, errors.New("unknown protocol: " + opts.Protocol)
 	}
-	opts.Port, err = strconv.Atoi(port)
-	if err != nil {
-		return nil, errors.New("invalid port in address: " + opts.Address)
-	}
-	opts.Address = host
 
-	switch opts.Type {
+	switch opts.Transport {
 	case "http":
-		if len(opts.HTTP.Host) == 0 && net.ParseIP(opts.Address) == nil {
-			opts.HTTP.Host = []string{opts.Address}
-		}
-		if opts.HTTP.Path == "" {
-			opts.HTTP.Path = "/"
-		}
 	case "kcp":
 		if opts.KCP.Header == "" {
 			opts.KCP.Header = "none"
 		}
 	case "tcp", "tcp/tls":
-		if opts.TCP.HTTP.Path != "" {
-			if opts.TCP.HTTP.Header.Get("Host") == "" && net.ParseIP(opts.Address) == nil {
-				if opts.TCP.HTTP.Header == nil {
-					opts.TCP.HTTP.Header = make(http.Header)
-				}
-				opts.TCP.HTTP.Header.Set("Host", opts.Address)
-			}
-		}
-		switch opts.Type {
-		case "tcp/tls":
-			if opts.TCP.TLS.ServerName == "" && net.ParseIP(opts.Address) == nil {
-				opts.TCP.TLS.ServerName = opts.Address
-			}
-		}
 	case "ws", "ws/tls":
-		if opts.WS.Path == "" {
-			opts.WS.Path = "/"
-		}
-		switch opts.Type {
-		case "ws/tls":
-			if opts.WS.Header["Host"] == "" && net.ParseIP(opts.Address) == nil {
-				if opts.WS.Header == nil {
-					opts.WS.Header = make(map[string]string)
-				}
-				opts.WS.Header["Host"] = opts.Address
-			}
-		}
 	default:
-		return nil, errors.New("unknown vmess type: " + opts.Type)
+		return nil, errors.New("unknown transport: " + opts.Transport)
 	}
 
 	var buf bytes.Buffer
 
-	if err := vmessTemplate.Execute(&buf, &opts); err != nil {
+	if err := v2rayTemplate.Execute(&buf, &opts); err != nil {
 		return nil, err
 	}
 
@@ -312,7 +299,7 @@ func startPing(ctx context.Context, opts PingOptions, instance *v2ray.Instance, 
 	}
 	req, err := http.NewRequest(http.MethodHead, opts.URL, nil)
 	if err != nil {
-		log.Printf("[vmess] ping: %v\n", err)
+		log.Printf("[v2ray] ping: %v\n", err)
 		return
 	}
 	req.Header.Set("User-Agent", "") // Reduce header size.
