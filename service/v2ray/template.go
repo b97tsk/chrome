@@ -25,99 +25,101 @@ const v2rayTemplateBody = `
   "log": {
     "loglevel": "none"
   },
-  "outbound": {
+  "outbounds": [
+    {
 {{- if eq $protocol "freedom" }}
 
 {{- with .FREEDOM }}
-    "protocol": "freedom",
-    "settings": {{ json . }},
+      "protocol": "freedom",
+      "settings": {{ json . }},
 {{- end }}{{/* with .FREEDOM */}}
 
 {{- else if eq $protocol "vmess" }}
 
 {{- with .VMESS }}
-    "protocol": "vmess",
-    "settings": {
-      "vnext": [
-        {
-          "address": "{{ .Address }}",
-          "port": {{ .Port }},
-          "users": [
-            {
-              "id": "{{ .ID }}",
-              "alterId": {{ .AlterID }},
-              "security": "auto",
-              "level": 0
-            }
-          ]
-        }
-      ]
-    },
+      "protocol": "vmess",
+      "settings": {
+        "vnext": [
+          {
+            "address": "{{ .Address }}",
+            "port": {{ .Port }},
+            "users": [
+              {
+                "id": "{{ .ID }}",
+                "alterId": {{ .AlterID }},
+                "security": "auto",
+                "level": 0
+              }
+            ]
+          }
+        ]
+      },
 {{- end }}{{/* with .VMESS */}}
 
 {{- end }}
-    "streamSettings": {
+      "streamSettings": {
 {{- if eq $transport "http" }}
 
 {{- with .HTTP }}
-      "network": "http",
-      "security": "tls",
-      "httpSettings": {
-        "host": {{ .Host | json }},
-        "path": "{{ .Path }}"
-      },
+        "network": "http",
+        "security": "tls",
+        "httpSettings": {
+          "host": {{ .Host | json }},
+          "path": "{{ .Path }}"
+        },
 {{- end }}{{/* with .HTTP */}}
 
 {{- else if eq $transport "kcp" }}
 
 {{- with .KCP }}
-      "network": "kcp",
-      "kcpSettings": {
-        "mtu": 1350,
-        "tti": 50,
-        "uplinkCapacity": 2,
-        "downlinkCapacity": 100,
-        "congestion": false,
-        "readBufferSize": 2,
-        "writeBufferSize": 2,
-        "header": {
-          "type": "{{ .Header }}"
-        }
-      },
+        "network": "kcp",
+        "kcpSettings": {
+          "mtu": 1350,
+          "tti": 50,
+          "uplinkCapacity": 2,
+          "downlinkCapacity": 100,
+          "congestion": false,
+          "readBufferSize": 2,
+          "writeBufferSize": 2,
+          "header": {
+            "type": "{{ .Header }}"
+          }
+        },
 {{- end }}{{/* with .KCP */}}
 
 {{- else if eq $transport "tcp" "tcp/tls" }}
 
 {{- with .TCP }}
-      "network": "tcp",
+        "network": "tcp",
 {{- if eq $transport "tcp/tls" }}
-      "security": "tls",
+        "security": "tls",
 {{- end }}
 {{- end }}{{/* with .TCP */}}
 
 {{- else if eq $transport "ws" "ws/tls" }}
 
 {{- with .WS }}
-      "network": "ws",
+        "network": "ws",
 {{- if eq $transport "ws/tls" }}
-      "security": "tls",
+        "security": "tls",
 {{- end }}
-      "wsSettings": {
-        "path": "{{ .Path }}",
-        "headers": {{ .Header | json }}
-      },
+        "wsSettings": {
+          "path": "{{ .Path }}",
+          "headers": {{ .Header | json }}
+        },
 {{- end }}{{/* with .WS */}}
 
 {{- end }}
 {{- if ne .TLS.ServerName "" }}
-      "tlsSettings": {{ .TLS | json }},
+        "tlsSettings": {{ .TLS | json }},
 {{- end }}
-      "sockopt": {
-        "tcpFastOpen": true
-      }
-    },
-    "mux": {{ .Mux | json }}
-  },
+        "sockopt": {
+          "tcpFastOpen": true
+        }
+      },
+      "mux": {{ .Mux | json }}
+    }
+  ],
   "policy": {
     "levels": {
       "0": {{ .Policy | json }}
