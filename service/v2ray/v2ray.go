@@ -10,6 +10,7 @@ import (
 	"net/http/cookiejar"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/b97tsk/chrome/internal/v2ray"
@@ -19,6 +20,10 @@ import (
 )
 
 type Options struct {
+	Type      string
+	Protocol  string `yaml:"-"`
+	Transport string `yaml:"-"`
+
 	ProtocolOptions  `yaml:",inline"`
 	TransportOptions `yaml:",inline"`
 
@@ -43,13 +48,10 @@ type Options struct {
 }
 
 type ProtocolOptions struct {
-	Protocol string
-
 	FREEDOM struct {
 		DomainStrategy string `json:"domainStrategy,omitempty"`
 		Redirect       string `json:"redirect,omitempty"`
 	}
-
 	VMESS struct {
 		Address string
 		Port    int `yaml:"-"`
@@ -59,23 +61,17 @@ type ProtocolOptions struct {
 }
 
 type TransportOptions struct {
-	Transport string
-
 	HTTP struct {
 		Host []string
 		Path string
 	}
-
 	KCP struct {
 		Header string
 	}
-
 	TCP struct{}
-
 	TLS struct {
 		ServerName string `json:"serverName"`
 	}
-
 	WS struct {
 		Path   string
 		Header map[string]string
@@ -241,32 +237,36 @@ func shouldRestart(x, y Options) bool {
 }
 
 func createInstance(opts Options) (*v2ray.Instance, error) {
-	switch opts.Protocol {
-	case "freedom":
-	case "vmess":
-		host, port, err := net.SplitHostPort(opts.VMESS.Address)
-		if err != nil {
-			return nil, errors.New("invalid address: " + opts.VMESS.Address)
-		}
-		opts.VMESS.Port, err = strconv.Atoi(port)
-		if err != nil {
-			return nil, errors.New("invalid port in address: " + opts.VMESS.Address)
-		}
-		opts.VMESS.Address = host
-	default:
-		return nil, errors.New("unknown protocol: " + opts.Protocol)
-	}
+	opts.Protocol = "freedom"
+	opts.Transport = "tcp"
 
-	switch opts.Transport {
-	case "http":
-	case "kcp":
-		if opts.KCP.Header == "" {
-			opts.KCP.Header = "none"
+	for _, typ := range strings.SplitN(opts.Type, "+", 2) {
+		switch typ {
+		case "freedom", "vmess":
+			opts.Protocol = typ
+			switch typ {
+			case "vmess":
+				host, port, err := net.SplitHostPort(opts.VMESS.Address)
+				if err != nil {
+					return nil, errors.New("invalid address: " + opts.VMESS.Address)
+				}
+				opts.VMESS.Port, err = strconv.Atoi(port)
+				if err != nil {
+					return nil, errors.New("invalid port in address: " + opts.VMESS.Address)
+				}
+				opts.VMESS.Address = host
+			}
+		case "http", "kcp", "tcp", "tcp/tls", "ws", "ws/tls":
+			opts.Transport = typ
+			switch typ {
+			case "kcp":
+				if opts.KCP.Header == "" {
+					opts.KCP.Header = "none"
+				}
+			}
+		default:
+			return nil, errors.New("unknown type: " + opts.Type)
 		}
-	case "tcp", "tcp/tls":
-	case "ws", "ws/tls":
-	default:
-		return nil, errors.New("unknown transport: " + opts.Transport)
 	}
 
 	var buf bytes.Buffer
