@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/b97tsk/chrome/internal/v2ray"
@@ -42,6 +45,8 @@ type Options struct {
 	Dial struct {
 		Timeout time.Duration
 	}
+
+	Debug bool
 
 	instance *v2ray.Instance
 }
@@ -126,6 +131,7 @@ func (Service) Run(ctx service.Context) {
 		}
 		initialized = true
 
+		var seqno int32
 		man := ctx.Manager
 		man.ServeListener(ln, func(c net.Conn) {
 			opts, ok := <-optsOut
@@ -147,6 +153,11 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 			defer remote.Close()
+
+			if opts.Debug {
+				prefix := fmt.Sprintf("[v2ray] (%v) ", atomic.AddInt32(&seqno, 1))
+				remote = service.NewConnLogger(remote, prefix)
+			}
 
 			service.Relay(local, remote)
 		})
@@ -185,12 +196,13 @@ func (Service) Run(ctx service.Context) {
 		}
 		instance = i
 		if opts.Mux.Enabled && opts.Mux.Ping.Enabled {
+			laddr := ctx.ListenAddr
 			ctx, cancel := context.WithCancel(context.Background())
 			cancelPing = cancel
 			if restart == nil {
 				restart = make(chan struct{})
 			}
-			go startPing(ctx, opts.Mux.Ping, instance, restart)
+			go startPing(ctx, opts.Mux.Ping, laddr, restart)
 		}
 	}
 
@@ -277,7 +289,7 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 	return v2ray.NewInstanceFromJSON(buf.Bytes())
 }
 
-func startPing(ctx context.Context, opts PingOptions, instance *v2ray.Instance, restart chan<- struct{}) {
+func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan<- struct{}) {
 	if opts.URL == "" {
 		opts.URL = defaultPingURL
 	}
@@ -302,14 +314,11 @@ func startPing(ctx context.Context, opts PingOptions, instance *v2ray.Instance, 
 		return
 	}
 	req.Header.Set("User-Agent", "") // Reduce header size.
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		writeLogf("ping: %v", err)
-		return
-	}
+	jar, _ := cookiejar.New(nil)
+	proxy := &url.URL{Scheme: "socks5", Host: laddr}
 	client := &http.Client{
 		Transport: &http.Transport{
-			DialContext: instance.DialContext,
+			Proxy: func(*http.Request) (*url.URL, error) { return proxy, nil },
 		},
 		Jar: jar,
 	}
