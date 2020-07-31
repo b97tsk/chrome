@@ -27,7 +27,6 @@ func (Service) Run(ctx service.Context) {
 		if logfile != nil {
 			log.SetOutput(os.Stderr)
 			logfile.Close()
-			// log.Printf("[logging] closed %v\n", options.Logfile)
 		}
 	}()
 
@@ -43,18 +42,15 @@ func (Service) Run(ctx service.Context) {
 							log.SetOutput(os.Stderr)
 							logfile.Close()
 							logfile = nil
-							// log.Printf("[logging] closed %v\n", old.Logfile)
 						}
 					} else {
-						// log.Printf("[logging] opening %v\n", new.Logfile)
 						file, err := os.OpenFile(new.Logfile.String(), os.O_APPEND|os.O_CREATE, 0644)
 						if err != nil {
-							log.Printf("[logging] %v\n", err)
+							writeLog(err)
 						} else {
 							log.SetOutput(io.MultiWriter(file, os.Stderr))
 							if logfile != nil {
 								logfile.Close()
-								// log.Printf("[logging] closed %v\n", old.Logfile)
 							}
 							logfile = file
 						}

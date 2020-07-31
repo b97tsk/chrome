@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -99,11 +98,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		log.Printf("[v2ray] %v\n", err)
+		writeLog(err)
 		return
 	}
-	log.Printf("[v2ray] listening on %v\n", ln.Addr())
-	defer log.Printf("[v2ray] stopped listening on %v\n", ln.Addr())
+	writeLogf("listening on %v", ln.Addr())
+	defer writeLogf("stopped listening on %v", ln.Addr())
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
@@ -136,7 +135,7 @@ func (Service) Run(ctx service.Context) {
 
 			addr, err := socks.Handshake(c)
 			if err != nil {
-				log.Printf("[v2ray] socks handshake: %v\n", err)
+				writeLogf("socks handshake: %v", err)
 				return
 			}
 
@@ -144,7 +143,7 @@ func (Service) Run(ctx service.Context) {
 
 			remote, err := man.Dial(ctx, opts.instance, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				// log.Printf("[v2ray] %v\n", err)
+				// writeLog(err)
 				return
 			}
 			defer remote.Close()
@@ -167,7 +166,7 @@ func (Service) Run(ctx service.Context) {
 		if instance != nil {
 			err := instance.Close()
 			if err != nil {
-				log.Printf("[v2ray] close instance: %v\n", err)
+				writeLogf("close instance: %v", err)
 			}
 			instance = nil
 		}
@@ -177,11 +176,11 @@ func (Service) Run(ctx service.Context) {
 	startInstance := func(opts Options) {
 		i, err := createInstance(opts)
 		if err != nil {
-			log.Printf("[v2ray] create instance: %v\n", err)
+			writeLogf("create instance: %v", err)
 			return
 		}
 		if err := i.Start(); err != nil {
-			log.Printf("[v2ray] start instance: %v\n", err)
+			writeLogf("start instance: %v", err)
 			return
 		}
 		instance = i
@@ -299,13 +298,13 @@ func startPing(ctx context.Context, opts PingOptions, instance *v2ray.Instance, 
 	}
 	req, err := http.NewRequest(http.MethodHead, opts.URL, nil)
 	if err != nil {
-		log.Printf("[v2ray] ping: %v\n", err)
+		writeLogf("ping: %v", err)
 		return
 	}
 	req.Header.Set("User-Agent", "") // Reduce header size.
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		log.Printf("[v2ray] ping: %v\n", err)
+		writeLogf("ping: %v", err)
 		return
 	}
 	client := &http.Client{

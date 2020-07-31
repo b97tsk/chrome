@@ -1,7 +1,6 @@
 package tcptun
 
 import (
-	"log"
 	"net"
 	"time"
 
@@ -29,11 +28,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		log.Printf("[tcptun] %v\n", err)
+		writeLog(err)
 		return
 	}
-	log.Printf("[tcptun] listening on %v\n", ln.Addr())
-	defer log.Printf("[tcptun] stopped listening on %v\n", ln.Addr())
+	writeLogf("listening on %v", ln.Addr())
+	defer writeLogf("stopped listening on %v", ln.Addr())
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
@@ -68,7 +67,7 @@ func (Service) Run(ctx service.Context) {
 
 			remote, err := man.Dial(ctx, opts.dialer, "tcp", opts.ForwardAddr, opts.Dial.Timeout)
 			if err != nil {
-				// log.Printf("[tcptun] %v\n", err)
+				// writeLog(err)
 				return
 			}
 			defer remote.Close()

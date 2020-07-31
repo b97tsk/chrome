@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"log"
 	"math"
 	"math/rand"
 	"net"
@@ -48,11 +47,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		log.Printf("[goagent] %v\n", err)
+		writeLog(err)
 		return
 	}
-	log.Printf("[goagent] listening on %v\n", ln.Addr())
-	defer log.Printf("[goagent] stopped listening on %v\n", ln.Addr())
+	writeLogf("listening on %v", ln.Addr())
+	defer writeLogf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -287,7 +286,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
 				responseString := httpVersion + " 200 OK\r\n\r\n"
 				if _, err := conn.Write([]byte(responseString)); err != nil {
-					log.Printf("[goagent] write: %v\n", err)
+					writeLogf("write: %v", err)
 					conn.Close()
 					return
 				}
@@ -303,7 +302,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			if err != nil {
 				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
 				if _, err := local.Write([]byte(responseString)); err != nil {
-					log.Printf("[goagent] write: %v\n", err)
+					writeLogf("write: %v", err)
 				}
 				return
 			}
@@ -311,7 +310,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			responseString := httpVersion + " 200 OK\r\n\r\n"
 			if _, err := local.Write([]byte(responseString)); err != nil {
-				log.Printf("[goagent] write: %v\n", err)
+				writeLogf("write: %v", err)
 				return
 			}
 
@@ -344,7 +343,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	h.autoRange(req, resp)
 
 	appID := appIDFromRequest(resp.Request)
-	log.Printf("[goagent] (%v) %v %v: %v\n", appID, req.Method, req.URL, resp.Status)
+	writeLogf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
 	for key, values := range resp.Header {
 		for _, value := range values {
@@ -361,7 +360,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	resp.Body.Close()
 
 	if err != nil {
-		log.Printf("[goagent] (%v) RECV %v: %v\n", appID, req.URL, err)
+		writeLogf("(%v) RECV %v: %v", appID, req.URL, err)
 	}
 }
 
@@ -376,7 +375,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		resp, err := h.tr.RoundTrip(request)
 		if err != nil {
-			log.Printf("[goagent] (%v) %v %v: %v\n", appID, req.Method, req.URL, err)
+			writeLogf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
 			if i+1 == NRetries || isRequestCanceled(req) {
 				return nil, err
 			}
@@ -388,7 +387,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 				return resp, nil
 			}
 			if resp.StatusCode == http.StatusServiceUnavailable {
-				log.Printf("[goagent] (%v) over quota\n", appID)
+				writeLogf("(%v) over quota", appID)
 				h.putBadAppID(appID)
 				resp.Body.Close()
 				continue

@@ -1,7 +1,6 @@
 package pprof
 
 import (
-	"log"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
@@ -20,11 +19,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		log.Printf("[pprof] %v\n", err)
+		writeLog(err)
 		return
 	}
-	log.Printf("[pprof] listening on %v\n", ln.Addr())
-	defer log.Printf("[pprof] stopped listening on %v\n", ln.Addr())
+	writeLogf("listening on %v", ln.Addr())
+	defer writeLogf("stopped listening on %v", ln.Addr())
 	defer ln.Close()
 
 	go http.Serve(ln, nil)

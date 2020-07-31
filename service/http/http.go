@@ -7,7 +7,6 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -175,11 +174,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		log.Printf("[http] %v\n", err)
+		writeLog(err)
 		return
 	}
-	log.Printf("[http] listening on %v\n", ln.Addr())
-	defer log.Printf("[http] stopped listening on %v\n", ln.Addr())
+	writeLogf("listening on %v", ln.Addr())
+	defer writeLogf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -260,7 +259,7 @@ func (Service) Run(ctx service.Context) {
 							watchErrors = watcher.Errors
 						}
 						if err != nil {
-							log.Printf("[http] %v\n", err)
+							writeLog(err)
 						}
 					}
 					new.routes = make([]*route, len(new.Routes))
@@ -275,7 +274,7 @@ func (Service) Run(ctx service.Context) {
 						if watcher != nil {
 							err := watcher.Add(r.absFile)
 							if err != nil {
-								log.Printf("[http] watcher: %v\n", err)
+								writeLogf("watcher: %v", err)
 							}
 						}
 						didRecycle := false
@@ -289,10 +288,10 @@ func (Service) Run(ctx service.Context) {
 						if !didRecycle {
 							switch err := new.routes[i].Init(); err {
 							case nil:
-								log.Printf("[http] loaded %v\n", r.File)
+								writeLogf("loaded %v", r.File)
 							case errNotModified:
 							default:
-								log.Printf("[http] fatal: %v\n", err)
+								writeLogf("fatal: %v", err)
 								return // Consider fatal here.
 							}
 						}
@@ -324,7 +323,7 @@ func (Service) Run(ctx service.Context) {
 				}
 			}
 		case err := <-watchErrors:
-			log.Printf("[http] watcher: %v\n", err)
+			writeLogf("watcher: %v", err)
 		case name := <-fileChanges:
 			opts := <-optsOut
 			routesChanged := false
@@ -332,11 +331,11 @@ func (Service) Run(ctx service.Context) {
 				if r.absFile == name {
 					switch err := r.Init(); err {
 					case nil:
-						log.Printf("[http] loaded %v\n", r.File)
+						writeLogf("loaded %v", r.File)
 						routesChanged = true
 					case errNotModified:
 					default:
-						log.Printf("[http] reload: %v\n", err)
+						writeLogf("reload: %v", err)
 					}
 				}
 			}
@@ -378,7 +377,7 @@ func NewHandler(man *service.Manager, opts <-chan Options) *Handler {
 			} else {
 				for _, r := range opts.routes {
 					if r.Match(addr) {
-						log.Printf("[http] %v matches %v\n", r.File, addr)
+						writeLogf("%v matches %v", r.File, addr)
 						opts.dialer = r.getDialer()
 						opts.matches.Store(addr, r)
 						break

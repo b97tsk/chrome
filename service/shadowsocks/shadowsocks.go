@@ -1,7 +1,6 @@
 package shadowsocks
 
 import (
-	"log"
 	"net"
 	"time"
 
@@ -33,11 +32,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		log.Printf("[shadowsocks] %v\n", err)
+		writeLog(err)
 		return
 	}
-	log.Printf("[shadowsocks] listening on %v\n", ln.Addr())
-	defer log.Printf("[shadowsocks] stopped listening on %v\n", ln.Addr())
+	writeLogf("listening on %v", ln.Addr())
+	defer writeLogf("stopped listening on %v", ln.Addr())
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
@@ -71,7 +70,7 @@ func (Service) Run(ctx service.Context) {
 			c = opts.cipher.StreamConn(c)
 			addr, err := socks.ReadAddr(c)
 			if err != nil {
-				log.Printf("[shadowsocks] read addr: %v\n", err)
+				writeLogf("read addr: %v", err)
 				return
 			}
 
@@ -79,7 +78,7 @@ func (Service) Run(ctx service.Context) {
 
 			remote, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				// log.Printf("[shadowsocks] %v\n", err)
+				// writeLog(err)
 				return
 			}
 			defer remote.Close()
@@ -98,7 +97,7 @@ func (Service) Run(ctx service.Context) {
 				if new.Method != old.Method || new.Password != old.Password {
 					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
-						log.Printf("[shadowsocks] fatal: pick cipher: %v\n", err)
+						writeLogf("fatal: pick cipher: %v", err)
 						return
 					}
 					new.cipher = cipher
