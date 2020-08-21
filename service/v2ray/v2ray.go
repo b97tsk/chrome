@@ -48,7 +48,8 @@ type Options struct {
 
 	Debug bool
 
-	instance *v2ray.Instance
+	instance    *v2ray.Instance
+	instanceCtx context.Context
 }
 
 type ProtocolOptions struct {
@@ -145,7 +146,7 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			local, ctx := service.NewConnChecker(c)
+			local, ctx := service.NewConnCheckerContext(opts.instanceCtx, c)
 
 			remote, err := man.Dial(ctx, opts.instance, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
@@ -164,9 +165,11 @@ func (Service) Run(ctx service.Context) {
 	}
 
 	var (
-		instance   *v2ray.Instance
-		restart    chan struct{}
-		cancelPing context.CancelFunc
+		instance       *v2ray.Instance
+		instanceCtx    context.Context
+		instanceCancel context.CancelFunc
+		restart        chan struct{}
+		cancelPing     context.CancelFunc
 	)
 
 	stopInstance := func() {
@@ -180,6 +183,8 @@ func (Service) Run(ctx service.Context) {
 				writeLogf("close instance: %v", err)
 			}
 			instance = nil
+			instanceCancel()
+			instanceCtx, instanceCancel = nil, nil
 		}
 	}
 	defer stopInstance()
@@ -195,6 +200,7 @@ func (Service) Run(ctx service.Context) {
 			return
 		}
 		instance = i
+		instanceCtx, instanceCancel = context.WithCancel(context.Background())
 		if opts.Mux.Enabled && opts.Mux.Ping.Enabled {
 			laddr := ctx.ListenAddr
 			ctx, cancel := context.WithCancel(context.Background())
@@ -212,10 +218,12 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.instance = old.instance
+				new.instanceCtx = old.instanceCtx
 				if shouldRestart(old, new) {
 					stopInstance()
 					startInstance(new)
 					new.instance = instance
+					new.instanceCtx = instanceCtx
 				}
 				optsIn <- new
 				initialize()
@@ -227,6 +235,7 @@ func (Service) Run(ctx service.Context) {
 			stopInstance()
 			startInstance(opts)
 			opts.instance = instance
+			opts.instanceCtx = instanceCtx
 			optsIn <- opts
 		}
 	}
