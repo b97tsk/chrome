@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -86,6 +87,7 @@ type TransportOptions struct {
 type PingOptions struct {
 	Enabled  bool
 	URL      string
+	URLs     []string
 	Number   int
 	Timeout  time.Duration
 	Interval struct {
@@ -299,8 +301,13 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 }
 
 func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan<- struct{}) {
-	if opts.URL == "" {
-		opts.URL = defaultPingURL
+	urls := opts.URLs
+	if len(urls) == 0 {
+		url := defaultPingURL
+		if opts.URL != "" {
+			url = opts.URL
+		}
+		urls = []string{url}
 	}
 	if opts.Number < 1 {
 		opts.Number = defaultPingNumber
@@ -317,7 +324,8 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 	if opts.Interval.Max < 1 {
 		opts.Interval.Max = defaultPingIntervalMax
 	}
-	req, err := http.NewRequest(http.MethodHead, opts.URL, nil)
+	reqURL := urls[rand.Intn(len(urls))]
+	req, err := http.NewRequest(http.MethodHead, reqURL, nil)
 	if err != nil {
 		writeLogf("ping: %v", err)
 		return
