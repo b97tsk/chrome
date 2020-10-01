@@ -13,4 +13,4 @@ require (
 	v2ray.com/core v4.19.1+incompatible
 )
 
-replace v2ray.com/core => github.com/v2ray/v2ray-core v4.25.1+incompatible
+replace v2ray.com/core => github.com/v2fly/v2ray-core v4.27.5+incompatible
