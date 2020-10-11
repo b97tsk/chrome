@@ -49,8 +49,14 @@ type Options struct {
 
 	Debug bool
 
-	instance    *v2ray.Instance
-	instanceCtx context.Context
+	stats statsINFO
+}
+
+type statsINFO struct {
+	ins        *v2ray.Instance
+	ctx        context.Context
+	cancel     context.CancelFunc
+	readevents chan struct{}
 }
 
 type ProtocolOptions struct {
@@ -138,7 +144,7 @@ func (Service) Run(ctx service.Context) {
 		man := ctx.Manager
 		man.ServeListener(ln, func(c net.Conn) {
 			opts, ok := <-optsOut
-			if !ok || opts.instance == nil {
+			if !ok || opts.stats.ins == nil {
 				return
 			}
 
@@ -148,14 +154,22 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			local, ctx := service.NewConnCheckerContext(opts.instanceCtx, c)
+			local, ctx := service.NewConnCheckerContext(opts.stats.ctx, c)
 
-			remote, err := man.Dial(ctx, opts.instance, "tcp", addr.String(), opts.Dial.Timeout)
+			remote, err := man.Dial(ctx, opts.stats.ins, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
 				// writeLog(err)
 				return
 			}
 			defer remote.Close()
+
+			readevents := opts.stats.readevents
+			remote = doOnRead(remote, func(int) {
+				select {
+				case readevents <- struct{}{}:
+				default:
+				}
+			})
 
 			if opts.Debug {
 				prefix := fmt.Sprintf("[v2ray] (%v) ", atomic.AddInt32(&seqno, 1))
@@ -167,11 +181,9 @@ func (Service) Run(ctx service.Context) {
 	}
 
 	var (
-		instance       *v2ray.Instance
-		instanceCtx    context.Context
-		instanceCancel context.CancelFunc
-		restart        chan struct{}
-		cancelPing     context.CancelFunc
+		stats      statsINFO
+		restart    chan struct{}
+		cancelPing context.CancelFunc
 	)
 
 	stopInstance := func() {
@@ -179,14 +191,30 @@ func (Service) Run(ctx service.Context) {
 			cancelPing()
 			cancelPing = nil
 		}
-		if instance != nil {
-			err := instance.Close()
-			if err != nil {
-				writeLogf("close instance: %v", err)
-			}
-			instance = nil
-			instanceCancel()
-			instanceCtx, instanceCancel = nil, nil
+		if stats.ins != nil {
+			go func(stats statsINFO) {
+				defer func() {
+					if err := stats.ins.Close(); err != nil {
+						writeLogf("close instance: %v", err)
+					}
+					stats.cancel()
+				}()
+				var recentReadTime time.Time
+				t := time.NewTimer(remoteIdleTime)
+				for {
+					select {
+					case <-t.C:
+						d := time.Until(recentReadTime.Add(remoteIdleTime))
+						if d <= 0 {
+							return
+						}
+						t.Reset(d)
+					case <-stats.readevents:
+						recentReadTime = time.Now()
+					}
+				}
+			}(stats)
+			stats = statsINFO{}
 		}
 	}
 	defer stopInstance()
@@ -201,8 +229,9 @@ func (Service) Run(ctx service.Context) {
 			writeLogf("start instance: %v", err)
 			return
 		}
-		instance = i
-		instanceCtx, instanceCancel = context.WithCancel(context.Background())
+		stats.ins = i
+		stats.ctx, stats.cancel = context.WithCancel(context.Background())
+		stats.readevents = make(chan struct{})
 		if opts.Mux.Enabled && opts.Mux.Ping.Enabled {
 			laddr := ctx.ListenAddr
 			ctx, cancel := context.WithCancel(context.Background())
@@ -219,13 +248,11 @@ func (Service) Run(ctx service.Context) {
 		case opts := <-ctx.Opts:
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
-				new.instance = old.instance
-				new.instanceCtx = old.instanceCtx
+				new.stats = old.stats
 				if shouldRestart(old, new) {
 					stopInstance()
 					startInstance(new)
-					new.instance = instance
-					new.instanceCtx = instanceCtx
+					new.stats = stats
 				}
 				optsIn <- new
 				initialize()
@@ -236,8 +263,7 @@ func (Service) Run(ctx service.Context) {
 			opts := <-optsOut
 			stopInstance()
 			startInstance(opts)
-			opts.instance = instance
-			opts.instanceCtx = instanceCtx
+			opts.stats = stats
 			optsIn <- opts
 		}
 	}
@@ -251,10 +277,27 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	return opts, nil
 }
 
+type doOnReadConn struct {
+	net.Conn
+	do func(int)
+}
+
+func doOnRead(c net.Conn, do func(int)) net.Conn {
+	return &doOnReadConn{c, do}
+}
+
+func (c *doOnReadConn) Read(p []byte) (n int, err error) {
+	n, err = c.Conn.Read(p)
+	if n > 0 {
+		c.do(n)
+	}
+	return
+}
+
 func shouldRestart(x, y Options) bool {
 	var z Options
 	x.Dial, y.Dial = z.Dial, z.Dial
-	x.instance, y.instance = nil, nil
+	x.stats, y.stats = z.stats, z.stats
 	return !reflect.DeepEqual(x, y)
 }
 
@@ -378,6 +421,8 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		}
 	}
 }
+
+const remoteIdleTime = 60 * time.Second
 
 const (
 	defaultPingURL           = "https://www.google.com/"
