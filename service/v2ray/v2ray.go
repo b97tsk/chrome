@@ -3,6 +3,8 @@ package v2ray
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -23,6 +25,8 @@ import (
 )
 
 type Options struct {
+	URL string
+
 	Type      string
 	Protocol  string `yaml:"-"`
 	Transport string `yaml:"-"`
@@ -302,6 +306,10 @@ func shouldRestart(x, y Options) bool {
 }
 
 func createInstance(opts Options) (*v2ray.Instance, error) {
+	if err := parseURL(&opts); err != nil {
+		return nil, err
+	}
+
 	opts.Protocol = "freedom"
 	opts.Transport = "tcp"
 
@@ -341,6 +349,100 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 	}
 
 	return v2ray.NewInstanceFromJSON(buf.Bytes())
+}
+
+func parseURL(opts *Options) error {
+	if opts.URL == "" {
+		return nil
+	}
+
+	b64 := strings.TrimPrefix(opts.URL, "vmess://")
+	if b64 == opts.URL {
+		return errors.New("url should start with vmess://")
+	}
+
+	b64 = strings.ReplaceAll(b64, "-", "+")
+	b64 = strings.ReplaceAll(b64, "_", "/")
+
+	enc := base64.StdEncoding
+	if len(b64)%4 != 0 {
+		enc = base64.RawStdEncoding
+	}
+	data, err := enc.DecodeString(b64)
+	if err != nil {
+		return fmt.Errorf("decode vmess url: %w", err)
+	}
+
+	var config struct {
+		Version json.RawMessage `json:"v"`
+
+		Net  string `json:"net"`
+		TLS  string `json:"tls"`
+		Type string `json:"type"`
+
+		Address string          `json:"add"`
+		Port    json.RawMessage `json:"port"`
+		ID      string          `json:"id"`
+		AlterID json.RawMessage `json:"aid"`
+
+		Path string `json:"path"`
+		Host string `json:"host"`
+	}
+
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("unmarshal decoded vmess url: %w", err)
+	}
+
+	if unquote(string(config.Version)) == "" {
+		fields := strings.SplitN(config.Path, ";", 2)
+		if len(fields) == 2 {
+			config.Path, config.Host = fields[0], fields[1]
+		}
+	}
+
+	var transport string
+	switch config.Net {
+	case "http", "h2":
+		transport = "http"
+		if config.Host != "" {
+			opts.HTTP.Host = []string{config.Host}
+			if config.Host != config.Address {
+				opts.TLS.ServerName = config.Host
+			}
+		}
+		opts.HTTP.Path = config.Path
+	case "kcp":
+		transport = "kcp"
+		opts.KCP.Header = config.Type
+	case "tcp":
+		transport = "tcp"
+		if config.Type != "" && config.Type != "none" {
+			return fmt.Errorf(`unknown type field "%v" in vmess url "%v"`, config.Type, opts.URL)
+		}
+		if config.TLS == "tls" {
+			transport = "tcp/tls"
+			if config.Host != "" && config.Host != config.Address {
+				opts.TLS.ServerName = config.Host
+			}
+		}
+	case "ws":
+		transport = "ws"
+		if config.TLS == "tls" {
+			transport = "ws/tls"
+			if config.Host != "" && config.Host != config.Address {
+				opts.TLS.ServerName = config.Host
+			}
+		}
+		opts.WS.Path = config.Path
+	default:
+		return fmt.Errorf(`unknown net field "%v" in vmess url "%v"`, config.Net, opts.URL)
+	}
+
+	opts.Type = "vmess+" + transport
+	opts.VMESS.Address = net.JoinHostPort(config.Address, unquote(string(config.Port)))
+	opts.VMESS.ID = config.ID
+	opts.VMESS.AlterID, _ = strconv.Atoi(unquote(string(config.AlterID)))
+	return nil
 }
 
 func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan<- struct{}) {
@@ -420,6 +522,13 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		case <-time.After(sleep):
 		}
 	}
+}
+
+func unquote(s string) string {
+	if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 const remoteIdleTime = 60 * time.Second
