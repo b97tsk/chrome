@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/http"
@@ -470,7 +472,7 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		opts.Interval.Max = defaultPingIntervalMax
 	}
 	reqURL := urls[rand.Intn(len(urls))]
-	req, err := http.NewRequest(http.MethodHead, reqURL, nil)
+	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
 		writeLogf("ping: %v", err)
 		return
@@ -495,6 +497,10 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 			number--
 			sleep = 0
 		} else {
+			const maxBodySlurpSize = 2 << 10
+			if resp.ContentLength == -1 || resp.ContentLength <= maxBodySlurpSize {
+				io.CopyN(ioutil.Discard, resp.Body, maxBodySlurpSize)
+			}
 			resp.Body.Close()
 			number = opts.Number
 			switch {
@@ -534,7 +540,7 @@ func unquote(s string) string {
 const remoteIdleTime = 60 * time.Second
 
 const (
-	defaultPingURL           = "https://www.google.com/"
+	defaultPingURL           = "http://www.google.com/gen_204"
 	defaultPingNumber        = 4
 	defaultPingTimeout       = 5 * time.Second
 	defaultPingIntervalStart = 1 * time.Second
