@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/gogo/protobuf/proto"
+	"github.com/golang/protobuf/proto"
 	"v2ray.com/core"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/infra/conf"
