@@ -37,9 +37,10 @@ type Options struct {
 	TransportOptions `yaml:",inline"`
 
 	Mux struct {
-		Enabled     bool        `json:"enabled"`
-		Concurrency int         `json:"concurrency,omitempty"`
-		Ping        PingOptions `json:"-"`
+		Enabled       bool        `json:"enabled" yaml:"-"`
+		EnabledByYAML *bool       `json:"-" yaml:"enabled"`
+		Concurrency   int         `json:"concurrency,omitempty"`
+		Ping          PingOptions `json:"-"`
 	}
 
 	Policy struct {
@@ -341,6 +342,14 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 			}
 		default:
 			return nil, errors.New("unknown type: " + opts.Type)
+		}
+	}
+
+	if opts.Mux.EnabledByYAML != nil {
+		opts.Mux.Enabled = *opts.Mux.EnabledByYAML
+	} else {
+		if opts.Protocol == "vmess" {
+			opts.Mux.Enabled = true
 		}
 	}
 
