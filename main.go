@@ -23,33 +23,44 @@ import (
 )
 
 func main() {
-	base := filepath.Base(os.Args[0])
-	ext := filepath.Ext(base)
-	def := base[:len(base)-len(ext)] + ".yaml"
+	os.Exit(Main())
+}
 
-	var configFile string
-	flag.StringVar(&configFile, "conf", def, "config file")
+func Main() (code int) {
 	flag.Parse()
+
+	configFile := flag.Arg(0)
+	if configFile == "" {
+		base := filepath.Base(os.Args[0])
+		ext := filepath.Ext(base)
+		configFile = base[:len(base)-len(ext)] + ".yaml"
+	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Println("[main]", err)
-		return
+		return 1
 	}
 	defer watcher.Close()
 
-	err = watcher.Add(configFile)
-	if err != nil {
-		log.Println("[main]", err)
-		return
+	if configFile != "-" {
+		err = watcher.Add(configFile)
+		if err != nil {
+			log.Println("[main]", err)
+			return 1
+		}
 	}
 
 	os.Setenv("ConfigDir", filepath.Dir(configFile))
 
-	services := service.NewManager()
-	addServices(services)
-	services.Load(configFile)
-	defer services.Shutdown()
+	man := newManager()
+	defer man.Shutdown()
+
+	if configFile == "-" {
+		man.Load(os.Stdin)
+	} else {
+		man.LoadFile(configFile)
+	}
 
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
@@ -65,7 +76,7 @@ func main() {
 		case err := <-watcher.Errors:
 			log.Println("[main]", err)
 		case <-delay:
-			services.Load(configFile)
+			man.LoadFile(configFile)
 			delay = nil
 		case <-interrupt:
 			return
@@ -73,14 +84,16 @@ func main() {
 	}
 }
 
-func addServices(services *service.Manager) {
-	services.Add(goagent.Service{})
-	services.Add(http.Service{})
-	services.Add(httpfs.Service{})
-	services.Add(logging.Service{})
-	services.Add(pprof.Service{})
-	services.Add(shadowsocks.Service{})
-	services.Add(socks.Service{})
-	services.Add(tcptun.Service{})
-	services.Add(v2ray.Service{})
+func newManager() *service.Manager {
+	man := service.NewManager()
+	man.Add(goagent.Service{})
+	man.Add(http.Service{})
+	man.Add(httpfs.Service{})
+	man.Add(logging.Service{})
+	man.Add(pprof.Service{})
+	man.Add(shadowsocks.Service{})
+	man.Add(socks.Service{})
+	man.Add(tcptun.Service{})
+	man.Add(v2ray.Service{})
+	return man
 }

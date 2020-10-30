@@ -13,20 +13,12 @@ Services implemented by Go.
 Create a config file (see below), then run:
 
 ```console
-chrome -conf path/to/a/config/file
+chrome path/to/your/config/file
 ```
 
-By default, running:
+If config file is not specified, `chrome.yaml` is assumed.
 
-```console
-chrome
-```
-
-Exactly like running:
-
-```console
-chrome -conf chrome.yaml
-```
+If config file is `-`, chrome will try to load config from standard input.
 
 # Sample Config File
 
@@ -34,7 +26,7 @@ chrome -conf chrome.yaml
 logging: ${ConfigDir}/chrome.log # Write log messages to this file.
 
 alias#1: # Field names start with `alias` will be ignored.
-  - &SS  ss://method:password@example.com:12345
+  - &SS ss://method:password@example.com:12345
   - &Tor socks5://127.0.0.1:9150
 
 # Create three TCP tunnelings over different forward proxy.
@@ -55,7 +47,7 @@ socks|127.1.2.7|1080+:
   - over: *Tor
 
 alias#2:
-  - &Direct    []
+  - &Direct []
   - &SSOverTor [*SS, *Tor]
 
 # Create three shadowsocks servers, listening on all available IP addresses of the local system.

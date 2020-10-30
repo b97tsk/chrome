@@ -3,7 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
-	"log"
+	"io"
 	"net"
 	"os"
 	"regexp"
@@ -110,10 +110,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
-					log.Printf(
-						"[services] job %q panic: %v\n%v\n",
-						name, err, string(debug.Stack()),
-					)
+					writeLogf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 			}()
 			defer cancel()
@@ -127,18 +124,11 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	return nil
 }
 
-func (man *Manager) Load(configFile string) {
+func (man *Manager) Load(r io.Reader) {
 	man.mu.Lock()
 	defer man.mu.Unlock()
 
-	file, err := os.Open(configFile)
-	if err != nil {
-		log.Printf("[services] %v\n", err)
-		return
-	}
-	defer file.Close()
-
-	var c struct {
+	var config struct {
 		Logfile string `yaml:"logging"`
 		Dial    struct {
 			Timeout time.Duration
@@ -146,21 +136,21 @@ func (man *Manager) Load(configFile string) {
 		Jobs map[string]interface{} `yaml:",inline"`
 	}
 
-	dec := yaml.NewDecoder(file)
+	dec := yaml.NewDecoder(r)
 	dec.SetStrict(true)
 
-	if err := dec.Decode(&c); err != nil {
-		log.Printf("[services] loading %v: %v\n", configFile, err)
+	if err := dec.Decode(&config); err != nil {
+		writeLogf("Load: %v", err)
 		return
 	}
 
-	if err := man.setOptions("logging||", c.Logfile); err != nil {
-		log.Printf("[services] loading %v: %v\n", configFile, err)
+	if err := man.setOptions("logging||", config.Logfile); err != nil {
+		writeLogf("Load: %v", err)
 	}
 
-	atomic.StoreInt64(&man.dialTimeout, int64(c.Dial.Timeout))
+	atomic.StoreInt64(&man.dialTimeout, int64(config.Dial.Timeout))
 
-	for name, data := range c.Jobs {
+	for name, data := range config.Jobs {
 		if r := reNumberPlus.FindStringIndex(name); r != nil {
 			head, tail := name[:r[0]], name[r[1]:]
 			s := reNumberPlus.FindStringSubmatch(name[r[0]:r[1]])
@@ -168,16 +158,16 @@ func (man *Manager) Load(configFile string) {
 			if s[2] != "" {
 				n, _ := strconv.Atoi(s[2])
 				for i := 0; i <= n; i++ {
-					c.Jobs[head+strconv.Itoa(x)+tail] = data
+					config.Jobs[head+strconv.Itoa(x)+tail] = data
 					x++
 				}
 			} else {
 				for _, data := range data.([]interface{}) {
-					c.Jobs[head+strconv.Itoa(x)+tail] = data
+					config.Jobs[head+strconv.Itoa(x)+tail] = data
 					x++
 				}
 			}
-			delete(c.Jobs, name)
+			delete(config.Jobs, name)
 		}
 	}
 
@@ -185,20 +175,28 @@ func (man *Manager) Load(configFile string) {
 		if job.ServiceName == "logging" {
 			continue
 		}
-		if _, ok := c.Jobs[name]; ok {
+		if _, ok := config.Jobs[name]; ok {
 			continue
 		}
 		job.Cancel()
 		<-job.Done
 		delete(man.jobs, name)
 	}
-	for name, data := range c.Jobs {
+	for name, data := range config.Jobs {
 		if err := man.setOptions(name, data); err != nil {
-			log.Printf("[services] loading %v: %v\n", configFile, err)
+			writeLogf("Load: %v", err)
 		}
 	}
+}
 
-	log.Printf("[services] loaded %v\n", configFile)
+func (man *Manager) LoadFile(name string) {
+	file, err := os.Open(name)
+	if err != nil {
+		writeLogf("LoadFile: %v", err)
+		return
+	}
+	man.Load(file)
+	file.Close()
 }
 
 func (man *Manager) ServeListener(ln net.Listener, handle func(net.Conn)) {
