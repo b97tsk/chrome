@@ -72,13 +72,17 @@ func (Service) Run(ctx service.Context) {
 	}
 	defer func() {
 		if server != nil {
-			server.Shutdown(context.TODO())
+			server.Shutdown(context.Background())
 			<-serverDown
 		}
 	}()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
+		case <-serverDown:
+			return
 		case opts := <-ctx.Opts:
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
@@ -89,10 +93,6 @@ func (Service) Run(ctx service.Context) {
 				optsIn <- new
 				initialize()
 			}
-		case <-serverDown:
-			return
-		case <-ctx.Done:
-			return
 		}
 	}
 }

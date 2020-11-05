@@ -32,6 +32,8 @@ func (Service) Run(ctx service.Context) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case opts := <-ctx.Opts:
 			if new, ok := opts.(Options); ok {
 				old := options
@@ -57,8 +59,6 @@ func (Service) Run(ctx service.Context) {
 					}
 				}
 			}
-		case <-ctx.Done:
-			return
 		}
 	}
 }

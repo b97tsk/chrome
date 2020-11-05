@@ -217,7 +217,7 @@ func (Service) Run(ctx service.Context) {
 	}
 	defer func() {
 		if server != nil {
-			server.Shutdown(context.TODO())
+			server.Shutdown(context.Background())
 			<-serverDown
 		}
 	}()
@@ -238,6 +238,10 @@ func (Service) Run(ctx service.Context) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
+		case <-serverDown:
+			return
 		case opts := <-ctx.Opts:
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
@@ -303,18 +307,14 @@ func (Service) Run(ctx service.Context) {
 				optsIn <- new
 				initialize()
 			}
-		case <-serverDown:
-			return
-		case <-ctx.Done:
-			return
 		case e := <-watchEvents:
 			if e.Op&fsnotify.Write != 0 {
 				timer := delayTimers[e.Name]
 				if timer == nil {
 					timer = time.AfterFunc(time.Second, func() {
 						select {
+						case <-ctx.Done():
 						case fileChanges <- e.Name:
-						case <-ctx.Done:
 						}
 					})
 					delayTimers[e.Name] = timer

@@ -252,6 +252,8 @@ func (Service) Run(ctx service.Context) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case opts := <-ctx.Opts:
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
@@ -264,8 +266,6 @@ func (Service) Run(ctx service.Context) {
 				optsIn <- new
 				initialize()
 			}
-		case <-ctx.Done:
-			return
 		case <-restart:
 			opts := <-optsOut
 			stopInstance()

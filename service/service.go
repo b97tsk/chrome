@@ -25,22 +25,22 @@ type Service interface {
 }
 
 type Context struct {
-	Done       <-chan struct{}
-	Opts       <-chan interface{}
-	Manager    *Manager
+	context.Context
 	ListenAddr string
+	Manager    *Manager
+	Opts       <-chan interface{}
 }
 
 type Job struct {
+	context.Context
 	ServiceName string
-	Done        <-chan struct{}
-	Opts        chan<- interface{}
 	Cancel      context.CancelFunc
+	Opts        chan<- interface{}
 }
 
 func (job *Job) Active() bool {
 	select {
-	case <-job.Done:
+	case <-job.Done():
 		return false
 	default:
 		return true
@@ -50,7 +50,7 @@ func (job *Job) Active() bool {
 func (job *Job) SendOpts(opts interface{}) {
 	for _, v := range []interface{}{opts, nil} {
 		select {
-		case <-job.Done:
+		case <-job.Done():
 			return
 		case job.Opts <- v:
 		}
@@ -104,8 +104,8 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 
 	job, ok := man.jobs[name]
 	if !ok || !job.Active() {
-		ctx, cancel := context.WithCancel(context.TODO())
-		done := make(chan struct{})
+		ctx1, done := context.WithCancel(context.Background())
+		ctx2, cancel := context.WithCancel(ctx1)
 		copts := make(chan interface{})
 		go func() {
 			defer func() {
@@ -113,11 +113,10 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 					writeLogf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 			}()
-			defer cancel()
-			defer close(done)
-			service.Run(Context{ctx.Done(), copts, man, listenAddr})
+			defer done()
+			service.Run(Context{ctx2, listenAddr, man, copts})
 		}()
-		job = Job{serviceName, done, copts, cancel}
+		job = Job{ctx1, serviceName, cancel, copts}
 		man.jobs[name] = job
 	}
 	job.SendOpts(opts)
@@ -179,7 +178,7 @@ func (man *Manager) Load(r io.Reader) {
 			continue
 		}
 		job.Cancel()
-		<-job.Done
+		<-job.Done()
 		delete(man.jobs, name)
 	}
 	for name, data := range config.Jobs {
@@ -234,7 +233,7 @@ func (man *Manager) Shutdown() {
 	}
 	for _, job := range man.jobs {
 		if job.ServiceName != "logging" {
-			<-job.Done
+			<-job.Done()
 		}
 	}
 
@@ -245,7 +244,7 @@ func (man *Manager) Shutdown() {
 	}
 	for _, job := range man.jobs {
 		if job.ServiceName == "logging" {
-			<-job.Done
+			<-job.Done()
 		}
 	}
 
