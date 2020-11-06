@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"log"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,7 +13,6 @@ import (
 	"github.com/b97tsk/chrome/service/goagent"
 	"github.com/b97tsk/chrome/service/http"
 	"github.com/b97tsk/chrome/service/httpfs"
-	"github.com/b97tsk/chrome/service/logging"
 	"github.com/b97tsk/chrome/service/pprof"
 	"github.com/b97tsk/chrome/service/shadowsocks"
 	"github.com/b97tsk/chrome/service/socks"
@@ -38,7 +37,7 @@ func Main() (code int) {
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Println("[main]", err)
+		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
 	defer watcher.Close()
@@ -46,7 +45,7 @@ func Main() (code int) {
 	if configFile != "-" {
 		err = watcher.Add(configFile)
 		if err != nil {
-			log.Println("[main]", err)
+			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 	}
@@ -74,7 +73,8 @@ func Main() (code int) {
 				delay = time.After(1 * time.Second)
 			}
 		case err := <-watcher.Errors:
-			log.Println("[main]", err)
+			logger := man.Logger("main")
+			logger.Println("[main]", err)
 		case <-delay:
 			man.LoadFile(configFile)
 			delay = nil
@@ -89,7 +89,6 @@ func newManager() *service.Manager {
 	man.Add(goagent.Service{})
 	man.Add(http.Service{})
 	man.Add(httpfs.Service{})
-	man.Add(logging.Service{})
 	man.Add(pprof.Service{})
 	man.Add(shadowsocks.Service{})
 	man.Add(socks.Service{})

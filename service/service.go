@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"regexp"
@@ -11,10 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/b97tsk/chrome/internal/proxy"
 	"gopkg.in/yaml.v2"
 )
 
@@ -28,6 +27,7 @@ type Context struct {
 	context.Context
 	ListenAddr string
 	Manager    *Manager
+	Logger     *log.Logger
 	Opts       <-chan interface{}
 }
 
@@ -58,14 +58,12 @@ func (job *Job) SendOpts(opts interface{}) {
 }
 
 type Manager struct {
-	mu          sync.Mutex
-	services    map[string]Service
-	jobs        map[string]Job
-	dialTimeout int64
-	connections struct {
-		sync.Map
-		sync.WaitGroup
-	}
+	mu       sync.Mutex
+	services map[string]Service
+	jobs     map[string]Job
+	loggingService
+	dialingService
+	servingService
 }
 
 func NewManager() *Manager {
@@ -110,11 +108,13 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
-					writeLogf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
+					logger := man.Logger("manager")
+					logger.Printf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 			}()
 			defer done()
-			service.Run(Context{ctx2, listenAddr, man, copts})
+			logger := man.Logger(serviceName)
+			service.Run(Context{ctx2, listenAddr, man, logger, copts})
 		}()
 		job = Job{ctx1, serviceName, cancel, copts}
 		man.jobs[name] = job
@@ -128,7 +128,7 @@ func (man *Manager) Load(r io.Reader) {
 	defer man.mu.Unlock()
 
 	var config struct {
-		Logfile string `yaml:"logging"`
+		Logfile String `yaml:"logging"`
 		Dial    struct {
 			Timeout time.Duration
 		}
@@ -138,16 +138,17 @@ func (man *Manager) Load(r io.Reader) {
 	dec := yaml.NewDecoder(r)
 	dec.SetStrict(true)
 
+	logger := man.Logger("manager")
 	if err := dec.Decode(&config); err != nil {
-		writeLogf("Load: %v", err)
+		logger.Printf("Load: %v", err)
 		return
 	}
 
-	if err := man.setOptions("logging||", config.Logfile); err != nil {
-		writeLogf("Load: %v", err)
+	if err := man.setLogFile(string(config.Logfile)); err != nil {
+		logger.Printf("Load: %v", err)
 	}
 
-	atomic.StoreInt64(&man.dialTimeout, int64(config.Dial.Timeout))
+	man.setDialTimeout(config.Dial.Timeout)
 
 	for name, data := range config.Jobs {
 		if r := reNumberPlus.FindStringIndex(name); r != nil {
@@ -171,9 +172,6 @@ func (man *Manager) Load(r io.Reader) {
 	}
 
 	for name, job := range man.jobs {
-		if job.ServiceName == "logging" {
-			continue
-		}
 		if _, ok := config.Jobs[name]; ok {
 			continue
 		}
@@ -183,7 +181,7 @@ func (man *Manager) Load(r io.Reader) {
 	}
 	for name, data := range config.Jobs {
 		if err := man.setOptions(name, data); err != nil {
-			writeLogf("Load: %v", err)
+			logger.Printf("Load: %v", err)
 		}
 	}
 }
@@ -191,35 +189,12 @@ func (man *Manager) Load(r io.Reader) {
 func (man *Manager) LoadFile(name string) {
 	file, err := os.Open(name)
 	if err != nil {
-		writeLogf("LoadFile: %v", err)
+		logger := man.Logger("manager")
+		logger.Printf("LoadFile: %v", err)
 		return
 	}
 	man.Load(file)
 	file.Close()
-}
-
-func (man *Manager) ServeListener(ln net.Listener, handle func(net.Conn)) {
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				if isTemporary(err) {
-					continue
-				}
-				return
-			}
-			man.connections.Store(c, struct{}{})
-			man.connections.Add(1)
-			go func() {
-				defer func() {
-					c.Close()
-					man.connections.Delete(c)
-					man.connections.Done()
-				}()
-				handle(c)
-			}()
-		}
-	}()
 }
 
 func (man *Manager) Shutdown() {
@@ -227,65 +202,14 @@ func (man *Manager) Shutdown() {
 	defer man.mu.Unlock()
 
 	for _, job := range man.jobs {
-		if job.ServiceName != "logging" {
-			job.Cancel()
-		}
+		job.Cancel()
 	}
 	for _, job := range man.jobs {
-		if job.ServiceName != "logging" {
-			<-job.Done()
-		}
+		<-job.Done()
 	}
 
-	for _, job := range man.jobs {
-		if job.ServiceName == "logging" {
-			job.Cancel()
-		}
-	}
-	for _, job := range man.jobs {
-		if job.ServiceName == "logging" {
-			<-job.Done()
-		}
-	}
-
-	man.connections.Range(func(key, _ interface{}) bool {
-		key.(net.Conn).Close()
-		return true
-	})
-	man.connections.Wait()
-}
-
-func (man *Manager) Dial(ctx context.Context, d proxy.Dialer, network, address string, timeout time.Duration) (conn net.Conn, err error) {
-	if d == nil {
-		d = proxy.Direct
-	}
-	dialTimeout := defaultDialTimeout
-	if timeout > 0 {
-		dialTimeout = timeout
-	} else if timeout := atomic.LoadInt64(&man.dialTimeout); timeout > 0 {
-		dialTimeout = time.Duration(timeout)
-	}
-	for {
-		err = ctx.Err()
-		if err != nil {
-			return
-		}
-		ctx, cancel := context.WithTimeout(ctx, dialTimeout)
-		conn, err = proxy.Dial(ctx, d, network, address)
-		cancel()
-		if err == nil || !isTemporary(err) {
-			return
-		}
-	}
-}
-
-func isTemporary(err error) bool {
-	e, ok := err.(interface {
-		Temporary() bool
-	})
-	return ok && e.Temporary()
+	man.closeConnections()
+	man.closeLogFile()
 }
 
 var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)
-
-const defaultDialTimeout = 30 * time.Second

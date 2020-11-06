@@ -119,11 +119,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		writeLog(err)
+		ctx.Logger.Print(err)
 		return
 	}
-	writeLogf("listening on %v", ln.Addr())
-	defer writeLogf("stopped listening on %v", ln.Addr())
+	ctx.Logger.Printf("listening on %v", ln.Addr())
+	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
@@ -157,7 +157,7 @@ func (Service) Run(ctx service.Context) {
 
 			addr, err := socks.Handshake(c)
 			if err != nil {
-				writeLogf("socks handshake: %v", err)
+				ctx.Logger.Printf("socks handshake: %v", err)
 				return
 			}
 
@@ -165,7 +165,7 @@ func (Service) Run(ctx service.Context) {
 
 			remote, err := man.Dial(ctx, opts.stats.ins, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				// writeLog(err)
+				// ctx.Logger.Print(err)
 				return
 			}
 			defer remote.Close()
@@ -202,7 +202,7 @@ func (Service) Run(ctx service.Context) {
 			go func(stats statsINFO) {
 				defer func() {
 					if err := stats.ins.Close(); err != nil {
-						writeLogf("close instance: %v", err)
+						ctx.Logger.Printf("close instance: %v", err)
 					}
 					stats.cancel()
 				}()
@@ -229,24 +229,28 @@ func (Service) Run(ctx service.Context) {
 	startInstance := func(opts Options) {
 		i, err := createInstance(opts)
 		if err != nil {
-			writeLogf("create instance: %v", err)
+			ctx.Logger.Printf("create instance: %v", err)
 			return
 		}
 		if err := i.Start(); err != nil {
-			writeLogf("start instance: %v", err)
+			ctx.Logger.Printf("start instance: %v", err)
 			return
 		}
 		stats.ins = i
 		stats.ctx, stats.cancel = context.WithCancel(context.Background())
 		stats.readevents = make(chan struct{})
 		if opts.Mux.Enabled && opts.Mux.Ping.Enabled {
-			laddr := ctx.ListenAddr
-			ctx, cancel := context.WithCancel(context.Background())
-			cancelPing = cancel
+			var ctxPing context.Context
+			ctxPing, cancelPing = context.WithCancel(context.Background())
 			if restart == nil {
 				restart = make(chan struct{})
 			}
-			go startPing(ctx, opts.Mux.Ping, laddr, restart)
+			go func() {
+				err := startPing(ctxPing, opts.Mux.Ping, ctx.ListenAddr, restart)
+				if err != nil {
+					ctx.Logger.Printf("ping: %v", err)
+				}
+			}()
 		}
 	}
 
@@ -456,7 +460,7 @@ func parseURL(opts *Options) error {
 	return nil
 }
 
-func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan<- struct{}) {
+func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan<- struct{}) error {
 	urls := opts.URLs
 	if len(urls) == 0 {
 		url := defaultPingURL
@@ -483,8 +487,7 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 	reqURL := urls[rand.Intn(len(urls))]
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
-		writeLogf("ping: %v", err)
-		return
+		return err
 	}
 	req.Header.Set("User-Agent", "") // Reduce header size.
 	jar, _ := cookiejar.New(nil)
@@ -525,7 +528,7 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 			case <-done:
 			case restart <- struct{}{}:
 			}
-			return
+			return nil
 		}
 		sleep := sleep
 		if sleep < 1 {
@@ -533,7 +536,7 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		}
 		select {
 		case <-done:
-			return
+			return nil
 		case <-time.After(sleep):
 		}
 	}

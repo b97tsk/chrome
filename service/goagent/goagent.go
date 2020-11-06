@@ -47,11 +47,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		writeLog(err)
+		ctx.Logger.Print(err)
 		return
 	}
-	writeLogf("listening on %v", ln.Addr())
-	defer writeLogf("stopped listening on %v", ln.Addr())
+	ctx.Logger.Printf("listening on %v", ln.Addr())
+	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -68,7 +68,7 @@ func (Service) Run(ctx service.Context) {
 	}()
 
 	listener := NewListener(ln, ctx.Done())
-	handler := NewHandler(listener, ctx.Manager, optsOut)
+	handler := NewHandler(ctx, listener, optsOut)
 	defer handler.CloseIdleConnections()
 
 	var (
@@ -206,19 +206,20 @@ func (l *Listener) Addr() net.Addr {
 }
 
 type Handler struct {
-	l            *Listener
+	ctx          service.Context
+	ln           *Listener
 	tr           *http.Transport
 	appIDMutex   sync.Mutex
 	appIDList    []string
 	badAppIDList []string
 }
 
-func NewHandler(l *Listener, man *service.Manager, opts <-chan Options) *Handler {
-	h := &Handler{l: l}
+func NewHandler(ctx service.Context, ln *Listener, opts <-chan Options) *Handler {
+	h := &Handler{ctx: ctx, ln: ln}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-opts
-		return man.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
+		return h.ctx.Manager.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
 	}
 
 	h.tr = &http.Transport{
@@ -286,11 +287,11 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
 				responseString := httpVersion + " 200 OK\r\n\r\n"
 				if _, err := conn.Write([]byte(responseString)); err != nil {
-					writeLogf("write: %v", err)
+					h.ctx.Logger.Printf("write: %v", err)
 					conn.Close()
 					return
 				}
-				h.l.Inject(conn)
+				h.ln.Inject(conn)
 				return
 			}
 
@@ -302,7 +303,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			if err != nil {
 				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
 				if _, err := local.Write([]byte(responseString)); err != nil {
-					writeLogf("write: %v", err)
+					h.ctx.Logger.Printf("write: %v", err)
 				}
 				return
 			}
@@ -310,7 +311,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			responseString := httpVersion + " 200 OK\r\n\r\n"
 			if _, err := local.Write([]byte(responseString)); err != nil {
-				writeLogf("write: %v", err)
+				h.ctx.Logger.Printf("write: %v", err)
 				return
 			}
 
@@ -343,7 +344,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	h.autoRange(req, resp)
 
 	appID := appIDFromRequest(resp.Request)
-	writeLogf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
+	h.ctx.Logger.Printf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
 	for key, values := range resp.Header {
 		for _, value := range values {
@@ -360,7 +361,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	resp.Body.Close()
 
 	if err != nil {
-		writeLogf("(%v) RECV %v: %v", appID, req.URL, err)
+		h.ctx.Logger.Printf("(%v) RECV %v: %v", appID, req.URL, err)
 	}
 }
 
@@ -375,7 +376,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		resp, err := h.tr.RoundTrip(request)
 		if err != nil {
-			writeLogf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
+			h.ctx.Logger.Printf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
 			if i+1 == NRetries || isRequestCanceled(req) {
 				return nil, err
 			}
@@ -387,7 +388,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 				return resp, nil
 			}
 			if resp.StatusCode == http.StatusServiceUnavailable {
-				writeLogf("(%v) over quota", appID)
+				h.ctx.Logger.Printf("(%v) over quota", appID)
 				h.putBadAppID(appID)
 				resp.Body.Close()
 				continue

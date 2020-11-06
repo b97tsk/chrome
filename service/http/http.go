@@ -174,11 +174,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		writeLog(err)
+		ctx.Logger.Print(err)
 		return
 	}
-	writeLogf("listening on %v", ln.Addr())
-	defer writeLogf("stopped listening on %v", ln.Addr())
+	ctx.Logger.Printf("listening on %v", ln.Addr())
+	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -194,7 +194,7 @@ func (Service) Run(ctx service.Context) {
 		close(optsOut)
 	}()
 
-	handler := NewHandler(ctx.Manager, optsOut)
+	handler := NewHandler(ctx, optsOut)
 	defer handler.CloseIdleConnections()
 
 	var (
@@ -263,7 +263,7 @@ func (Service) Run(ctx service.Context) {
 							watchErrors = watcher.Errors
 						}
 						if err != nil {
-							writeLog(err)
+							ctx.Logger.Print(err)
 						}
 					}
 					new.routes = make([]*route, len(new.Routes))
@@ -278,7 +278,7 @@ func (Service) Run(ctx service.Context) {
 						if watcher != nil {
 							err := watcher.Add(r.absFile)
 							if err != nil {
-								writeLogf("watcher: %v", err)
+								ctx.Logger.Printf("watcher: %v", err)
 							}
 						}
 						didRecycle := false
@@ -292,10 +292,10 @@ func (Service) Run(ctx service.Context) {
 						if !didRecycle {
 							switch err := new.routes[i].Init(); err {
 							case nil:
-								writeLogf("loaded %v", r.File)
+								ctx.Logger.Printf("loaded %v", r.File)
 							case errNotModified:
 							default:
-								writeLogf("fatal: %v", err)
+								ctx.Logger.Printf("fatal: %v", err)
 								return // Consider fatal here.
 							}
 						}
@@ -323,7 +323,7 @@ func (Service) Run(ctx service.Context) {
 				}
 			}
 		case err := <-watchErrors:
-			writeLogf("watcher: %v", err)
+			ctx.Logger.Printf("watcher: %v", err)
 		case name := <-fileChanges:
 			opts := <-optsOut
 			routesChanged := false
@@ -331,11 +331,11 @@ func (Service) Run(ctx service.Context) {
 				if r.absFile == name {
 					switch err := r.Init(); err {
 					case nil:
-						writeLogf("loaded %v", r.File)
+						ctx.Logger.Printf("loaded %v", r.File)
 						routesChanged = true
 					case errNotModified:
 					default:
-						writeLogf("reload: %v", err)
+						ctx.Logger.Printf("reload: %v", err)
 					}
 				}
 			}
@@ -362,12 +362,13 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 }
 
 type Handler struct {
+	ctx       service.Context
 	tr        *http.Transport
 	redirects atomic.Value
 }
 
-func NewHandler(man *service.Manager, opts <-chan Options) *Handler {
-	h := &Handler{}
+func NewHandler(ctx service.Context, opts <-chan Options) *Handler {
+	h := &Handler{ctx: ctx}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-opts
@@ -377,7 +378,7 @@ func NewHandler(man *service.Manager, opts <-chan Options) *Handler {
 			} else {
 				for _, r := range opts.routes {
 					if r.Match(addr) {
-						writeLogf("%v matches %v", r.File, addr)
+						h.ctx.Logger.Printf("%v matches %v", r.File, addr)
 						opts.dialer = r.getDialer()
 						opts.matches.Store(addr, r)
 						break
@@ -385,7 +386,7 @@ func NewHandler(man *service.Manager, opts <-chan Options) *Handler {
 				}
 			}
 		}
-		return man.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
+		return h.ctx.Manager.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
 	}
 
 	h.tr = &http.Transport{

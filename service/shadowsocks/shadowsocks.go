@@ -32,11 +32,11 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		writeLog(err)
+		ctx.Logger.Print(err)
 		return
 	}
-	writeLogf("listening on %v", ln.Addr())
-	defer writeLogf("stopped listening on %v", ln.Addr())
+	ctx.Logger.Printf("listening on %v", ln.Addr())
+	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
@@ -70,7 +70,7 @@ func (Service) Run(ctx service.Context) {
 			c = opts.cipher.StreamConn(c)
 			addr, err := socks.ReadAddr(c)
 			if err != nil {
-				writeLogf("read addr: %v", err)
+				ctx.Logger.Printf("read addr: %v", err)
 				return
 			}
 
@@ -78,7 +78,7 @@ func (Service) Run(ctx service.Context) {
 
 			remote, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				// writeLog(err)
+				// ctx.Logger.Print(err)
 				return
 			}
 			defer remote.Close()
@@ -99,7 +99,7 @@ func (Service) Run(ctx service.Context) {
 				if new.Method != old.Method || new.Password != old.Password {
 					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
-						writeLogf("fatal: pick cipher: %v", err)
+						ctx.Logger.Printf("fatal: pick cipher: %v", err)
 						return
 					}
 					new.cipher = cipher
