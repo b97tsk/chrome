@@ -25,7 +25,7 @@ If config file is `-`, chrome will try to load config from standard input.
 ```yaml
 logging: ${ConfigDir}/chrome.log # Write log messages to this file.
 
-alias#1: # Field names start with `alias` will be ignored.
+alias#1: # Field names start with `alias` are ignored.
   - &SS ss://method:password@example.com:12345
   - &Tor socks5://127.0.0.1:9150
 
@@ -50,9 +50,10 @@ alias#2:
   - &Direct []
   - &SSOverTor [*SS, *Tor]
 
-# Create three shadowsocks servers, listening on all available IP addresses of the local system.
+# Create three Shadowsocks servers, listening on all available IP addresses
+# of the local system.
 shadowsocks||10800+:
   - { method: aes-256-gcm, password: 123456, over: *SSOverTor }
   - { method: aes-256-gcm, password: 123456, over: *Direct }
-  - { method: aes-256-gcm, password: 123456 } # The same as above.
+  - { method: aes-256-gcm, password: !!binary MTIzNDU2 } # Same as above.
 ```
