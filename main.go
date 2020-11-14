@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/service"
-	"github.com/b97tsk/chrome/service/goagent"
 	"github.com/b97tsk/chrome/service/http"
+	"github.com/b97tsk/chrome/service/http/goagent"
 	"github.com/b97tsk/chrome/service/httpfs"
 	"github.com/b97tsk/chrome/service/pprof"
 	"github.com/b97tsk/chrome/service/socks"
