@@ -34,6 +34,21 @@ const v2rayTemplateBody = `
       "settings": {{ json . }},
 {{- end }}{{/* with .FREEDOM */}}
 
+{{- else if eq $protocol "trojan" }}
+
+{{- with .TROJAN }}
+      "protocol": "trojan",
+      "settings": {
+        "servers": [
+          {
+            "address": {{ .Address | json }},
+            "port": {{ .Port }},
+            "password": {{ .Password | json }}
+          }
+        ]
+      },
+{{- end }}{{/* with .TROJAN */}}
+
 {{- else if eq $protocol "vmess" }}
 
 {{- with .VMESS }}

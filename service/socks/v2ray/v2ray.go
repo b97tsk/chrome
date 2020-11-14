@@ -70,11 +70,14 @@ type ProtocolOptions struct {
 		DomainStrategy string `json:"domainStrategy,omitempty"`
 		Redirect       string `json:"redirect,omitempty"`
 	}
+	TROJAN struct {
+		HostportOptions `yaml:",inline"`
+		Password        string
+	}
 	VMESS struct {
-		Address string `yaml:"hostport"`
-		Port    int    `yaml:"-"`
-		ID      string
-		AlterID int `yaml:"aid"`
+		HostportOptions `yaml:",inline"`
+		ID              string
+		AlterID         int `yaml:"aid"`
 	}
 }
 
@@ -95,6 +98,11 @@ type TransportOptions struct {
 		Path   string
 		Header map[string]string
 	}
+}
+
+type HostportOptions struct {
+	Address string `yaml:"hostport"`
+	Port    int    `yaml:"-"`
 }
 
 type PingOptions struct {
@@ -323,7 +331,7 @@ func createInstance(opts Options) (*Instance, error) {
 	for _, typ := range strings.SplitN(opts.Type, "+", 3) {
 		typ = strings.ToLower(typ)
 		switch typ {
-		case "freedom", "vmess":
+		case "freedom", "trojan", "vmess":
 			opts.Protocol = typ
 		case "http", "kcp", "tcp", "ws":
 			opts.Transport = typ
@@ -334,16 +342,24 @@ func createInstance(opts Options) (*Instance, error) {
 		}
 	}
 
+	var hostport *HostportOptions
+
 	switch opts.Protocol {
+	case "trojan":
+		hostport = &opts.TROJAN.HostportOptions
 	case "vmess":
-		host, port, err := net.SplitHostPort(opts.VMESS.Address)
+		hostport = &opts.VMESS.HostportOptions
+	}
+
+	if hostport != nil {
+		host, port, err := net.SplitHostPort(hostport.Address)
 		if err != nil {
-			return nil, errors.New("invalid address: " + opts.VMESS.Address)
+			return nil, errors.New("invalid address: " + hostport.Address)
 		}
-		opts.VMESS.Address = host
-		opts.VMESS.Port, err = strconv.Atoi(port)
+		hostport.Address = host
+		hostport.Port, err = strconv.Atoi(port)
 		if err != nil {
-			return nil, errors.New("invalid port in address: " + opts.VMESS.Address)
+			return nil, errors.New("invalid port in address: " + hostport.Address)
 		}
 	}
 
@@ -357,7 +373,8 @@ func createInstance(opts Options) (*Instance, error) {
 	if opts.Mux.EnabledByYAML != nil {
 		opts.Mux.Enabled = *opts.Mux.EnabledByYAML
 	} else {
-		if opts.Protocol == "vmess" {
+		switch opts.Protocol {
+		case "trojan", "vmess":
 			opts.Mux.Enabled = true
 		}
 	}
@@ -376,10 +393,35 @@ func parseURL(opts *Options) error {
 		return nil
 	}
 
-	b64 := strings.TrimPrefix(opts.URL, "vmess://")
-	if b64 == opts.URL {
-		return errors.New("url should start with vmess://")
+	switch {
+	case strings.HasPrefix(opts.URL, "trojan://"):
+		return parseTrojanURL(opts)
+	case strings.HasPrefix(opts.URL, "vmess://"):
+		return parseVMessURL(opts)
 	}
+
+	return fmt.Errorf(`unknown protocol in url "%v"`, opts.URL)
+}
+
+func parseTrojanURL(opts *Options) error {
+	u, err := url.Parse(opts.URL)
+	if err != nil {
+		return fmt.Errorf(`parse trojan url "%v": %w`, opts.URL, err)
+	}
+
+	if u.User == nil {
+		return fmt.Errorf(`invalid trojan url "%v"`, opts.URL)
+	}
+
+	opts.Type = "trojan+tcp+tls"
+	opts.TROJAN.Address = u.Host
+	opts.TROJAN.Password = u.User.Username()
+
+	return nil
+}
+
+func parseVMessURL(opts *Options) error {
+	b64 := strings.TrimPrefix(opts.URL, "vmess://")
 
 	b64 = strings.ReplaceAll(b64, "-", "+")
 	b64 = strings.ReplaceAll(b64, "_", "/")
