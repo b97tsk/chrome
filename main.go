@@ -16,8 +16,8 @@ import (
 	"github.com/b97tsk/chrome/service/pprof"
 	"github.com/b97tsk/chrome/service/socks"
 	"github.com/b97tsk/chrome/service/socks/shadowsocks"
+	"github.com/b97tsk/chrome/service/socks/v2ray"
 	"github.com/b97tsk/chrome/service/tcptun"
-	"github.com/b97tsk/chrome/service/v2ray"
 	"github.com/fsnotify/fsnotify"
 )
 
