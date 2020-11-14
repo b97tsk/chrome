@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/b97tsk/chrome/internal/v2ray"
 	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
@@ -60,7 +59,7 @@ type Options struct {
 }
 
 type statsINFO struct {
-	ins        *v2ray.Instance
+	ins        *Instance
 	ctx        context.Context
 	cancel     context.CancelFunc
 	readevents chan struct{}
@@ -312,7 +311,7 @@ func shouldRestart(x, y Options) bool {
 	return !reflect.DeepEqual(x, y)
 }
 
-func createInstance(opts Options) (*v2ray.Instance, error) {
+func createInstance(opts Options) (*Instance, error) {
 	if err := parseURL(&opts); err != nil {
 		return nil, err
 	}
@@ -363,7 +362,7 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		return nil, err
 	}
 
-	return v2ray.NewInstanceFromJSON(buf.Bytes())
+	return NewInstanceFromJSON(buf.Bytes())
 }
 
 func parseURL(opts *Options) error {
