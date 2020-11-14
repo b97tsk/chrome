@@ -41,14 +41,13 @@ const v2rayTemplateBody = `
       "settings": {
         "vnext": [
           {
-            "address": "{{ .Address }}",
+            "address": {{ .Address | json }},
             "port": {{ .Port }},
             "users": [
               {
-                "id": "{{ .ID }}",
+                "id": {{ .ID | json }},
                 "alterId": {{ .AlterID }},
-                "security": "auto",
-                "level": 0
+                "security": "auto"
               }
             ]
           }
@@ -65,7 +64,7 @@ const v2rayTemplateBody = `
         "security": "tls",
         "httpSettings": {
           "host": {{ .Host | json }},
-          "path": "{{ .Path }}"
+          "path": {{ .Path | json }}
         },
 {{- end }}{{/* with .HTTP */}}
 
@@ -82,29 +81,31 @@ const v2rayTemplateBody = `
           "readBufferSize": 2,
           "writeBufferSize": 2,
           "header": {
-            "type": "{{ .Header }}"
+            "type": {{ .Header | json }}
           }
         },
 {{- end }}{{/* with .KCP */}}
 
-{{- else if eq $transport "tcp" "tcp/tls" }}
+{{- else if eq $transport "tcp" }}
 
+{{- $tlsEnabled := .TLS.Enabled }}
 {{- with .TCP }}
         "network": "tcp",
-{{- if eq $transport "tcp/tls" }}
+{{- if $tlsEnabled }}
         "security": "tls",
 {{- end }}
 {{- end }}{{/* with .TCP */}}
 
-{{- else if eq $transport "ws" "ws/tls" }}
+{{- else if eq $transport "ws" }}
 
+{{- $tlsEnabled := .TLS.Enabled }}
 {{- with .WS }}
         "network": "ws",
-{{- if eq $transport "ws/tls" }}
+{{- if $tlsEnabled }}
         "security": "tls",
 {{- end }}
         "wsSettings": {
-          "path": "{{ .Path }}",
+          "path": {{ .Path | json }},
           "headers": {{ .Header | json }}
         },
 {{- end }}{{/* with .WS */}}

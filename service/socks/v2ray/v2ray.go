@@ -71,8 +71,8 @@ type ProtocolOptions struct {
 		Redirect       string `json:"redirect,omitempty"`
 	}
 	VMESS struct {
-		Address string
-		Port    int `yaml:"-"`
+		Address string `yaml:"hostport"`
+		Port    int    `yaml:"-"`
 		ID      string
 		AlterID int `yaml:"aid"`
 	}
@@ -88,6 +88,7 @@ type TransportOptions struct {
 	}
 	TCP struct{}
 	TLS struct {
+		Enabled    bool   `json:"-"`
 		ServerName string `json:"serverName"`
 	}
 	WS struct {
@@ -319,32 +320,37 @@ func createInstance(opts Options) (*Instance, error) {
 	opts.Protocol = "freedom"
 	opts.Transport = "tcp"
 
-	for _, typ := range strings.SplitN(opts.Type, "+", 2) {
+	for _, typ := range strings.SplitN(opts.Type, "+", 3) {
+		typ = strings.ToLower(typ)
 		switch typ {
 		case "freedom", "vmess":
 			opts.Protocol = typ
-			switch typ {
-			case "vmess":
-				host, port, err := net.SplitHostPort(opts.VMESS.Address)
-				if err != nil {
-					return nil, errors.New("invalid address: " + opts.VMESS.Address)
-				}
-				opts.VMESS.Port, err = strconv.Atoi(port)
-				if err != nil {
-					return nil, errors.New("invalid port in address: " + opts.VMESS.Address)
-				}
-				opts.VMESS.Address = host
-			}
-		case "http", "kcp", "tcp", "tcp/tls", "ws", "ws/tls":
+		case "http", "kcp", "tcp", "ws":
 			opts.Transport = typ
-			switch typ {
-			case "kcp":
-				if opts.KCP.Header == "" {
-					opts.KCP.Header = "none"
-				}
-			}
+		case "tls":
+			opts.TLS.Enabled = true
 		default:
 			return nil, errors.New("unknown type: " + opts.Type)
+		}
+	}
+
+	switch opts.Protocol {
+	case "vmess":
+		host, port, err := net.SplitHostPort(opts.VMESS.Address)
+		if err != nil {
+			return nil, errors.New("invalid address: " + opts.VMESS.Address)
+		}
+		opts.VMESS.Address = host
+		opts.VMESS.Port, err = strconv.Atoi(port)
+		if err != nil {
+			return nil, errors.New("invalid port in address: " + opts.VMESS.Address)
+		}
+	}
+
+	switch opts.Transport {
+	case "kcp":
+		if opts.KCP.Header == "" {
+			opts.KCP.Header = "none"
 		}
 	}
 
@@ -384,7 +390,7 @@ func parseURL(opts *Options) error {
 	}
 	data, err := enc.DecodeString(b64)
 	if err != nil {
-		return fmt.Errorf("decode vmess url: %w", err)
+		return fmt.Errorf(`decode vmess url "%v": %w`, opts.URL, err)
 	}
 
 	var config struct {
@@ -404,7 +410,7 @@ func parseURL(opts *Options) error {
 	}
 
 	if err := json.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("unmarshal decoded vmess url: %w", err)
+		return fmt.Errorf(`unmarshal decoded vmess url "%v": %w`, opts.URL, err)
 	}
 
 	if unquote(string(config.Version)) == "" {
@@ -415,6 +421,7 @@ func parseURL(opts *Options) error {
 	}
 
 	var transport string
+
 	switch config.Net {
 	case "http", "h2":
 		transport = "http"
@@ -434,7 +441,7 @@ func parseURL(opts *Options) error {
 			return fmt.Errorf(`unknown type field "%v" in vmess url "%v"`, config.Type, opts.URL)
 		}
 		if config.TLS == "tls" {
-			transport = "tcp/tls"
+			transport = "tcp+tls"
 			if config.Host != "" && config.Host != config.Address {
 				opts.TLS.ServerName = config.Host
 			}
@@ -442,7 +449,7 @@ func parseURL(opts *Options) error {
 	case "ws":
 		transport = "ws"
 		if config.TLS == "tls" {
-			transport = "ws/tls"
+			transport = "ws+tls"
 			if config.Host != "" && config.Host != config.Address {
 				opts.TLS.ServerName = config.Host
 			}
@@ -456,6 +463,7 @@ func parseURL(opts *Options) error {
 	opts.VMESS.Address = net.JoinHostPort(config.Address, unquote(string(config.Port)))
 	opts.VMESS.ID = config.ID
 	opts.VMESS.AlterID, _ = strconv.Atoi(unquote(string(config.AlterID)))
+
 	return nil
 }
 
