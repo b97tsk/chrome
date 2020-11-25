@@ -35,6 +35,18 @@ func Main() (code int) {
 		configFile = base[:len(base)-len(ext)] + ".yaml"
 	}
 
+	if configFile != "-" {
+		abs, err := filepath.Abs(configFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		configFile = abs
+	}
+
+	configDir := filepath.Dir(configFile)
+	os.Setenv("ConfigDir", configDir)
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -43,14 +55,12 @@ func Main() (code int) {
 	defer watcher.Close()
 
 	if configFile != "-" {
-		err = watcher.Add(configFile)
+		err = watcher.Add(configDir)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 	}
-
-	os.Setenv("ConfigDir", filepath.Dir(configFile))
 
 	man := newManager()
 	defer man.Shutdown()
@@ -65,19 +75,20 @@ func Main() (code int) {
 	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(interrupt)
 
-	var delay <-chan time.Time
+	var reload <-chan time.Time
 	for {
 		select {
 		case e := <-watcher.Events:
-			if e.Op&fsnotify.Write != 0 {
-				delay = time.After(1 * time.Second)
+			const Mask = fsnotify.Create | fsnotify.Rename | fsnotify.Write
+			if e.Op&Mask != 0 && e.Name == configFile {
+				reload = time.After(1 * time.Second)
 			}
 		case err := <-watcher.Errors:
 			logger := man.Logger("main")
 			logger.Println("[main]", err)
-		case <-delay:
+		case <-reload:
 			man.LoadFile(configFile)
-			delay = nil
+			reload = nil
 		case <-interrupt:
 			return
 		}
