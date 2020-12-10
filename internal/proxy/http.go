@@ -69,16 +69,16 @@ func (d *httpDialer) dialTCP(ctx context.Context, network, addr string) (net.Con
 	}
 	if err := req.Write(conn); err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("tcp dial: %v over %v: %v", addr, d.Server, err)
+		return nil, fmt.Errorf("proxy/http: dial %v over %v: %w", addr, d.Server, err)
 	}
 	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
 	if err != nil {
 		conn.Close()
-		return nil, fmt.Errorf("tcp dial: %v over %v: %v", addr, d.Server, err)
+		return nil, fmt.Errorf("proxy/http: dial %v over %v: %w", addr, d.Server, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		conn.Close()
-		return nil, fmt.Errorf("tcp dial: %v over %v: %v", addr, d.Server, resp.Status)
+		return nil, fmt.Errorf("proxy/http: dial %v over %v: %v", addr, d.Server, resp.Status)
 	}
 	return conn, nil
 }
