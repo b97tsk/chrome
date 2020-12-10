@@ -85,19 +85,19 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	}
 	fields := strings.SplitN(name, "|", 3)
 	if len(fields) != 3 {
-		return fmt.Errorf("ignored %v", name)
+		return fmt.Errorf("%v: ignored", name)
 	}
 
 	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
 	service, ok := man.services[serviceName]
 	if !ok {
-		return fmt.Errorf("service %q not found", serviceName)
+		return fmt.Errorf("%v: service not found", name)
 	}
 
 	text, _ := yaml.Marshal(data)
 	opts, err := service.UnmarshalOptions(text)
 	if err != nil {
-		return fmt.Errorf("invalid options in %v", name)
+		return fmt.Errorf("%v: parse options: %w", name, err)
 	}
 
 	job, ok := man.jobs[name]
