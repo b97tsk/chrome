@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -82,13 +83,13 @@ func (d *shadowsocksDialer) dialTCP(ctx context.Context, network, addr string) (
 	}
 	conn, err := Dial(ctx, d.Forward, network, d.Server)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("proxy/shadowsocks: dial %v: %w", d.Server, err)
 	}
 	conn = d.Cipher.StreamConn(conn)
 	_, err = conn.Write(remoteAddr)
 	if err != nil {
 		conn.Close()
-		return nil, err
+		return nil, fmt.Errorf("proxy/shadowsocks: write %v: %w", addr, err)
 	}
 	return conn, nil
 }
@@ -96,7 +97,7 @@ func (d *shadowsocksDialer) dialTCP(ctx context.Context, network, addr string) (
 type shadowsocksParseAddrError string
 
 func (e shadowsocksParseAddrError) Error() string {
-	return "invalid addr: " + string(e)
+	return "proxy/shadowsocks: parse addr: " + string(e)
 }
 
 type shadowsocksUnknownSSError struct {
@@ -104,7 +105,7 @@ type shadowsocksUnknownSSError struct {
 }
 
 func (e shadowsocksUnknownSSError) Error() string {
-	return "unknown ss: " + e.u.String()
+	return "proxy/shadowsocks: unknown ss: " + e.u.String()
 }
 
 type shadowsocksUnknownCipherError struct {
@@ -112,5 +113,5 @@ type shadowsocksUnknownCipherError struct {
 }
 
 func (e shadowsocksUnknownCipherError) Error() string {
-	return "unknown cipher: " + e.u.String()
+	return "proxy/shadowsocks: unknown cipher: " + e.u.String()
 }
