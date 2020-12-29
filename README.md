@@ -5,7 +5,8 @@ Services implemented by Go.
 # Install
 
 ```console
-# go get -u github.com/b97tsk/chrome
+# go env -w GOPRIVATE=github.com/v2fly/v2ray-core
+# go get github.com/b97tsk/chrome
 ```
 
 # Usage
