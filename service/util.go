@@ -1,9 +1,8 @@
 package service
 
-func isTemporary(err error) bool {
-	e, ok := err.(interface {
-		Temporary() bool
-	})
+import "errors"
 
-	return ok && e.Temporary()
+func isTemporary(err error) bool {
+	var t interface{ Temporary() bool }
+	return errors.As(err, &t) && t.Temporary()
 }

@@ -80,7 +80,8 @@ func (Service) Run(ctx service.Context) {
 
 	defer func() {
 		if server != nil {
-			server.Shutdown(context.Background())
+			_ = server.Shutdown(context.Background())
+
 			<-serverDown
 		}
 	}()

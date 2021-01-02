@@ -612,7 +612,7 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		} else {
 			const maxBodySlurpSize = 2 << 10
 			if resp.ContentLength == -1 || resp.ContentLength <= maxBodySlurpSize {
-				io.CopyN(ioutil.Discard, resp.Body, maxBodySlurpSize)
+				_, _ = io.CopyN(ioutil.Discard, resp.Body, maxBodySlurpSize)
 			}
 			resp.Body.Close()
 			number = opts.Number

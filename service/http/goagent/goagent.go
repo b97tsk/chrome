@@ -100,7 +100,8 @@ func (Service) Run(ctx service.Context) {
 
 	defer func() {
 		if server != nil {
-			server.Shutdown(context.Background())
+			_ = server.Shutdown(context.Background())
+
 			<-serverDown
 		}
 	}()
@@ -403,7 +404,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 	for i := 0; i < NRetries; i++ {
 		request, err := h.encodeRequest(req)
 		if err != nil {
-			return nil, fmt.Errorf("encodeRequest: %v", err)
+			return nil, fmt.Errorf("encodeRequest: %w", err)
 		}
 
 		appID := appIDFromRequest(request)
@@ -446,7 +447,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			resp.Body.Close()
 
-			return nil, fmt.Errorf("decodeResponse: %v", err)
+			return nil, fmt.Errorf("decodeResponse: %w", err)
 		}
 
 		if i+1 == NRetries || isRequestCanceled(req) {
@@ -528,7 +529,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 	}
 
 	fmt.Fprintf(w, "%v %v HTTP/1.1\r\n", req.Method, req.URL)
-	req.Header.WriteSubset(w, reqWriteExcludeHeader)
+	_ = req.Header.WriteSubset(w, reqWriteExcludeHeader)
 	w.Close()
 
 	b0 := make([]byte, 2)
@@ -1003,11 +1004,8 @@ func shuffleAppIDList(appIDList []string) {
 }
 
 func isTemporary(err error) bool {
-	e, ok := err.(interface {
-		Temporary() bool
-	})
-
-	return ok && e.Temporary()
+	var t interface{ Temporary() bool }
+	return errors.As(err, &t) && t.Temporary()
 }
 
 func isTwoAppIDListsIdentical(a, b []string) bool {

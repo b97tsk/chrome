@@ -30,7 +30,7 @@ func (Service) Run(ctx service.Context) {
 
 	defer ln.Close()
 
-	go http.Serve(ln, nil)
+	go func() { _ = http.Serve(ln, nil) }()
 
 	for {
 		select {

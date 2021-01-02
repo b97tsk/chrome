@@ -243,7 +243,8 @@ func (Service) Run(ctx service.Context) {
 
 	defer func() {
 		if server != nil {
-			server.Shutdown(context.Background())
+			_ = server.Shutdown(context.Background())
+
 			<-serverDown
 		}
 	}()
@@ -277,7 +278,7 @@ func (Service) Run(ctx service.Context) {
 				new.matches = old.matches
 
 				for i := range new.Routes {
-					new.Routes[i].Init()
+					_ = new.Routes[i].Init()
 				}
 
 				if !new.Proxy.Equals(old.Proxy) {
@@ -304,7 +305,7 @@ func (Service) Run(ctx service.Context) {
 
 					if watcher != nil {
 						for _, r := range old.routes {
-							watcher.Remove(r.absFile)
+							_ = watcher.Remove(r.absFile)
 						}
 					}
 
@@ -538,7 +539,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	copyHeader(rw.Header(), resp.Header)
 	rw.WriteHeader(resp.StatusCode)
-	io.Copy(rw, resp.Body)
+	_, _ = io.Copy(rw, resp.Body)
 	resp.Body.Close()
 }
 

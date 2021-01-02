@@ -18,8 +18,8 @@ func Relay(c1, c2 net.Conn) {
 		b := relayPool.Get().(*relayBuffer)
 		defer relayPool.Put(b)
 
-		io.CopyBuffer(c1, c2, (*b)[:])
-		c1.SetReadDeadline(time.Now())
+		_, _ = io.CopyBuffer(c1, c2, (*b)[:])
+		_ = c1.SetReadDeadline(time.Now())
 	}()
 	go func() {
 		defer wg.Done()
@@ -27,8 +27,8 @@ func Relay(c1, c2 net.Conn) {
 		b := relayPool.Get().(*relayBuffer)
 		defer relayPool.Put(b)
 
-		io.CopyBuffer(c2, c1, (*b)[:])
-		c2.SetReadDeadline(time.Now())
+		_, _ = io.CopyBuffer(c2, c1, (*b)[:])
+		_ = c2.SetReadDeadline(time.Now())
 	}()
 	wg.Wait()
 }

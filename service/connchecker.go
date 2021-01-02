@@ -70,11 +70,9 @@ func (c *ConnChecker) start(ctx context.Context) {
 				var err error
 
 				if br.Buffered() < checkBufferSize {
-					c.Conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-
+					_ = c.Conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
 					_, err = br.Peek(checkBufferSize)
-
-					c.Conn.SetReadDeadline(c.deadline)
+					_ = c.Conn.SetReadDeadline(c.deadline)
 				}
 
 				c.cbr <- br
