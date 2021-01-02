@@ -15,6 +15,8 @@ func (s *String) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	if err := unmarshal(&raw); err != nil {
 		return err
 	}
+
 	*s = String(os.ExpandEnv(raw))
+
 	return nil
 }

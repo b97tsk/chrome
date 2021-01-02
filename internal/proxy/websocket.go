@@ -46,24 +46,30 @@ func (d *wsDialer) dialTCP(ctx context.Context, _, addr string) (net.Conn, error
 		},
 		HandshakeTimeout: 45 * time.Second,
 	}
+
 	u := d.URL
 	if u.Host == "" || u.Path == "" {
 		copy := *d.URL
 		u = &copy
+
 		if u.Host == "" {
 			u.Host = addr
 		}
+
 		if u.Path == "" {
 			u.Path = "/"
 		}
 	}
+
 	conn, resp, err := dialer.DialContext(ctx, u.String(), nil)
 	if err != nil {
 		if resp != nil {
 			return nil, fmt.Errorf("proxy/websocket: dial %v: %w (%v)", u.String(), err, resp.Status)
 		}
+
 		return nil, fmt.Errorf("proxy/websocket: dial %v: %w", u.String(), err)
 	}
+
 	return &wsConnection{ws: conn}, nil
 }
 
@@ -80,15 +86,19 @@ func (c *wsConnection) Read(b []byte) (n int, err error) {
 				if err != io.EOF { // Should not wrap io.EOF.
 					err = fmt.Errorf("proxy/websocket: read: %w", err)
 				}
+
 				return 0, err
 			}
+
 			c.reader = reader
 		}
+
 		n, err := c.reader.Read(b)
 		if err == io.EOF {
 			c.reader = nil
 			continue
 		}
+
 		return n, fmt.Errorf("proxy/websocket: read: %w", err)
 	}
 }
@@ -99,6 +109,7 @@ func (c *wsConnection) Write(b []byte) (n int, err error) {
 		err = fmt.Errorf("proxy/websocket: write: %w", err)
 		return
 	}
+
 	return len(b), nil
 }
 
@@ -119,6 +130,7 @@ func (c *wsConnection) SetDeadline(t time.Time) error {
 	if err != nil {
 		return err
 	}
+
 	return c.SetWriteDeadline(t)
 }
 

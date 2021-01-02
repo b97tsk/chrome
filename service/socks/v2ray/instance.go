@@ -35,6 +35,7 @@ func NewInstanceFromJSON(data []byte) (*Instance, error) {
 	}
 
 	pbBuffer := bytes.NewBuffer(pbBytes)
+
 	coreConfig, err := core.LoadConfig("protobuf", ".pb", pbBuffer)
 	if err != nil {
 		return nil, err
@@ -65,6 +66,7 @@ func (v *Instance) DialContext(ctx context.Context, network, addr string) (net.C
 	case "tcp", "tcp4", "tcp6":
 		return v.dialTCP(ctx, network, addr)
 	}
+
 	return nil, errors.New("unsupported network " + network)
 }
 
@@ -73,5 +75,6 @@ func (v *Instance) dialTCP(ctx context.Context, _, addr string) (net.Conn, error
 	if err != nil {
 		return nil, err
 	}
+
 	return core.Dial(ctx, v.inst, dest)
 }

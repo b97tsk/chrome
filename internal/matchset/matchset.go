@@ -21,6 +21,7 @@ func (set *charset) Invert() {
 func (set charset) Contains(by byte) bool {
 	idx := by / 32
 	bit := uint32(1) << (by - idx*32)
+
 	return set[idx]&bit != 0
 }
 
@@ -44,6 +45,7 @@ func (set *MatchSet) lazyInit() {
 	if set.nextAtom != 0 {
 		return
 	}
+
 	set.nextAtom = 256
 	set.charSetToAtom = make(map[charset]atom)
 	set.atomToCharSet = make(map[atom]charset)
@@ -52,6 +54,7 @@ func (set *MatchSet) lazyInit() {
 func (set *MatchSet) getNextAtom() atom {
 	atom := set.nextAtom
 	set.nextAtom++
+
 	return atom
 }
 
@@ -64,6 +67,7 @@ func charSetFromGroup(bytes []byte) (charset, []byte) {
 		charSetInverted      bool
 		charSetMayBeInverted bool
 	)
+
 	for i, by := range bytes {
 		switch by {
 		case ']':
@@ -71,9 +75,11 @@ func charSetFromGroup(bytes []byte) (charset, []byte) {
 				if charRead {
 					charSet.Add(char)
 				}
+
 				if charSetInverted {
 					charSet.Invert()
 				}
+
 				return charSet, bytes[i+1:]
 			}
 		case '-':
@@ -82,19 +88,23 @@ func charSetFromGroup(bytes []byte) (charset, []byte) {
 				continue
 			}
 		}
+
 		if charSetMayBeInverted {
 			// Skip first '^' character.
 			charRead = false
 			charSetInverted = true
 			charSetMayBeInverted = false
 		}
+
 		if i == 0 && by == '^' {
 			charSetMayBeInverted = true
 		}
+
 		if charRange {
 			for ; char <= by; char++ {
 				charSet.Add(char)
 			}
+
 			charRead = false
 			charRange = false
 		} else {
@@ -105,12 +115,15 @@ func charSetFromGroup(bytes []byte) (charset, []byte) {
 			charRead = true
 		}
 	}
+
 	if charRead {
 		charSet.Add(char)
 	}
+
 	if charSetInverted {
 		charSet.Invert()
 	}
+
 	return charSet, nil
 }
 
@@ -120,11 +133,14 @@ func (set *MatchSet) readAtom(bytes []byte) (atom, []byte) {
 		if atom, ok := set.charSetToAtom[charSet]; ok {
 			return atom, bytesLeft
 		}
+
 		atom := set.getNextAtom()
 		set.charSetToAtom[charSet] = atom
 		set.atomToCharSet[atom] = charSet
+
 		return atom, bytesLeft
 	}
+
 	return atom(bytes[0]), bytes[1:]
 }
 
@@ -134,6 +150,7 @@ func (set *MatchSet) parse(bytes []byte) []atom {
 		currentAtom  atom
 		lastReadAtom atom
 	)
+
 	for len(bytes) > 0 {
 		currentAtom, bytes = set.readAtom(bytes)
 		switch currentAtom {
@@ -155,18 +172,22 @@ func (set *MatchSet) parse(bytes []byte) []atom {
 			atoms = append(atoms, lastReadAtom)
 		}
 	}
+
 	if len(atoms) == 0 {
 		// Empty pattern matches any characters.
 		return []atom{specialDot}
 	}
+
 	if atoms[0] == '.' {
 		// Starting with '.' means it could match any characters at the beginning.
 		atoms[0] = specialDot
 	}
+
 	if atoms[len(atoms)-1] == '.' {
 		// Ending with '.' means it could match any characters at the end.
 		atoms[len(atoms)-1] = specialDot
 	}
+
 	return atoms
 }
 
@@ -179,11 +200,13 @@ func (set *MatchSet) Add(patt string, data interface{}) {
 	for i, j := 0, len(atoms)-1; i < j; i, j = i+1, j-1 {
 		atoms[i], atoms[j] = atoms[j], atoms[i]
 	}
+
 	for i := 0; i < len(atoms)-1; i++ {
 		if atoms[i] == '*' && atoms[i+1] == '?' {
 			atoms[i], atoms[i+1] = atoms[i+1], atoms[i]
 		}
 	}
+
 	bytes := []byte(string(atoms)) // For reducing memory usage purpose.
 	set.patterns = append(set.patterns, pattern{bytes, data})
 }
@@ -198,16 +221,21 @@ func (set *MatchSet) Match(source string, accumulate func(interface{})) {
 	for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
 		bytes[i], bytes[j] = bytes[j], bytes[i]
 	}
+
 	var patterns, matches []pattern
+
 	for _, patt := range set.patterns {
 		patterns = patterns[:0]
 		patterns = append(patterns, patt)
+
 		for i := range bytes {
 			matches = matches[:0]
 			for _, patt := range patterns {
 				matches = set.checkPattern(patt, bytes, i, matches, accumulate)
 			}
+
 			patterns, matches = matches, patterns
+
 			if len(patterns) == 0 {
 				break
 			}
@@ -223,41 +251,51 @@ func (set *MatchSet) checkPattern(
 ) []pattern {
 	atom, size := utf8.DecodeRune(patt.atoms)
 	nextpatt := pattern{patt.atoms[size:], patt.data}
+
 	switch {
 	case atom == specialDot:
 		if len(nextpatt.atoms) == 0 {
 			if i == 0 || bytes[i] == '.' {
 				accumulate(patt.data)
 			}
+
 			return matches
 		}
+
 		if i == 0 {
 			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
+
 		if bytes[i] == '.' {
 			matches = append(matches, nextpatt)
 		}
+
 		matches = append(matches, patt)
 	case atom == '*':
 		if len(nextpatt.atoms) > 0 {
 			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
+
 		switch bytes[i] {
 		case '.', ':':
 			return matches // '*' does not match '.' or ':'.
 		}
+
 		if i+1 == len(bytes) {
 			if len(nextpatt.atoms) == 0 {
 				accumulate(patt.data)
 			}
+
 			return matches
 		}
+
 		matches = append(matches, patt)
 	case atom == '?':
 		switch bytes[i] {
 		case '.', ':':
 			return matches // '?' does not match '.' or ':'.
 		}
+
 		fallthrough
 	case atom == rune(bytes[i]) || set.atomToCharSet[atom].Contains(bytes[i]):
 		if i+1 == len(bytes) {
@@ -274,13 +312,17 @@ func (set *MatchSet) checkPattern(
 					accumulate(patt.data)
 				}
 			}
+
 			return matches
 		}
+
 		if len(nextpatt.atoms) == 0 {
 			return matches
 		}
+
 		matches = append(matches, nextpatt)
 	}
+
 	return matches
 }
 
@@ -288,9 +330,11 @@ func (set *MatchSet) MatchAll(source string) (matches []interface{}) {
 	if set.Empty() {
 		return
 	}
+
 	set.Match(source, func(data interface{}) {
 		matches = append(matches, data)
 	})
+
 	return
 }
 
@@ -298,6 +342,8 @@ func (set *MatchSet) Test(source string) (ok bool) {
 	if set.Empty() {
 		return
 	}
+
 	set.Match(source, func(data interface{}) { ok = true })
+
 	return
 }

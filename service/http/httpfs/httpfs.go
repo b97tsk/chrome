@@ -27,13 +27,16 @@ func (Service) Run(ctx service.Context) {
 		ctx.Logger.Print(err)
 		return
 	}
+
 	ctx.Logger.Printf("listening on %v", ln.Addr())
 	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
+
 	go func() {
 		var opts Options
+
 		ok := true
 		for ok {
 			select {
@@ -41,6 +44,7 @@ func (Service) Run(ctx service.Context) {
 			case optsOut <- opts:
 			}
 		}
+
 		close(optsOut)
 	}()
 
@@ -48,10 +52,12 @@ func (Service) Run(ctx service.Context) {
 		server     *http.Server
 		serverDown chan error
 	)
+
 	initialize := func() {
 		if server != nil {
 			return
 		}
+
 		server = &http.Server{
 			Handler: http.HandlerFunc(
 				func(rw http.ResponseWriter, req *http.Request) {
@@ -65,11 +71,13 @@ func (Service) Run(ctx service.Context) {
 			),
 		}
 		serverDown = make(chan error, 1)
+
 		go func() {
 			serverDown <- server.Serve(ln)
 			close(serverDown)
 		}()
 	}
+
 	defer func() {
 		if server != nil {
 			server.Shutdown(context.Background())
@@ -87,10 +95,13 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.handler = old.handler
+
 				if new.Dir != old.Dir {
 					new.handler = http.FileServer(http.Dir(new.Dir.String()))
 				}
+
 				optsIn <- new
+
 				initialize()
 			}
 		}
@@ -102,5 +113,6 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
 		return nil, err
 	}
+
 	return opts, nil
 }

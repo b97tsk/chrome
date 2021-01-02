@@ -16,9 +16,11 @@ func socksFromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
 	if u.User != nil {
 		auth = new(proxy.Auth)
 		auth.User = u.User.Username()
+
 		if p, ok := u.User.Password(); ok {
 			auth.Password = p
 		}
 	}
+
 	return proxy.SOCKS5("tcp", u.Host, auth, forward)
 }

@@ -25,20 +25,26 @@ func (d *dialingService) dial(ctx context.Context, dialer proxy.Dialer, network,
 	if dialer == nil {
 		dialer = proxy.Direct
 	}
+
 	dialTimeout := defaultDialTimeout
 	if timeout > 0 {
 		dialTimeout = timeout
 	} else if timeout := atomic.LoadInt64(&d.dialTimeout); timeout > 0 {
 		dialTimeout = time.Duration(timeout)
 	}
+
 	for {
 		err = ctx.Err()
 		if err != nil {
 			return
 		}
+
 		ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+
 		conn, err = proxy.Dial(ctx, dialer, network, address)
+
 		cancel()
+
 		if err == nil || !isTemporary(err) {
 			return
 		}

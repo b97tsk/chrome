@@ -21,9 +21,12 @@ func (s *servingService) serveListener(ln net.Listener, handle func(net.Conn)) {
 				if isTemporary(err) {
 					continue
 				}
+
 				return
 			}
+
 			s.connections.Store(c, struct{}{})
+
 			go func() {
 				defer func() {
 					c.Close()

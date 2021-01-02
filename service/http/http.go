@@ -56,10 +56,12 @@ func (r *RouteInfo) Init() error {
 	if abs, err := filepath.Abs(r.absFile); err == nil {
 		r.absFile = abs
 	}
+
 	hashCode, err := getHashCode(r.absFile)
 	if err == nil {
 		r.hashCode = hashCode
 	}
+
 	return err
 }
 
@@ -89,6 +91,7 @@ func (r *route) Init() error {
 	if err != nil {
 		return err
 	}
+
 	if r.hash == hashCode {
 		return errNotModified
 	}
@@ -100,35 +103,44 @@ func (r *route) Init() error {
 	defer file.Close()
 
 	var includes, excludes matchset.MatchSet
+
 	configMap := make(map[string]*patternConfig)
+
 	s := bufio.NewScanner(file)
 	for s.Scan() {
 		line := strings.TrimSpace(s.Text())
 		if line == "" || line[0] == '#' {
 			continue
 		}
+
 		exclude := line[0] == '!'
 		if exclude {
 			line = line[1:]
 		}
+
 		portSuffix := regxPortSuffix.FindString(line)
 		pattern := line[:len(line)-len(portSuffix)]
 		config := configMap[pattern]
+
 		if portSuffix != "" {
 			if config == nil {
 				config = &patternConfig{}
 				configMap[pattern] = config
 			}
+
 			config.ports = append(config.ports, portSuffix[1:])
 		}
+
 		if !exclude {
 			includes.Add(pattern, config)
 		} else {
 			excludes.Add(pattern, config)
 		}
 	}
+
 	r.hash = hashCode
 	r.matchset.Store(&routeMatchSet{includes, excludes})
+
 	return nil
 }
 
@@ -138,18 +150,21 @@ func match(set *matchset.MatchSet, host, port string) bool {
 		if config == nil {
 			return true
 		}
+
 		for _, p := range config.ports {
 			if p == port {
 				return true
 			}
 		}
 	}
+
 	return false
 }
 
 func (r *route) Match(hostport string) bool {
 	set, ok := r.matchset.Load().(*routeMatchSet)
 	host, port, _ := net.SplitHostPort(hostport)
+
 	return ok && match(&set.includes, host, port) && !match(&set.excludes, host, port)
 }
 
@@ -157,11 +172,14 @@ func (r *route) getDialer() proxy.Dialer {
 	type dialer struct {
 		proxy.Dialer
 	}
+
 	if x := r.dialer.Load(); x != nil {
 		return x.(*dialer).Dialer
 	}
+
 	d, _ := r.Proxy.NewDialer()
 	r.dialer.Store(&dialer{d})
+
 	return d
 }
 
@@ -177,13 +195,16 @@ func (Service) Run(ctx service.Context) {
 		ctx.Logger.Print(err)
 		return
 	}
+
 	ctx.Logger.Printf("listening on %v", ln.Addr())
 	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
+
 	go func() {
 		var opts Options
+
 		ok := true
 		for ok {
 			select {
@@ -191,6 +212,7 @@ func (Service) Run(ctx service.Context) {
 			case optsOut <- opts:
 			}
 		}
+
 		close(optsOut)
 	}()
 
@@ -201,20 +223,24 @@ func (Service) Run(ctx service.Context) {
 		server     *http.Server
 		serverDown chan error
 	)
+
 	initialize := func() {
 		if server != nil {
 			return
 		}
+
 		server = &http.Server{
 			Handler:      handler,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
 		}
 		serverDown = make(chan error, 1)
+
 		go func() {
 			serverDown <- server.Serve(ln)
 			close(serverDown)
 		}()
 	}
+
 	defer func() {
 		if server != nil {
 			server.Shutdown(context.Background())
@@ -230,6 +256,7 @@ func (Service) Run(ctx service.Context) {
 		fileChanges  = make(chan string)
 		resetMatches <-chan time.Time
 	)
+
 	defer func() {
 		if watcher != nil {
 			watcher.Close()
@@ -248,47 +275,61 @@ func (Service) Run(ctx service.Context) {
 				new.dialer = old.dialer
 				new.routes = old.routes
 				new.matches = old.matches
+
 				for i := range new.Routes {
 					new.Routes[i].Init()
 				}
+
 				if !new.Proxy.Equals(old.Proxy) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
+
 				if !routesEquals(new.Routes, old.Routes) {
 					if watcher == nil {
 						var err error
+
 						watcher, err = fsnotify.NewWatcher()
 						if watcher != nil {
 							watchEvents = watcher.Events
 							watchErrors = watcher.Errors
 						}
+
 						if err != nil {
 							ctx.Logger.Print(err)
 						}
 					}
+
 					new.routes = make([]*route, len(new.Routes))
 					new.matches = &sync.Map{}
+
 					if watcher != nil {
 						for _, r := range old.routes {
 							watcher.Remove(r.absFile)
 						}
 					}
+
 					for i, r := range new.Routes {
 						new.routes[i] = &route{RouteInfo: r}
+
 						if watcher != nil {
 							err := watcher.Add(r.absFile)
 							if err != nil {
 								ctx.Logger.Printf("watcher: %v", err)
 							}
 						}
+
 						didRecycle := false
+
 						for _, r2 := range old.routes {
 							if r.hashCode == r2.hashCode {
 								new.routes[i].Recycle(r2)
+
 								didRecycle = true
+
 								break
 							}
 						}
+
 						if !didRecycle {
 							switch err := new.routes[i].Init(); err {
 							case nil:
@@ -301,10 +342,13 @@ func (Service) Run(ctx service.Context) {
 						}
 					}
 				}
+
 				if !redirectsEquals(new.Redirects, old.Redirects) {
 					handler.setRedirects(new.Redirects)
 				}
+
 				optsIn <- new
+
 				initialize()
 			}
 		case e := <-watchEvents:
@@ -325,13 +369,15 @@ func (Service) Run(ctx service.Context) {
 		case err := <-watchErrors:
 			ctx.Logger.Printf("watcher: %v", err)
 		case name := <-fileChanges:
-			opts := <-optsOut
 			routesChanged := false
+
+			opts := <-optsOut
 			for _, r := range opts.routes {
 				if r.absFile == name {
 					switch err := r.Init(); err {
 					case nil:
 						ctx.Logger.Printf("loaded %v", r.File)
+
 						routesChanged = true
 					case errNotModified:
 					default:
@@ -339,7 +385,9 @@ func (Service) Run(ctx service.Context) {
 					}
 				}
 			}
+
 			delete(delayTimers, name)
+
 			if routesChanged {
 				resetMatches = time.After(time.Second)
 			}
@@ -358,6 +406,7 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
 		return nil, err
 	}
+
 	return opts, nil
 }
 
@@ -381,11 +430,13 @@ func NewHandler(ctx service.Context, opts <-chan Options) *Handler {
 						h.ctx.Logger.Printf("%v matches %v", r.File, addr)
 						opts.dialer = r.getDialer()
 						opts.matches.Store(addr, r)
+
 						break
 					}
 				}
 			}
 		}
+
 		return h.ctx.Manager.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
 	}
 
@@ -415,16 +466,20 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
 			return
 		}
+
 		conn, _, err := rw.(http.Hijacker).Hijack()
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
 		requestURI := req.RequestURI
+
 		httpVersion := "HTTP/1.0"
 		if req.ProtoAtLeast(1, 1) {
 			httpVersion = "HTTP/1.1"
 		}
+
 		go func() {
 			defer conn.Close()
 
@@ -441,6 +496,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			if err != nil {
 				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
 				_, _ = local.Write([]byte(responseString))
+
 				return
 			}
 			defer remote.Close()
@@ -452,6 +508,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			service.Relay(local, remote)
 		}()
+
 		return
 	}
 
@@ -466,7 +523,9 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			if u.Path == "" {
 				u.Path = req.URL.Path
 			}
+
 			http.Redirect(rw, req, u.String(), http.StatusFound)
+
 			return
 		}
 	}
@@ -496,12 +555,16 @@ func getHashCode(name string) (hashCode uint32, err error) {
 	if err != nil {
 		return
 	}
+
 	digest := crc32.NewIEEE()
+
 	_, err = io.Copy(digest, file)
 	if err == nil {
 		hashCode = digest.Sum32()
 	}
+
 	file.Close()
+
 	return
 }
 
@@ -509,11 +572,13 @@ func routesEquals(a, b []RouteInfo) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i := range a {
 		if !a[i].Equals(&b[i]) {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -521,11 +586,13 @@ func redirectsEquals(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for k, v := range a {
 		if b[k] != v {
 			return false
 		}
 	}
+
 	return true
 }
 

@@ -31,14 +31,18 @@ func (Service) Run(ctx service.Context) {
 		ctx.Logger.Print(err)
 		return
 	}
+
 	ctx.Logger.Printf("listening on %v", ln.Addr())
 	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
+
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
+
 	go func() {
 		var opts Options
+
 		ok := true
 		for ok {
 			select {
@@ -46,14 +50,17 @@ func (Service) Run(ctx service.Context) {
 			case optsOut <- opts:
 			}
 		}
+
 		close(optsOut)
 	}()
 
 	var initialized bool
+
 	initialize := func() {
 		if initialized {
 			return
 		}
+
 		initialized = true
 
 		man := ctx.Manager
@@ -90,10 +97,13 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.dialer = old.dialer
+
 				if !new.Proxy.Equals(old.Proxy) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
+
 				optsIn <- new
+
 				initialize()
 			}
 		}
@@ -105,5 +115,6 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
 		return nil, err
 	}
+
 	return opts, nil
 }

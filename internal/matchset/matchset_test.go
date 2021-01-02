@@ -5,7 +5,7 @@ import (
 )
 
 func TestMatchSet(t *testing.T) {
-	var tests = []struct {
+	tests := []struct {
 		source  string
 		pattern string
 		matched bool
@@ -118,9 +118,12 @@ func TestMatchSet(t *testing.T) {
 		{"a", "", true},
 		{"", "a", false},
 	}
+
 	for _, tt := range tests {
 		var set MatchSet
+
 		set.Add(tt.pattern, struct{}{})
+
 		if tt.matched != set.Test(tt.source) {
 			if tt.matched {
 				t.Error(tt.source, "SHOULD match", tt.pattern)

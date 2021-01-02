@@ -41,6 +41,7 @@ func Main() (code int) {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+
 		configFile = abs
 	}
 
@@ -73,9 +74,11 @@ func Main() (code int) {
 
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
+
 	defer signal.Stop(interrupt)
 
 	var reload <-chan time.Time
+
 	for {
 		select {
 		case e := <-watcher.Events:
@@ -88,6 +91,7 @@ func Main() (code int) {
 			logger.Println("[main]", err)
 		case <-reload:
 			man.LoadFile(configFile)
+
 			reload = nil
 		case <-interrupt:
 			return
@@ -105,5 +109,6 @@ func newManager() *service.Manager {
 	man.Add(socks.Service{})
 	man.Add(tcptun.Service{})
 	man.Add(v2ray.Service{})
+
 	return man
 }

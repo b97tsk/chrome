@@ -130,14 +130,18 @@ func (Service) Run(ctx service.Context) {
 		ctx.Logger.Print(err)
 		return
 	}
+
 	ctx.Logger.Printf("listening on %v", ln.Addr())
 	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
+
 	defer ln.Close()
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
+
 	go func() {
 		var opts Options
+
 		ok := true
 		for ok {
 			select {
@@ -145,17 +149,21 @@ func (Service) Run(ctx service.Context) {
 			case optsOut <- opts:
 			}
 		}
+
 		close(optsOut)
 	}()
 
 	var initialized bool
+
 	initialize := func() {
 		if initialized {
 			return
 		}
+
 		initialized = true
 
 		var seqno int32
+
 		man := ctx.Manager
 		man.ServeListener(ln, func(c net.Conn) {
 			opts, ok := <-optsOut
@@ -206,16 +214,21 @@ func (Service) Run(ctx service.Context) {
 			cancelPing()
 			cancelPing = nil
 		}
+
 		if stats.ins != nil {
 			go func(stats statsINFO) {
 				defer func() {
 					if err := stats.ins.Close(); err != nil {
 						ctx.Logger.Printf("close instance: %v", err)
 					}
+
 					stats.cancel()
 				}()
+
 				var recentReadTime time.Time
+
 				t := time.NewTimer(remoteIdleTime)
+
 				for {
 					select {
 					case <-t.C:
@@ -223,12 +236,14 @@ func (Service) Run(ctx service.Context) {
 						if d <= 0 {
 							return
 						}
+
 						t.Reset(d)
 					case <-stats.readevents:
 						recentReadTime = time.Now()
 					}
 				}
 			}(stats)
+
 			stats = statsINFO{}
 		}
 	}
@@ -240,19 +255,24 @@ func (Service) Run(ctx service.Context) {
 			ctx.Logger.Printf("create instance: %v", err)
 			return
 		}
+
 		if err := i.Start(); err != nil {
 			ctx.Logger.Printf("start instance: %v", err)
 			return
 		}
+
 		stats.ins = i
 		stats.ctx, stats.cancel = context.WithCancel(context.Background())
 		stats.readevents = make(chan struct{})
+
 		if opts.Mux.Enabled && opts.Mux.Ping.Enabled {
 			var ctxPing context.Context
 			ctxPing, cancelPing = context.WithCancel(context.Background())
+
 			if restart == nil {
 				restart = make(chan struct{})
 			}
+
 			go func() {
 				err := startPing(ctxPing, opts.Mux.Ping, ctx.ListenAddr, restart)
 				if err != nil {
@@ -270,18 +290,23 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.stats = old.stats
+
 				if shouldRestart(old, new) {
 					stopInstance()
 					startInstance(new)
 					new.stats = stats
 				}
+
 				optsIn <- new
+
 				initialize()
 			}
 		case <-restart:
 			opts := <-optsOut
+
 			stopInstance()
 			startInstance(opts)
+
 			opts.stats = stats
 			optsIn <- opts
 		}
@@ -293,6 +318,7 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
 		return nil, err
 	}
+
 	return opts, nil
 }
 
@@ -310,6 +336,7 @@ func (c *doOnReadConn) Read(p []byte) (n int, err error) {
 	if n > 0 {
 		c.do(n)
 	}
+
 	return
 }
 
@@ -317,6 +344,7 @@ func shouldRestart(x, y Options) bool {
 	var z Options
 	x.Dial, y.Dial = z.Dial, z.Dial
 	x.stats, y.stats = z.stats, z.stats
+
 	return !reflect.DeepEqual(x, y)
 }
 
@@ -356,7 +384,9 @@ func createInstance(opts Options) (*Instance, error) {
 		if err != nil {
 			return nil, errors.New("invalid address: " + hostport.Address)
 		}
+
 		hostport.Address = host
+
 		hostport.Port, err = strconv.Atoi(port)
 		if err != nil {
 			return nil, errors.New("invalid port in address: " + hostport.Address)
@@ -430,6 +460,7 @@ func parseVMessURL(opts *Options) error {
 	if len(b64)%4 != 0 {
 		enc = base64.RawStdEncoding
 	}
+
 	data, err := enc.DecodeString(b64)
 	if err != nil {
 		return fmt.Errorf(`decode vmess url "%v": %w`, opts.URL, err)
@@ -467,23 +498,28 @@ func parseVMessURL(opts *Options) error {
 	switch config.Net {
 	case "http", "h2":
 		transport = "http"
+
 		if config.Host != "" {
 			opts.HTTP.Host = []string{config.Host}
 			if config.Host != config.Address {
 				opts.TLS.ServerName = config.Host
 			}
 		}
+
 		opts.HTTP.Path = config.Path
 	case "kcp":
 		transport = "kcp"
 		opts.KCP.Header = config.Type
 	case "tcp":
 		transport = "tcp"
+
 		if config.Type != "" && config.Type != "none" {
 			return fmt.Errorf(`unknown type field "%v" in vmess url "%v"`, config.Type, opts.URL)
 		}
+
 		if config.TLS == "tls" {
 			transport = "tcp+tls"
+
 			if config.Host != "" && config.Host != config.Address {
 				opts.TLS.ServerName = config.Host
 			}
@@ -492,10 +528,12 @@ func parseVMessURL(opts *Options) error {
 		transport = "ws"
 		if config.TLS == "tls" {
 			transport = "ws+tls"
+
 			if config.Host != "" && config.Host != config.Address {
 				opts.TLS.ServerName = config.Host
 			}
 		}
+
 		opts.WS.Path = config.Path
 	default:
 		return fmt.Errorf(`unknown net field "%v" in vmess url "%v"`, config.Net, opts.URL)
@@ -516,31 +554,42 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		if opts.URL != "" {
 			url = opts.URL
 		}
+
 		urls = []string{url}
 	}
+
 	if opts.Number < 1 {
 		opts.Number = defaultPingNumber
 	}
+
 	if opts.Timeout < 1 {
 		opts.Timeout = defaultPingTimeout
 	}
+
 	if opts.Interval.Start < 1 {
 		opts.Interval.Start = defaultPingIntervalStart
 	}
+
 	if opts.Interval.Step < 1 {
 		opts.Interval.Step = defaultPingIntervalStep
 	}
+
 	if opts.Interval.Max < 1 {
 		opts.Interval.Max = defaultPingIntervalMax
 	}
+
 	reqURL := urls[rand.Intn(len(urls))]
+
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("User-Agent", "") // Reduce header size.
+
 	jar, _ := cookiejar.New(nil)
 	proxy := &url.URL{Scheme: "socks5", Host: laddr}
+
 	client := &http.Client{
 		Transport: &http.Transport{
 			Proxy: func(*http.Request) (*url.URL, error) { return proxy, nil },
@@ -548,14 +597,18 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		Jar: jar,
 	}
 	defer client.CloseIdleConnections()
+
 	done := ctx.Done()
 	number := opts.Number
 	sleep := time.Duration(0)
+
 	for {
 		ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
+
 		resp, err := client.Do(req.WithContext(ctx))
 		if err != nil {
 			number--
+
 			sleep = 0
 		} else {
 			const maxBodySlurpSize = 2 << 10
@@ -571,18 +624,23 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 				sleep += opts.Interval.Step
 			}
 		}
+
 		cancel()
+
 		if number < 1 {
 			select {
 			case <-done:
 			case restart <- struct{}{}:
 			}
+
 			return nil
 		}
+
 		sleep := sleep
 		if sleep < 1 {
 			sleep = opts.Interval.Start
 		}
+
 		select {
 		case <-done:
 			return nil
@@ -595,6 +653,7 @@ func unquote(s string) string {
 	if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
 		return s[1 : len(s)-1]
 	}
+
 	return s
 }
 

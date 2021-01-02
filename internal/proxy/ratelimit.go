@@ -21,6 +21,7 @@ func rateLimitFromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
 	values := u.Query()
 	r := rateLimitParseRate(values, "r", "read", "rw", "readwrite")
 	w := rateLimitParseRate(values, "w", "write", "rw", "readwrite")
+
 	return &rateLimitDialer{r, w, forward}, nil
 }
 
@@ -30,7 +31,9 @@ func rateLimitParseRate(values url.Values, keys ...string) int {
 		if s == "" {
 			continue
 		}
+
 		n := 0
+
 		switch s[len(s)-1] {
 		case 'k', 'K':
 			n = 10
@@ -39,13 +42,17 @@ func rateLimitParseRate(values url.Values, keys ...string) int {
 		case 'g', 'G':
 			n = 30
 		}
+
 		s = strings.TrimRight(s, "kKmMgG")
+
 		i, err := strconv.Atoi(s)
 		if err != nil {
 			return 0
 		}
+
 		return i << n
 	}
+
 	return 0
 }
 
@@ -75,11 +82,14 @@ func (d *rateLimitDialer) dialTCP(ctx context.Context, network, addr string) (ne
 		if d.ReadRate > 0 {
 			l.r = rate.NewLimiter(rate.Limit(d.ReadRate), rateLimitBurst)
 		}
+
 		if d.WriteRate > 0 {
 			l.w = rate.NewLimiter(rate.Limit(d.WriteRate), rateLimitBurst)
 		}
+
 		conn = l
 	}
+
 	return conn, err
 }
 
@@ -94,8 +104,10 @@ func (l *rateLimiter) Read(b []byte) (n int, err error) {
 		if l.r.Burst() < len(b) {
 			l.r.SetBurst(len(b))
 		}
+
 		err = l.r.WaitN(context.Background(), n)
 	}
+
 	return
 }
 
@@ -105,7 +117,9 @@ func (l *rateLimiter) Write(b []byte) (n int, err error) {
 		if l.w.Burst() < len(b) {
 			l.w.SetBurst(len(b))
 		}
+
 		err = l.w.WaitN(context.Background(), n)
 	}
+
 	return
 }

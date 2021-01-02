@@ -30,6 +30,7 @@ func NewConnCheckerContext(ctx context.Context, conn net.Conn) (*ConnChecker, co
 	ctx, cancel := context.WithCancel(ctx)
 	cbr := make(chan *bufio.Reader, 1)
 	cbr <- bufio.NewReaderSize(conn, checkBufferSize)
+
 	ping := make(chan struct{}, 1)
 	c := &ConnChecker{
 		Conn:   conn,
@@ -37,16 +38,22 @@ func NewConnCheckerContext(ctx context.Context, conn net.Conn) (*ConnChecker, co
 		ping:   ping,
 		cancel: cancel,
 	}
+
 	go c.start(ctx)
+
 	return c, ctx
 }
 
 func (c *ConnChecker) start(ctx context.Context) {
 	defer c.Close()
+
 	var skipNextCheck bool
+
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
+
 	done := ctx.Done()
+
 	for {
 		select {
 		case <-done:
@@ -61,12 +68,17 @@ func (c *ConnChecker) start(ctx context.Context) {
 			select {
 			case br := <-c.cbr:
 				var err error
+
 				if br.Buffered() < checkBufferSize {
 					c.Conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+
 					_, err = br.Peek(checkBufferSize)
+
 					c.Conn.SetReadDeadline(c.deadline)
 				}
+
 				c.cbr <- br
+
 				if err != nil && err != bufio.ErrBufferFull && !os.IsTimeout(err) {
 					return
 				}
@@ -84,11 +96,13 @@ func (c *ConnChecker) Read(p []byte) (n int, err error) {
 	case c.ping <- struct{}{}:
 	default:
 	}
+
 	return
 }
 
 func (c *ConnChecker) Close() error {
 	c.cancel()
+
 	return c.Conn.Close()
 }
 
@@ -97,6 +111,7 @@ func (c *ConnChecker) SetDeadline(t time.Time) error {
 	err := c.Conn.SetDeadline(t)
 	c.deadline = t
 	c.cbr <- br
+
 	return err
 }
 
@@ -105,5 +120,6 @@ func (c *ConnChecker) SetReadDeadline(t time.Time) error {
 	err := c.Conn.SetReadDeadline(t)
 	c.deadline = t
 	c.cbr <- br
+
 	return err
 }

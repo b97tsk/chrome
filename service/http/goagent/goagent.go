@@ -50,13 +50,16 @@ func (Service) Run(ctx service.Context) {
 		ctx.Logger.Print(err)
 		return
 	}
+
 	ctx.Logger.Printf("listening on %v", ln.Addr())
 	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
+
 	go func() {
 		var opts Options
+
 		ok := true
 		for ok {
 			select {
@@ -64,10 +67,12 @@ func (Service) Run(ctx service.Context) {
 			case optsOut <- opts:
 			}
 		}
+
 		close(optsOut)
 	}()
 
 	listener := NewListener(ln, ctx.Done())
+
 	handler := NewHandler(ctx, listener, optsOut)
 	defer handler.CloseIdleConnections()
 
@@ -75,20 +80,24 @@ func (Service) Run(ctx service.Context) {
 		server     *http.Server
 		serverDown chan error
 	)
+
 	initialize := func() {
 		if server != nil {
 			return
 		}
+
 		server = &http.Server{
 			Handler:      handler,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
 		}
 		serverDown = make(chan error, 1)
+
 		go func() {
 			serverDown <- server.Serve(listener)
 			close(serverDown)
 		}()
 	}
+
 	defer func() {
 		if server != nil {
 			server.Shutdown(context.Background())
@@ -106,13 +115,17 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.dialer = old.dialer
+
 				if !isTwoAppIDListsIdentical(new.AppIDList, old.AppIDList) {
 					handler.SetAppIDList(new.AppIDList)
 				}
+
 				if !new.Proxy.Equals(old.Proxy) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
+
 				optsIn <- new
+
 				initialize()
 			}
 		}
@@ -124,6 +137,7 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
 		return nil, err
 	}
+
 	return opts, nil
 }
 
@@ -141,25 +155,31 @@ func NewListener(ln net.Listener, done <-chan struct{}) *Listener {
 
 func (l *Listener) init() {
 	lane := make(chan net.Conn, 64)
+
 	l.mu.Lock()
 	l.lane = lane
 	l.mu.Unlock()
+
 	go func() {
 		defer func() {
 			l.mu.Lock()
 			l.lane = nil
 			l.mu.Unlock()
+
 			close(lane)
+
 			for conn := range lane {
 				conn.Close()
 			}
 		}()
+
 		for {
 			conn, err := l.ln.Accept()
 			if err != nil {
 				if isTemporary(err) {
 					continue
 				}
+
 				return
 			}
 			lane <- conn
@@ -219,6 +239,7 @@ func NewHandler(ctx service.Context, ln *Listener, opts <-chan Options) *Handler
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-opts
+
 		return h.ctx.Manager.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
 	}
 
@@ -261,6 +282,7 @@ func (h *Handler) SetAppIDList(appIDList []string) {
 			if i != 0 {
 				h.appIDList[0], h.appIDList[i] = h.appIDList[i], h.appIDList[0]
 			}
+
 			break
 		}
 	}
@@ -272,16 +294,20 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
 			return
 		}
+
 		conn, _, err := rw.(http.Hijacker).Hijack()
 		if err != nil {
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
+
 		requestURI := req.RequestURI
+
 		httpVersion := "HTTP/1.0"
 		if req.ProtoAtLeast(1, 1) {
 			httpVersion = "HTTP/1.1"
 		}
+
 		go func() {
 			_, port, err := net.SplitHostPort(requestURI)
 			if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
@@ -289,9 +315,12 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if _, err := conn.Write([]byte(responseString)); err != nil {
 					h.ctx.Logger.Printf("write: %v", err)
 					conn.Close()
+
 					return
 				}
+
 				h.ln.Inject(conn)
+
 				return
 			}
 
@@ -305,6 +334,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 				if _, err := local.Write([]byte(responseString)); err != nil {
 					h.ctx.Logger.Printf("write: %v", err)
 				}
+
 				return
 			}
 			defer remote.Close()
@@ -317,6 +347,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			service.Relay(local, remote)
 		}()
+
 		return
 	}
 
@@ -327,9 +358,11 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		} else {
 			req.URL.Scheme = "http"
 		}
+
 		if req.Host == "" && req.TLS != nil {
 			req.Host = req.TLS.ServerName
 		}
+
 		if req.URL.Host == "" {
 			req.URL.Host = req.Host
 		}
@@ -372,14 +405,17 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			return nil, fmt.Errorf("encodeRequest: %v", err)
 		}
+
 		appID := appIDFromRequest(request)
 
 		resp, err := h.tr.RoundTrip(request)
 		if err != nil {
 			h.ctx.Logger.Printf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
+
 			if i+1 == NRetries || isRequestCanceled(req) {
 				return nil, err
 			}
+
 			continue
 		}
 
@@ -387,32 +423,40 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 			if i+1 == NRetries || isRequestCanceled(req) {
 				return resp, nil
 			}
+
 			if resp.StatusCode == http.StatusServiceUnavailable {
 				h.ctx.Logger.Printf("(%v) over quota", appID)
 				h.putBadAppID(appID)
 				resp.Body.Close()
+
 				continue
 			}
+
 			switch resp.StatusCode {
 			case http.StatusFound, http.StatusNotFound,
 				http.StatusMethodNotAllowed, http.StatusBadGateway:
 				resp.Body.Close()
 				continue
 			}
+
 			return resp, nil
 		}
 
 		response, err := h.decodeResponse(resp)
 		if err != nil {
 			resp.Body.Close()
+
 			return nil, fmt.Errorf("decodeResponse: %v", err)
 		}
+
 		if i+1 == NRetries || isRequestCanceled(req) {
 			return response, nil
 		}
+
 		if response.StatusCode != http.StatusBadGateway {
 			return response, nil
 		}
+
 		response.Body.Close()
 	}
 	panic("should not happen")
@@ -427,21 +471,25 @@ func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 	if contentRange == nil {
 		return // Should not happen.
 	}
+
 	contentRangeFirst, _ := strconv.ParseInt(contentRange[1], 10, 64)
 	contentRangeLast, _ := strconv.ParseInt(contentRange[2], 10, 64)
 	contentLength, _ := strconv.ParseInt(contentRange[3], 10, 64)
 
-	requestRange := reRange.FindStringSubmatch(req.Header.Get("Range"))
 	requestRangeFirst, requestRangeLast := int64(0), int64(-1)
+
+	requestRange := reRange.FindStringSubmatch(req.Header.Get("Range"))
 	if requestRange != nil {
 		requestRangeFirst, _ = strconv.ParseInt(requestRange[1], 10, 64)
 		if requestRange[1] != "" {
 			requestRangeLast, _ = strconv.ParseInt(requestRange[2], 10, 64)
 		}
 	}
+
 	if requestRangeFirst != contentRangeFirst {
 		return // Should not happen.
 	}
+
 	if requestRangeLast < 0 {
 		requestRangeLast = contentLength - 1
 	}
@@ -449,6 +497,7 @@ func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 	if requestRangeLast < contentRangeLast {
 		return // Should not happen.
 	}
+
 	if requestRangeLast == contentRangeLast {
 		return // Exactly matched, very well.
 	}
@@ -458,6 +507,7 @@ func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 	resp.Body = newAutoRangeBody(h, req, &shallowCopy, bodySize, requestRangeFirst, requestRangeLast)
 	resp.ContentLength = requestRangeLast - requestRangeFirst + 1
 	resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+
 	if requestRange != nil {
 		resp.Header.Set("Content-Range", fmt.Sprintf("bytes %v-%v/%v", requestRangeFirst, requestRangeLast, contentLength))
 	} else {
@@ -465,15 +515,18 @@ func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 		resp.Status = "200 OK"
 		resp.StatusCode = http.StatusOK
 	}
+
 	return true
 }
 
 func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 	var b bytes.Buffer
+
 	w, err := flate.NewWriter(&b, flate.BestCompression)
 	if err != nil {
 		return nil, err
 	}
+
 	fmt.Fprintf(w, "%v %v HTTP/1.1\r\n", req.Method, req.URL)
 	req.Header.WriteSubset(w, reqWriteExcludeHeader)
 	w.Close()
@@ -488,6 +541,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		buffers = append(buffers, bytes)
 	}
 
@@ -539,6 +593,7 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 
 	body, _ := ioutil.ReadAll(response.Body)
 	response.Body.Close()
+
 	if len(body) > 0 {
 		response.Body = struct {
 			io.Reader
@@ -550,6 +605,7 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 
 	if cookies, ok := response.Header["Set-Cookie"]; ok && len(cookies) == 1 {
 		var parts []string
+
 		for i, c := range strings.Split(cookies[0], ", ") {
 			if i == 0 || strings.Contains(strings.Split(c, ";")[0], "=") {
 				parts = append(parts, c)
@@ -557,8 +613,10 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 				parts[len(parts)-1] += ", " + c
 			}
 		}
+
 		if len(parts) > 1 {
 			response.Header.Del("Set-Cookie")
+
 			for _, c := range parts {
 				response.Header.Add("Set-Cookie", c)
 			}
@@ -571,12 +629,15 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 func (h *Handler) getAppID(req *http.Request) string {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
+
 	if len(h.appIDList) == 0 {
 		return ""
 	}
+
 	if req.Header.Get("Range") == "" {
 		return h.appIDList[0]
 	}
+
 	return h.appIDList[rand.Intn(len(h.appIDList))]
 }
 
@@ -591,6 +652,7 @@ func (h *Handler) putBadAppID(badAppID string) {
 			appIDList = append(appIDList, appID)
 		}
 	}
+
 	if len(appIDList) == len(h.appIDList) {
 		return // Not found.
 	}
@@ -631,6 +693,7 @@ func newAutoRangeBody(
 		if size > perRequestSize {
 			size = perRequestSize
 		}
+
 		reqlist = append(reqlist, &autoRangeRequest{
 			h:          h,
 			req:        req,
@@ -653,6 +716,7 @@ func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 	if b.err != nil {
 		return 0, b.err
 	}
+
 	for i, req := range b.reqlist {
 		n, err = req.Read(p)
 		if err == nil {
@@ -660,28 +724,36 @@ func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 				// Start next range request in advance.
 				b.reqlist[i+1].Init()
 			}
+
 			if i > 0 {
 				// Remove finished requests.
 				b.reqlist = b.reqlist[i:]
 			}
+
 			return
 		}
+
 		if err != io.EOF {
 			b.err = err
 			return
 		}
+
 		if n > 0 {
 			if i+1 == len(b.reqlist) { // Final request?
 				b.err = io.EOF
 				return
 			}
+
 			// No, we have more.
 			// Remove finished requests.
 			b.reqlist = b.reqlist[i+1:]
+
 			return n, nil
 		}
 	}
+
 	b.err = io.EOF
+
 	return 0, b.err
 }
 
@@ -713,6 +785,7 @@ func (r *autoRangeRequest) init() {
 	r.done = make(chan struct{})
 	r.buffers = make(chan []byte, 1)
 	r.startTime = time.Now()
+
 	go func() {
 		defer close(r.done)
 
@@ -738,8 +811,10 @@ func (r *autoRangeRequest) init() {
 							b = buf[:len(buf)+len(b)]
 						}
 					}
+
 					buf = buf[n:]
 				}
+
 				if err != nil {
 					break
 				}
@@ -749,10 +824,12 @@ func (r *autoRangeRequest) init() {
 		if r.resp != nil { // Handle first response.
 			readResponse(r.resp)
 			r.resp.Body.Close()
+
 			if len(buf) == 0 {
 				r.err.Store(&io.EOF)
 				return
 			}
+
 			if isRequestCanceled(r.req) {
 				r.err.Store(&context.Canceled)
 				return
@@ -760,37 +837,49 @@ func (r *autoRangeRequest) init() {
 		}
 
 		const NRetries = 3
+
 		req := copyRequestAndHeader(r.req)
+
 		for i := 0; i < NRetries; i++ {
 			rangeFirst, rangeLast := r.rangeLast-int64(len(buf))+1, r.rangeLast
 			req.Header.Set("Range", fmt.Sprintf("bytes=%v-%v", rangeFirst, rangeLast))
+
 			resp, err := r.h.roundTrip(req)
 			if err != nil {
 				if i+1 == NRetries || isRequestCanceled(req) {
 					r.err.Store(&err)
 					return
 				}
+
 				continue
 			}
+
 			if resp.StatusCode != http.StatusPartialContent {
 				resp.Body.Close()
+
 				if i+1 == NRetries || isRequestCanceled(req) {
 					err := errors.New(resp.Status)
 					r.err.Store(&err)
+
 					return
 				}
+
 				continue
 			}
+
 			readResponse(resp)
 			resp.Body.Close()
+
 			if len(buf) == 0 {
 				r.err.Store(&io.EOF)
 				return
 			}
+
 			if isRequestCanceled(req) {
 				r.err.Store(&context.Canceled)
 				return
 			}
+
 			i = -1 // Start over.
 		}
 
@@ -808,25 +897,31 @@ func (r *autoRangeRequest) Read(p []byte) (n int, err error) {
 				reqBufferPool.Put(r.buf)
 				r.buf = nil
 			}
+
 			return // Result in an error.
 		}
+
 		if len(r.buffers) > 0 {
 			buf := <-r.buffers
 			n = copy(p, buf)
 			r.readSize += int64(n)
+
 			if n < len(buf) {
 				r.buffers <- buf[n:]
 				return n, nil
 			}
 		}
+
 		if r.buf != nil {
 			reqBufferPool.Put(r.buf)
 			r.buf = nil
 		}
+
 		return // EOF
 	case buf := <-r.buffers:
 		n = copy(p, buf)
 		r.readSize += int64(n)
+
 		if n < len(buf) {
 			for b := buf[n:]; b != nil; {
 				select {
@@ -837,6 +932,7 @@ func (r *autoRangeRequest) Read(p []byte) (n int, err error) {
 				}
 			}
 		}
+
 		return
 	}
 }
@@ -850,8 +946,10 @@ func (r *autoRangeRequest) TimeLeft() float64 {
 	if readTime < time.Second {
 		return math.MaxFloat64
 	}
+
 	sizeLeft := (r.rangeLast - r.rangeFirst + 1) - r.readSize
 	timeLeft := readTime.Seconds() * (float64(sizeLeft) / float64(r.readSize))
+
 	return timeLeft // in seconds
 }
 
@@ -868,20 +966,25 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 	if body, ok := req.Body.(*bytesReadCloser); ok {
 		return body.Bytes, nil
 	}
+
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		return nil, err
 	}
+
 	req.Body = &bytesReadCloser{body, ioutil.NopCloser(bytes.NewReader(body))}
+
 	return body, nil
 }
 
 func copyRequestAndHeader(req *http.Request) *http.Request {
 	new := *req
 	new.Header = make(http.Header)
+
 	for k, v := range req.Header {
 		new.Header[k] = v
 	}
+
 	return &new
 }
 
@@ -903,6 +1006,7 @@ func isTemporary(err error) bool {
 	e, ok := err.(interface {
 		Temporary() bool
 	})
+
 	return ok && e.Temporary()
 }
 
@@ -910,11 +1014,13 @@ func isTwoAppIDListsIdentical(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
+
 	for i, v := range a {
 		if v != b[i] {
 			return false
 		}
 	}
+
 	return true
 }
 

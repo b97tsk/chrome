@@ -83,18 +83,21 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	if strings.TrimPrefix(name, "alias") != name {
 		return nil // If name starts with "alias", silently ignores it.
 	}
+
 	fields := strings.SplitN(name, "|", 3)
 	if len(fields) != 3 {
 		return fmt.Errorf("%v: ignored", name)
 	}
 
 	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
+
 	service, ok := man.services[serviceName]
 	if !ok {
 		return fmt.Errorf("%v: service not found", name)
 	}
 
 	text, _ := yaml.Marshal(data)
+
 	opts, err := service.UnmarshalOptions(text)
 	if err != nil {
 		return fmt.Errorf("%v: parse options: %w", name, err)
@@ -105,6 +108,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 		ctx1, done := context.WithCancel(context.Background())
 		ctx2, cancel := context.WithCancel(ctx1)
 		copts := make(chan interface{})
+
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
@@ -113,13 +117,17 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 				}
 			}()
 			defer done()
+
 			logger := man.Logger(serviceName)
 			service.Run(Context{ctx2, listenAddr, man, logger, copts})
 		}()
+
 		job = Job{ctx1, serviceName, cancel, copts}
 		man.jobs[name] = job
 	}
+
 	job.SendOpts(opts)
+
 	return nil
 }
 
@@ -139,6 +147,7 @@ func (man *Manager) Load(r io.Reader) {
 	dec.SetStrict(true)
 
 	logger := man.Logger("manager")
+
 	if err := dec.Decode(&config); err != nil {
 		logger.Printf("Load: %v", err)
 		return
@@ -155,6 +164,7 @@ func (man *Manager) Load(r io.Reader) {
 			head, tail := name[:r[0]], name[r[1]:]
 			s := reNumberPlus.FindStringSubmatch(name[r[0]:r[1]])
 			x, _ := strconv.Atoi(s[1])
+
 			if s[2] != "" {
 				n, _ := strconv.Atoi(s[2])
 				for i := 0; i <= n; i++ {
@@ -167,6 +177,7 @@ func (man *Manager) Load(r io.Reader) {
 					x++
 				}
 			}
+
 			delete(config.Jobs, name)
 		}
 	}
@@ -175,10 +186,12 @@ func (man *Manager) Load(r io.Reader) {
 		if _, ok := config.Jobs[name]; ok {
 			continue
 		}
+
 		job.Cancel()
 		<-job.Done()
 		delete(man.jobs, name)
 	}
+
 	for name, data := range config.Jobs {
 		if err := man.setOptions(name, data); err != nil {
 			logger.Printf("Load: %v", err)
@@ -191,8 +204,10 @@ func (man *Manager) LoadFile(name string) {
 	if err != nil {
 		logger := man.Logger("manager")
 		logger.Printf("LoadFile: %v", err)
+
 		return
 	}
+
 	man.Load(file)
 	file.Close()
 }
@@ -204,6 +219,7 @@ func (man *Manager) Shutdown() {
 	for _, job := range man.jobs {
 		job.Cancel()
 	}
+
 	for _, job := range man.jobs {
 		<-job.Done()
 	}
