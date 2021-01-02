@@ -1,7 +1,9 @@
-package matchset
+package matchset_test
 
 import (
 	"testing"
+
+	"github.com/b97tsk/chrome/internal/matchset"
 )
 
 func TestMatchSet(t *testing.T) {
@@ -91,7 +93,7 @@ func TestMatchSet(t *testing.T) {
 		{"co.uk", "co.[^0-9][^0-9]", true},
 		{"co.uk", "co.[^0-9][^0-9]*", true},
 
-		// buggy, missing final ']'
+		// missing final ']'
 		{"co.uk", "co.[uk][uk", true},
 		{"co.uk", "co.[^0-9][^0-9", true},
 
@@ -120,7 +122,7 @@ func TestMatchSet(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		var set MatchSet
+		var set matchset.MatchSet
 
 		set.Add(tt.pattern, struct{}{})
 

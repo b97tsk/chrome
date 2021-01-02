@@ -393,8 +393,7 @@ func createInstance(opts Options) (*Instance, error) {
 		}
 	}
 
-	switch opts.Transport {
-	case "kcp":
+	if opts.Transport == "kcp" {
 		if opts.KCP.Header == "" {
 			opts.KCP.Header = "none"
 		}

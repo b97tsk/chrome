@@ -85,6 +85,7 @@ func (d *httpDialer) dialTCP(ctx context.Context, network, addr string) (net.Con
 
 		return nil, fmt.Errorf("proxy/http: dial %v over %v: %w", addr, d.Server, err)
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		conn.Close()

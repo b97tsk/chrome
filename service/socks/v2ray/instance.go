@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/golang/protobuf/proto"
+	"google.golang.org/protobuf/proto"
 	"v2ray.com/core"
 	"v2ray.com/core/common/net"
 	"v2ray.com/core/infra/conf"
+
+	// Import for side-effects.
 	_ "v2ray.com/core/main/distro/all"
 )
 

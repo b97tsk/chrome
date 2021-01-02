@@ -3,6 +3,8 @@ package pprof
 import (
 	"net"
 	"net/http"
+
+	// Import for side-effects.
 	_ "net/http/pprof"
 
 	"github.com/b97tsk/chrome/service"

@@ -9,7 +9,12 @@ import (
 	"github.com/b97tsk/chrome/internal/proxy"
 )
 
-func (man *Manager) Dial(ctx context.Context, dialer proxy.Dialer, network, address string, timeout time.Duration) (conn net.Conn, err error) {
+func (man *Manager) Dial(
+	ctx context.Context,
+	dialer proxy.Dialer,
+	network, address string,
+	timeout time.Duration,
+) (conn net.Conn, err error) {
 	return man.dial(ctx, dialer, network, address, timeout)
 }
 
@@ -21,7 +26,12 @@ func (d *dialingService) setDialTimeout(timeout time.Duration) {
 	atomic.StoreInt64(&d.dialTimeout, int64(timeout))
 }
 
-func (d *dialingService) dial(ctx context.Context, dialer proxy.Dialer, network, address string, timeout time.Duration) (conn net.Conn, err error) {
+func (d *dialingService) dial(
+	ctx context.Context,
+	dialer proxy.Dialer,
+	network, address string,
+	timeout time.Duration,
+) (conn net.Conn, err error) {
 	if dialer == nil {
 		dialer = proxy.Direct
 	}
