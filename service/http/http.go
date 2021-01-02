@@ -192,12 +192,12 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Print(err)
+		ctx.Logger.ERROR.Print(err)
 		return
 	}
 
-	ctx.Logger.Printf("listening on %v", ln.Addr())
-	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
+	ctx.Logger.INFO.Printf("listening on %v", ln.Addr())
+	defer ctx.Logger.INFO.Printf("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -296,7 +296,7 @@ func (Service) Run(ctx service.Context) {
 						}
 
 						if err != nil {
-							ctx.Logger.Print(err)
+							ctx.Logger.ERROR.Print(err)
 						}
 					}
 
@@ -315,7 +315,7 @@ func (Service) Run(ctx service.Context) {
 						if watcher != nil {
 							err := watcher.Add(r.absFile)
 							if err != nil {
-								ctx.Logger.Printf("watcher: %v", err)
+								ctx.Logger.ERROR.Printf("watcher: %v", err)
 							}
 						}
 
@@ -334,10 +334,10 @@ func (Service) Run(ctx service.Context) {
 						if !didRecycle {
 							switch err := new.routes[i].Init(); err {
 							case nil:
-								ctx.Logger.Printf("loaded %v", r.File)
+								ctx.Logger.INFO.Printf("loaded %v", r.File)
 							case errNotModified:
 							default:
-								ctx.Logger.Printf("fatal: %v", err)
+								ctx.Logger.ERROR.Printf("fatal: %v", err)
 								return // Consider fatal here.
 							}
 						}
@@ -368,7 +368,7 @@ func (Service) Run(ctx service.Context) {
 				}
 			}
 		case err := <-watchErrors:
-			ctx.Logger.Printf("watcher: %v", err)
+			ctx.Logger.WARN.Printf("watcher: %v", err)
 		case name := <-fileChanges:
 			routesChanged := false
 
@@ -377,12 +377,12 @@ func (Service) Run(ctx service.Context) {
 				if r.absFile == name {
 					switch err := r.Init(); err {
 					case nil:
-						ctx.Logger.Printf("loaded %v", r.File)
+						ctx.Logger.INFO.Printf("loaded %v", r.File)
 
 						routesChanged = true
 					case errNotModified:
 					default:
-						ctx.Logger.Printf("reload: %v", err)
+						ctx.Logger.ERROR.Printf("reload: %v", err)
 					}
 				}
 			}
@@ -428,7 +428,7 @@ func NewHandler(ctx service.Context, opts <-chan Options) *Handler {
 			} else {
 				for _, r := range opts.routes {
 					if r.Match(addr) {
-						h.ctx.Logger.Printf("%v matches %v", r.File, addr)
+						h.ctx.Logger.INFO.Printf("%v matches %v", r.File, addr)
 						opts.dialer = r.getDialer()
 						opts.matches.Store(addr, r)
 

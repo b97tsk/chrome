@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"regexp"
@@ -27,7 +26,7 @@ type Context struct {
 	context.Context
 	ListenAddr string
 	Manager    *Manager
-	Logger     *log.Logger
+	Logger     Logger
 	Opts       <-chan interface{}
 }
 
@@ -113,7 +112,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 			defer func() {
 				if err := recover(); err != nil {
 					logger := man.Logger("manager")
-					logger.Printf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
+					logger.ERROR.Printf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 			}()
 			defer done()
@@ -136,8 +135,11 @@ func (man *Manager) Load(r io.Reader) {
 	defer man.mu.Unlock()
 
 	var config struct {
-		Logfile String `yaml:"logging"`
-		Dial    struct {
+		Log struct {
+			File  String
+			Level logLevel
+		}
+		Dial struct {
 			Timeout time.Duration
 		}
 		Jobs map[string]interface{} `yaml:",inline"`
@@ -149,14 +151,15 @@ func (man *Manager) Load(r io.Reader) {
 	logger := man.Logger("manager")
 
 	if err := dec.Decode(&config); err != nil {
-		logger.Printf("Load: %v", err)
+		logger.ERROR.Printf("Load: %v", err)
 		return
 	}
 
-	if err := man.setLogFile(string(config.Logfile)); err != nil {
-		logger.Printf("Load: %v", err)
+	if err := man.setLogFile(string(config.Log.File)); err != nil {
+		logger.ERROR.Printf("Load: %v", err)
 	}
 
+	man.setLogLevel(config.Log.Level)
 	man.setDialTimeout(config.Dial.Timeout)
 
 	for name, data := range config.Jobs {
@@ -194,7 +197,7 @@ func (man *Manager) Load(r io.Reader) {
 
 	for name, data := range config.Jobs {
 		if err := man.setOptions(name, data); err != nil {
-			logger.Printf("Load: %v", err)
+			logger.ERROR.Printf("Load: %v", err)
 		}
 	}
 }
@@ -203,7 +206,7 @@ func (man *Manager) LoadFile(name string) {
 	file, err := os.Open(name)
 	if err != nil {
 		logger := man.Logger("manager")
-		logger.Printf("LoadFile: %v", err)
+		logger.ERROR.Printf("LoadFile: %v", err)
 
 		return
 	}

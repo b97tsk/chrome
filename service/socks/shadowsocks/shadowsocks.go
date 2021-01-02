@@ -32,12 +32,12 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Print(err)
+		ctx.Logger.ERROR.Print(err)
 		return
 	}
 
-	ctx.Logger.Printf("listening on %v", ln.Addr())
-	defer ctx.Logger.Printf("stopped listening on %v", ln.Addr())
+	ctx.Logger.INFO.Printf("listening on %v", ln.Addr())
+	defer ctx.Logger.INFO.Printf("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 
@@ -67,8 +67,7 @@ func (Service) Run(ctx service.Context) {
 
 		initialized = true
 
-		man := ctx.Manager
-		man.ServeListener(ln, func(c net.Conn) {
+		ctx.Manager.ServeListener(ln, func(c net.Conn) {
 			opts, ok := <-optsOut
 			if !ok || opts.cipher == nil {
 				return
@@ -77,15 +76,15 @@ func (Service) Run(ctx service.Context) {
 			c = opts.cipher.StreamConn(c)
 			addr, err := socks.ReadAddr(c)
 			if err != nil {
-				ctx.Logger.Printf("read addr: %v", err)
+				ctx.Logger.DEBUG.Printf("read addr: %v", err)
 				return
 			}
 
-			local, ctx := service.NewConnChecker(c)
+			local, localCtx := service.NewConnChecker(c)
 
-			remote, err := man.Dial(ctx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
+			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				// ctx.Logger.Print(err)
+				ctx.Logger.TRACE.Print(err)
 				return
 			}
 			defer remote.Close()
@@ -107,7 +106,7 @@ func (Service) Run(ctx service.Context) {
 				if new.Method != old.Method || new.Password != old.Password {
 					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
-						ctx.Logger.Printf("fatal: pick cipher: %v", err)
+						ctx.Logger.ERROR.Printf("fatal: pick cipher: %v", err)
 						return
 					}
 
