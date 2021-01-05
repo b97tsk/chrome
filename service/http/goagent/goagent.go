@@ -374,6 +374,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		http.Error(rw, err.Error(), http.StatusBadGateway)
 		return
 	}
+	defer resp.Body.Close()
 
 	h.autoRange(req, resp)
 
@@ -391,10 +392,8 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	rw.WriteHeader(resp.StatusCode)
-	_, err = io.Copy(rw, resp.Body)
-	resp.Body.Close()
 
-	if err != nil {
+	if _, err := io.Copy(rw, resp.Body); err != nil {
 		h.ctx.Logger.DEBUG.Printf("(%v) RECV %v: %v", appID, req.URL, err)
 	}
 }
@@ -404,7 +403,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 	for i := 0; i < NRetries; i++ {
 		request, err := h.encodeRequest(req)
 		if err != nil {
-			return nil, fmt.Errorf("encodeRequest: %w", err)
+			return nil, fmt.Errorf("roundTrip: %w", err)
 		}
 
 		appID := appIDFromRequest(request)
@@ -414,19 +413,20 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 			h.ctx.Logger.DEBUG.Printf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
 
 			if i+1 == NRetries || isRequestCanceled(req) {
-				return nil, err
+				return nil, fmt.Errorf("roundTrip: %w", err)
 			}
 
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
+			h.ctx.Logger.DEBUG.Printf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
+
 			if i+1 == NRetries || isRequestCanceled(req) {
 				return resp, nil
 			}
 
 			if resp.StatusCode == http.StatusServiceUnavailable {
-				h.ctx.Logger.DEBUG.Printf("(%v) over quota", appID)
 				h.putBadAppID(appID)
 				resp.Body.Close()
 
@@ -447,7 +447,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			resp.Body.Close()
 
-			return nil, fmt.Errorf("decodeResponse: %w", err)
+			return nil, fmt.Errorf("roundTrip: %w", err)
 		}
 
 		if i+1 == NRetries || isRequestCanceled(req) {
@@ -460,6 +460,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		response.Body.Close()
 	}
+
 	panic("should not happen")
 }
 
@@ -525,7 +526,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 
 	w, err := flate.NewWriter(&b, flate.BestCompression)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encodeRequest: %w", err)
 	}
 
 	fmt.Fprintf(w, "%v %v HTTP/1.1\r\n", req.Method, req.URL)
@@ -553,7 +554,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 
 	appID := h.getAppID(req)
 	if appID == "" {
-		return nil, errors.New("no appid")
+		return nil, errors.New("encodeRequest: no appid")
 	}
 
 	fetchserver := &url.URL{
@@ -579,17 +580,17 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 	var hdrLen uint16
 	if err := binary.Read(resp.Body, binary.BigEndian, &hdrLen); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decodeResponse: %w", err)
 	}
 
 	hdrBuf := make([]byte, hdrLen)
 	if _, err := io.ReadFull(resp.Body, hdrBuf); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decodeResponse: %w", err)
 	}
 
 	response, err := http.ReadResponse(bufio.NewReader(flate.NewReader(bytes.NewReader(hdrBuf))), resp.Request)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decodeResponse: %w", err)
 	}
 
 	body, _ := ioutil.ReadAll(response.Body)
@@ -970,7 +971,7 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 
 	body, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("readRequestBody: %w", err)
 	}
 
 	req.Body = &bytesReadCloser{body, ioutil.NopCloser(bytes.NewReader(body))}
