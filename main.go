@@ -13,7 +13,7 @@ import (
 	"github.com/b97tsk/chrome/service/http"
 	"github.com/b97tsk/chrome/service/http/goagent"
 	"github.com/b97tsk/chrome/service/http/httpfs"
-	"github.com/b97tsk/chrome/service/pprof"
+	"github.com/b97tsk/chrome/service/http/pprof"
 	"github.com/b97tsk/chrome/service/socks"
 	"github.com/b97tsk/chrome/service/socks/shadowsocks"
 	"github.com/b97tsk/chrome/service/socks/v2ray"
