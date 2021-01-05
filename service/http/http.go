@@ -313,7 +313,7 @@ func (Service) Run(ctx service.Context) {
 						new.routes[i] = &route{RouteInfo: r}
 
 						if watcher != nil {
-							err := watcher.Add(r.absFile)
+							err := watcher.Add(filepath.Dir(r.absFile))
 							if err != nil {
 								ctx.Logger.ERROR.Printf("watcher: %v", err)
 							}
@@ -353,7 +353,8 @@ func (Service) Run(ctx service.Context) {
 				initialize()
 			}
 		case e := <-watchEvents:
-			if e.Op&fsnotify.Write != 0 {
+			const Mask = fsnotify.Create | fsnotify.Rename | fsnotify.Write
+			if e.Op&Mask != 0 {
 				timer := delayTimers[e.Name]
 				if timer == nil {
 					timer = time.AfterFunc(time.Second, func() {
