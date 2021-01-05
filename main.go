@@ -45,9 +45,6 @@ func Main() (code int) {
 		configFile = abs
 	}
 
-	configDir := filepath.Dir(configFile)
-	os.Setenv("ConfigDir", configDir)
-
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -56,7 +53,7 @@ func Main() (code int) {
 	defer watcher.Close()
 
 	if configFile != "-" {
-		err = watcher.Add(configDir)
+		err = watcher.Add(filepath.Dir(configFile))
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1

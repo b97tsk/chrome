@@ -25,7 +25,7 @@ If config file is `-`, chrome will try to load config from standard input.
 
 ```yaml
 log:
-  file: ${ConfigDir}/chrome.log # Write log messages to this file.
+  file: chrome.log # Write log messages to this file.
   level: INFO # Log level, alternatives: ERROR, WARN, DEBUG, TRACE.
 
 alias#1: # Field names start with `alias` are ignored.
