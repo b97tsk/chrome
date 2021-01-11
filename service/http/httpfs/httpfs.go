@@ -10,7 +10,7 @@ import (
 )
 
 type Options struct {
-	Dir service.String
+	Dir service.EnvString
 
 	handler http.Handler
 }

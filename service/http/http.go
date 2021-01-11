@@ -39,7 +39,7 @@ type Options struct {
 }
 
 type RouteInfo struct {
-	File     service.String
+	File     service.EnvString
 	Proxy    service.ProxyChain `yaml:"over"`
 	absFile  string
 	hashCode uint32

@@ -136,7 +136,7 @@ func (man *Manager) Load(r io.Reader) {
 
 	var config struct {
 		Log struct {
-			File  String
+			File  EnvString
 			Level logLevel
 		}
 		Dial struct {
