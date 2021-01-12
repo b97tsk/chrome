@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"net/url"
+	"strings"
 
 	"github.com/b97tsk/chrome/internal/proxy"
 )
@@ -48,6 +49,11 @@ func (pc ProxyChain) NewDialer() (proxy.Dialer, error) {
 func (pc *ProxyChain) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	var rawurl string
 	if err := unmarshal(&rawurl); err == nil {
+		if strings.EqualFold(rawurl, "DIRECT") {
+			pc.s = nil
+			return nil
+		}
+
 		u, err := url.Parse(rawurl)
 		if err != nil {
 			return errors.New("invalid proxy: " + rawurl)
@@ -64,6 +70,10 @@ func (pc *ProxyChain) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		pc.s = nil
 
 		for _, rawurl := range slice {
+			if strings.EqualFold(rawurl, "DIRECT") {
+				continue
+			}
+
 			u, err := url.Parse(rawurl)
 			if err != nil {
 				return errors.New("invalid proxy: " + rawurl)
