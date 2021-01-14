@@ -17,7 +17,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/b97tsk/chrome/service"
@@ -52,8 +51,6 @@ type Options struct {
 	Dial struct {
 		Timeout time.Duration
 	}
-
-	Debug bool
 
 	stats statsINFO
 }
@@ -162,8 +159,6 @@ func (Service) Run(ctx service.Context) {
 
 		initialized = true
 
-		var seqno int32
-
 		ctx.Manager.ServeListener(ln, func(c net.Conn) {
 			opts, ok := <-optsOut
 			if !ok || opts.stats.ins == nil {
@@ -192,11 +187,6 @@ func (Service) Run(ctx service.Context) {
 				default:
 				}
 			})
-
-			if opts.Debug {
-				prefix := fmt.Sprintf("[v2ray] (%v) ", atomic.AddInt32(&seqno, 1))
-				remote = service.NewConnLogger(remote, prefix)
-			}
 
 			service.Relay(local, remote)
 		})
@@ -428,17 +418,17 @@ func parseURL(opts *Options) error {
 		return parseVMessURL(opts)
 	}
 
-	return fmt.Errorf(`unknown protocol in url "%v"`, opts.URL)
+	return fmt.Errorf("unknown scheme in url %v", opts.URL)
 }
 
 func parseTrojanURL(opts *Options) error {
 	u, err := url.Parse(opts.URL)
 	if err != nil {
-		return fmt.Errorf(`parse trojan url "%v": %w`, opts.URL, err)
+		return fmt.Errorf("parse trojan url %v: %w", opts.URL, err)
 	}
 
 	if u.User == nil {
-		return fmt.Errorf(`invalid trojan url "%v"`, opts.URL)
+		return fmt.Errorf("invalid trojan url %v", opts.URL)
 	}
 
 	opts.Type = "trojan+tcp+tls"
@@ -461,7 +451,7 @@ func parseVMessURL(opts *Options) error {
 
 	data, err := enc.DecodeString(b64)
 	if err != nil {
-		return fmt.Errorf(`decode vmess url "%v": %w`, opts.URL, err)
+		return fmt.Errorf("decode vmess url %v: %w", opts.URL, err)
 	}
 
 	var config struct {
@@ -481,7 +471,7 @@ func parseVMessURL(opts *Options) error {
 	}
 
 	if err := json.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf(`unmarshal decoded vmess url "%v": %w`, opts.URL, err)
+		return fmt.Errorf("unmarshal decoded vmess url %v: %w", opts.URL, err)
 	}
 
 	if unquote(string(config.Version)) == "" {
@@ -512,7 +502,7 @@ func parseVMessURL(opts *Options) error {
 		transport = "tcp"
 
 		if config.Type != "" && config.Type != "none" {
-			return fmt.Errorf(`unknown type field "%v" in vmess url "%v"`, config.Type, opts.URL)
+			return fmt.Errorf("unknown type field in vmess url %v: %v", opts.URL, config.Type)
 		}
 
 		if config.TLS == "tls" {
@@ -534,7 +524,7 @@ func parseVMessURL(opts *Options) error {
 
 		opts.WS.Path = config.Path
 	default:
-		return fmt.Errorf(`unknown net field "%v" in vmess url "%v"`, config.Net, opts.URL)
+		return fmt.Errorf("unknown net field in vmess url %v: %v", opts.URL, config.Net)
 	}
 
 	opts.Type = "vmess+" + transport
