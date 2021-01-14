@@ -27,14 +27,14 @@ const v2rayTemplateBody = `
   },
   "outbounds": [
     {
-{{- if eq $protocol "freedom" }}
+{{- if eq $protocol "FREEDOM" }}
 
 {{- with .FREEDOM }}
       "protocol": "freedom",
       "settings": {{ json . }},
 {{- end }}{{/* with .FREEDOM */}}
 
-{{- else if eq $protocol "trojan" }}
+{{- else if eq $protocol "TROJAN" }}
 
 {{- with .TROJAN }}
       "protocol": "trojan",
@@ -49,7 +49,7 @@ const v2rayTemplateBody = `
       },
 {{- end }}{{/* with .TROJAN */}}
 
-{{- else if eq $protocol "vmess" }}
+{{- else if eq $protocol "VMESS" }}
 
 {{- with .VMESS }}
       "protocol": "vmess",
@@ -72,7 +72,7 @@ const v2rayTemplateBody = `
 
 {{- end }}
       "streamSettings": {
-{{- if eq $transport "http" }}
+{{- if eq $transport "HTTP" }}
 
 {{- with .HTTP }}
         "network": "http",
@@ -83,7 +83,7 @@ const v2rayTemplateBody = `
         },
 {{- end }}{{/* with .HTTP */}}
 
-{{- else if eq $transport "kcp" }}
+{{- else if eq $transport "KCP" }}
 
 {{- with .KCP }}
         "network": "kcp",
@@ -101,7 +101,7 @@ const v2rayTemplateBody = `
         },
 {{- end }}{{/* with .KCP */}}
 
-{{- else if eq $transport "tcp" }}
+{{- else if eq $transport "TCP" }}
 
 {{- $tlsEnabled := .TLS.Enabled }}
 {{- with .TCP }}
@@ -111,7 +111,7 @@ const v2rayTemplateBody = `
 {{- end }}
 {{- end }}{{/* with .TCP */}}
 
-{{- else if eq $transport "ws" }}
+{{- else if eq $transport "WS" }}
 
 {{- $tlsEnabled := .TLS.Enabled }}
 {{- with .WS }}

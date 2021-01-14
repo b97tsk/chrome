@@ -88,7 +88,7 @@ type TransportOptions struct {
 	}
 	TCP struct{}
 	TLS struct {
-		Enabled    bool   `json:"-"`
+		Enabled    bool   `json:"-" yaml:"-"`
 		ServerName string `json:"serverName"`
 	}
 	WS struct {
@@ -342,17 +342,17 @@ func createInstance(opts Options) (*Instance, error) {
 		return nil, err
 	}
 
-	opts.Protocol = "freedom"
-	opts.Transport = "tcp"
+	opts.Protocol = "FREEDOM"
+	opts.Transport = "TCP"
 
-	for _, typ := range strings.SplitN(opts.Type, "+", 3) {
-		typ = strings.ToLower(typ)
-		switch typ {
-		case "freedom", "trojan", "vmess":
-			opts.Protocol = typ
-		case "http", "kcp", "tcp", "ws":
-			opts.Transport = typ
-		case "tls":
+	for _, t := range strings.SplitN(opts.Type, "+", 3) {
+		t = strings.ToUpper(t)
+		switch t {
+		case "FREEDOM", "TROJAN", "VMESS":
+			opts.Protocol = t
+		case "HTTP", "KCP", "TCP", "WS":
+			opts.Transport = t
+		case "TLS":
 			opts.TLS.Enabled = true
 		default:
 			return nil, errors.New("unknown type: " + opts.Type)
@@ -362,9 +362,9 @@ func createInstance(opts Options) (*Instance, error) {
 	var hostport *HostportOptions
 
 	switch opts.Protocol {
-	case "trojan":
+	case "TROJAN":
 		hostport = &opts.TROJAN.HostportOptions
-	case "vmess":
+	case "VMESS":
 		hostport = &opts.VMESS.HostportOptions
 	}
 
@@ -382,7 +382,7 @@ func createInstance(opts Options) (*Instance, error) {
 		}
 	}
 
-	if opts.Transport == "kcp" {
+	if opts.Transport == "KCP" {
 		if opts.KCP.Header == "" {
 			opts.KCP.Header = "none"
 		}
@@ -392,7 +392,7 @@ func createInstance(opts Options) (*Instance, error) {
 		opts.Mux.Enabled = *opts.Mux.EnabledByYAML
 	} else {
 		switch opts.Protocol {
-		case "trojan", "vmess":
+		case "TROJAN", "VMESS":
 			opts.Mux.Enabled = true
 		}
 	}
@@ -431,7 +431,7 @@ func parseTrojanURL(opts *Options) error {
 		return fmt.Errorf("invalid trojan url %v", opts.URL)
 	}
 
-	opts.Type = "trojan+tcp+tls"
+	opts.Type = "TROJAN+TCP+TLS"
 	opts.TROJAN.Address = u.Host
 	opts.TROJAN.Password = u.User.Username()
 
@@ -483,9 +483,9 @@ func parseVMessURL(opts *Options) error {
 
 	var transport string
 
-	switch config.Net {
-	case "http", "h2":
-		transport = "http"
+	switch strings.ToUpper(config.Net) {
+	case "HTTP", "H2":
+		transport = "HTTP"
 
 		if config.Host != "" {
 			opts.HTTP.Host = []string{config.Host}
@@ -495,27 +495,27 @@ func parseVMessURL(opts *Options) error {
 		}
 
 		opts.HTTP.Path = config.Path
-	case "kcp":
-		transport = "kcp"
+	case "KCP":
+		transport = "KCP"
 		opts.KCP.Header = config.Type
-	case "tcp":
-		transport = "tcp"
+	case "TCP":
+		transport = "TCP"
 
 		if config.Type != "" && config.Type != "none" {
 			return fmt.Errorf("unknown type field in vmess url %v: %v", opts.URL, config.Type)
 		}
 
-		if config.TLS == "tls" {
-			transport = "tcp+tls"
+		if strings.EqualFold(config.TLS, "TLS") {
+			transport = "TCP+TLS"
 
 			if config.Host != "" && config.Host != config.Address {
 				opts.TLS.ServerName = config.Host
 			}
 		}
-	case "ws":
-		transport = "ws"
-		if config.TLS == "tls" {
-			transport = "ws+tls"
+	case "WS":
+		transport = "WS"
+		if strings.EqualFold(config.TLS, "TLS") {
+			transport = "WS+TLS"
 
 			if config.Host != "" && config.Host != config.Address {
 				opts.TLS.ServerName = config.Host
@@ -527,7 +527,7 @@ func parseVMessURL(opts *Options) error {
 		return fmt.Errorf("unknown net field in vmess url %v: %v", opts.URL, config.Net)
 	}
 
-	opts.Type = "vmess+" + transport
+	opts.Type = "VMESS+" + transport
 	opts.VMESS.Address = net.JoinHostPort(config.Address, unquote(string(config.Port)))
 	opts.VMESS.ID = config.ID
 	opts.VMESS.AlterID, _ = strconv.Atoi(unquote(string(config.AlterID)))
