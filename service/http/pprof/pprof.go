@@ -21,12 +21,12 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.ERROR.Print(err)
+		ctx.Logger.Error(err)
 		return
 	}
 
-	ctx.Logger.INFO.Printf("listening on %v", ln.Addr())
-	defer ctx.Logger.INFO.Printf("stopped listening on %v", ln.Addr())
+	ctx.Logger.Infof("listening on %v", ln.Addr())
+	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 

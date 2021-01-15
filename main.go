@@ -85,7 +85,7 @@ func Main() (code int) {
 			}
 		case err := <-watcher.Errors:
 			logger := man.Logger("main")
-			logger.WARN.Println(err)
+			logger.Warn(err)
 		case <-reload:
 			man.LoadFile(configFile)
 

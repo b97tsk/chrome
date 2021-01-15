@@ -1,53 +1,36 @@
 package service
 
 import (
-	"bytes"
 	"io"
-	"log"
+	stdlog "log"
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"github.com/b97tsk/chrome/internal/log"
 )
 
-type Logger struct {
-	ERROR *log.Logger
-	WARN  *log.Logger
-	INFO  *log.Logger
-	DEBUG *log.Logger
-	TRACE *log.Logger
-}
-
-func (man *Manager) Logger(name string) Logger {
+func (man *Manager) Logger(name string) *log.Logger {
 	return man.getLogger(name)
 }
 
-const logLevelPlaceHolder = "[#####]"
-
 type loggingService struct {
 	mu      sync.Mutex
-	level   logLevel
+	level   log.Level
 	file    *os.File
-	writer  io.Writer
-	loggers map[string]Logger
+	loggers map[string]*log.Logger
 }
 
-func (l *loggingService) getLogger(name string) Logger {
+func (l *loggingService) getLogger(name string) *log.Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	logger, ok := l.loggers[name]
-	if !ok {
-		prefix := logLevelPlaceHolder + " [" + name + "] "
-		flags := log.Flags() | log.Lmsgprefix
-
-		logger.ERROR = log.New(&loggingWriter{l, logLevelError}, prefix, flags)
-		logger.WARN = log.New(&loggingWriter{l, logLevelWarn}, prefix, flags)
-		logger.INFO = log.New(&loggingWriter{l, logLevelInfo}, prefix, flags)
-		logger.DEBUG = log.New(&loggingWriter{l, logLevelDebug}, prefix, flags)
-		logger.TRACE = log.New(&loggingWriter{l, logLevelTrace}, prefix, flags)
+	logger := l.loggers[name]
+	if logger == nil {
+		logger = log.New(l, "["+name+"] ", stdlog.Flags()|stdlog.Lmsgprefix)
 
 		if l.loggers == nil {
-			l.loggers = make(map[string]Logger)
+			l.loggers = make(map[string]*log.Logger)
 		}
 
 		l.loggers[name] = logger
@@ -56,11 +39,11 @@ func (l *loggingService) getLogger(name string) Logger {
 	return logger
 }
 
-func (l *loggingService) getLogLevel() logLevel {
-	return logLevel(atomic.LoadInt32((*int32)(&l.level)))
+func (l *loggingService) getLogLevel() log.Level {
+	return log.Level(atomic.LoadInt32((*int32)(&l.level)))
 }
 
-func (l *loggingService) setLogLevel(level logLevel) {
+func (l *loggingService) setLogLevel(level log.Level) {
 	atomic.StoreInt32((*int32)(&l.level), int32(level))
 }
 
@@ -71,7 +54,6 @@ func (l *loggingService) setLogFile(name string) error {
 	if l.file != nil {
 		l.file.Close()
 		l.file = nil
-		l.writer = nil
 	}
 
 	if name != "" {
@@ -81,7 +63,6 @@ func (l *loggingService) setLogFile(name string) error {
 		}
 
 		l.file = file
-		l.writer = io.MultiWriter(file, log.Writer())
 	}
 
 	return nil
@@ -94,44 +75,22 @@ func (l *loggingService) closeLogFile() {
 	if l.file != nil {
 		l.file.Close()
 		l.file = nil
-		l.writer = nil
 	}
 }
 
-type loggingWriter struct {
-	*loggingService
-	level logLevel
-}
-
-func (l loggingWriter) Write(p []byte) (n int, err error) {
-	if l.level > l.getLogLevel() {
-		return len(p), nil
-	}
-
-	if i := bytes.Index(p, []byte(logLevelPlaceHolder)); i >= 0 {
-		b := loggingPool.Get().(*loggingBuffer)
-		defer loggingPool.Put(b)
-
-		s := (*b)[:0]
-		s = append(s, p[:i]...)
-		s = append(s, []byte("["+l.level.String()+"]")...)
-		s = append(s, p[i+len(logLevelPlaceHolder):]...)
-		p = s
-	}
-
+func (l *loggingService) Write(p []byte) (n int, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	w := l.writer
-	if w == nil {
-		w = log.Writer()
+	var w io.Writer = l.file
+
+	if l.file == nil {
+		w = stdlog.Writer()
 	}
 
 	return w.Write(p)
 }
 
-type loggingBuffer [1024]byte
-
-var loggingPool = sync.Pool{
-	New: func() interface{} { return new(loggingBuffer) },
+func (l *loggingService) Writable(lv log.Level) bool {
+	return lv <= l.getLogLevel()
 }

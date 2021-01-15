@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/log"
 	"gopkg.in/yaml.v2"
 )
 
@@ -26,7 +27,7 @@ type Context struct {
 	context.Context
 	ListenAddr string
 	Manager    *Manager
-	Logger     Logger
+	Logger     *log.Logger
 	Opts       <-chan interface{}
 }
 
@@ -112,7 +113,7 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 			defer func() {
 				if err := recover(); err != nil {
 					logger := man.Logger("manager")
-					logger.ERROR.Printf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
+					logger.Errorf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 			}()
 			defer done()
@@ -137,7 +138,7 @@ func (man *Manager) Load(r io.Reader) {
 	var config struct {
 		Log struct {
 			File  EnvString
-			Level logLevel
+			Level log.Level
 		}
 		Dial struct {
 			Timeout time.Duration
@@ -151,12 +152,12 @@ func (man *Manager) Load(r io.Reader) {
 	logger := man.Logger("manager")
 
 	if err := dec.Decode(&config); err != nil {
-		logger.ERROR.Printf("Load: %v", err)
+		logger.Errorf("Load: %v", err)
 		return
 	}
 
 	if err := man.setLogFile(string(config.Log.File)); err != nil {
-		logger.ERROR.Printf("Load: %v", err)
+		logger.Errorf("Load: %v", err)
 	}
 
 	man.setLogLevel(config.Log.Level)
@@ -197,7 +198,7 @@ func (man *Manager) Load(r io.Reader) {
 
 	for name, data := range config.Jobs {
 		if err := man.setOptions(name, data); err != nil {
-			logger.ERROR.Printf("Load: %v", err)
+			logger.Errorf("Load: %v", err)
 		}
 	}
 }
@@ -206,7 +207,7 @@ func (man *Manager) LoadFile(name string) {
 	file, err := os.Open(name)
 	if err != nil {
 		logger := man.Logger("manager")
-		logger.ERROR.Printf("LoadFile: %v", err)
+		logger.Errorf("LoadFile: %v", err)
 
 		return
 	}

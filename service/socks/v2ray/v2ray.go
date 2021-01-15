@@ -124,12 +124,12 @@ func (Service) Name() string {
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.ERROR.Print(err)
+		ctx.Logger.Error(err)
 		return
 	}
 
-	ctx.Logger.INFO.Printf("listening on %v", ln.Addr())
-	defer ctx.Logger.INFO.Printf("stopped listening on %v", ln.Addr())
+	ctx.Logger.Infof("listening on %v", ln.Addr())
+	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 
@@ -167,7 +167,7 @@ func (Service) Run(ctx service.Context) {
 
 			addr, err := socks.Handshake(c)
 			if err != nil {
-				ctx.Logger.DEBUG.Printf("socks handshake: %v", err)
+				ctx.Logger.Debugf("socks handshake: %v", err)
 				return
 			}
 
@@ -175,7 +175,7 @@ func (Service) Run(ctx service.Context) {
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.stats.ins, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				ctx.Logger.TRACE.Print(err)
+				ctx.Logger.Trace(err)
 				return
 			}
 			defer remote.Close()
@@ -208,7 +208,7 @@ func (Service) Run(ctx service.Context) {
 			go func(stats statsINFO) {
 				defer func() {
 					if err := stats.ins.Close(); err != nil {
-						ctx.Logger.DEBUG.Printf("close instance: %v", err)
+						ctx.Logger.Debugf("close instance: %v", err)
 					}
 
 					stats.cancel()
@@ -241,12 +241,12 @@ func (Service) Run(ctx service.Context) {
 	startInstance := func(opts Options) {
 		i, err := createInstance(opts)
 		if err != nil {
-			ctx.Logger.ERROR.Printf("create instance: %v", err)
+			ctx.Logger.Errorf("create instance: %v", err)
 			return
 		}
 
 		if err := i.Start(); err != nil {
-			ctx.Logger.ERROR.Printf("start instance: %v", err)
+			ctx.Logger.Errorf("start instance: %v", err)
 			return
 		}
 
@@ -265,7 +265,7 @@ func (Service) Run(ctx service.Context) {
 			go func() {
 				err := startPing(ctxPing, opts.Mux.Ping, ctx.ListenAddr, restart)
 				if err != nil {
-					ctx.Logger.ERROR.Printf("ping: %v", err)
+					ctx.Logger.Errorf("ping: %v", err)
 				}
 			}()
 		}
