@@ -1,22 +1,62 @@
 package socks
 
 import (
+	"context"
+	"crypto/tls"
+	"math/rand"
 	"net"
+	"reflect"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
+	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
 	Proxy service.ProxyChain `yaml:"over"`
-	Dial  struct {
+
+	Dial struct {
 		Timeout time.Duration
 	}
 
-	dialer proxy.Dialer
+	DNS struct {
+		Enabled bool `yaml:"-"`
+
+		Server struct {
+			Name string
+			IP   service.StringList
+			Over string
+			Port uint16
+		}
+		Query struct {
+			Type service.StringList
+			All  bool
+		}
+		TTL struct {
+			Min, Max time.Duration
+		}
+		Idle struct {
+			Timeout time.Duration
+		}
+		Read struct {
+			Timeout time.Duration
+		}
+		Write struct {
+			Timeout time.Duration
+		}
+
+		Proxy *service.ProxyChain `yaml:"over"`
+	}
+
+	dialer    proxy.Dialer
+	dnsDialer proxy.Dialer
+	dnsCache  *sync.Map
 }
 
 type Service struct{}
@@ -54,6 +94,8 @@ func (Service) Run(ctx service.Context) {
 		close(optsOut)
 	}()
 
+	var dnsQueryIn chan dnsQuery
+
 	var initialized bool
 
 	initialize := func() {
@@ -77,7 +119,52 @@ func (Service) Run(ctx service.Context) {
 
 			local, localCtx := service.NewConnChecker(c)
 
-			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
+			hostport := addr.String()
+
+			if opts.DNS.Enabled {
+				if host, port, _ := net.SplitHostPort(hostport); net.ParseIP(host) == nil {
+					var result *dnsQueryResult
+
+					if cache, ok := opts.dnsCache.Load(host); ok {
+						r := cache.(*dnsQueryResult)
+						if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+							result = r
+							ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL)
+						}
+					}
+
+					if result == nil {
+						r := make(chan *dnsQueryResult, 1)
+
+						select {
+						case <-ctx.Done():
+							return
+						case <-localCtx.Done():
+							return
+						case dnsQueryIn <- dnsQuery{host, r, localCtx, opts}:
+						}
+
+						select {
+						case <-ctx.Done():
+							return
+						case <-localCtx.Done():
+							return
+						case result = <-r:
+						}
+
+						if result == nil {
+							return
+						}
+					}
+
+					if result != nil {
+						ip := result.IPList[rand.Intn(len(result.IPList))]
+						hostport = net.JoinHostPort(ip.String(), port)
+					}
+				}
+			}
+
+			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", hostport, opts.Dial.Timeout)
 			if err != nil {
 				ctx.Logger.Trace(err)
 				return
@@ -96,9 +183,44 @@ func (Service) Run(ctx service.Context) {
 			if new, ok := opts.(Options); ok {
 				old := <-optsOut
 				new.dialer = old.dialer
+				new.dnsDialer = old.dnsDialer
+				new.dnsCache = old.dnsCache
 
 				if !new.Proxy.Equals(old.Proxy) {
 					new.dialer, _ = new.Proxy.NewDialer()
+				}
+
+				if new.DNS.Server.Name != "" || len(new.DNS.Server.IP) > 0 {
+					new.DNS.Enabled = true
+
+					new.DNS.Query.Type = normalizeQueryTypes(new.DNS.Query.Type)
+					if len(new.DNS.Query.Type) == 0 {
+						new.DNS.Query.Type = service.StringList{"A"}
+					}
+
+					new.DNS.Server.Over = strings.ToUpper(new.DNS.Server.Over)
+
+					if new.DNS.Server.Over == "TLS" && new.DNS.Server.Name == "" {
+						ctx.Logger.Error("[dns] DNS-over-TLS requires a server name")
+						break
+					}
+
+					switch {
+					case new.DNS.Proxy == nil:
+						new.dnsDialer = new.dialer
+					case old.DNS.Proxy == nil || !new.DNS.Proxy.Equals(*old.DNS.Proxy):
+						new.dnsDialer, _ = new.DNS.Proxy.NewDialer()
+					}
+
+					if new.dnsCache == nil || shouldResetDNSCache(old, new) {
+						new.dnsCache = &sync.Map{}
+					}
+
+					if dnsQueryIn == nil {
+						dnsQueryIn = make(chan dnsQuery)
+
+						go startWorker(ctx, dnsQueryIn)
+					}
 				}
 
 				optsIn <- new
@@ -117,3 +239,276 @@ func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
 
 	return opts, nil
 }
+
+type dnsQuery struct {
+	Domain  string
+	Result  chan<- *dnsQueryResult
+	Context context.Context
+	Options Options
+}
+
+type dnsQueryResult struct {
+	IPList   []net.IP
+	TTL      time.Duration
+	Deadline time.Time
+}
+
+func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
+	var dnsConn *dns.Conn
+
+	var dnsConnIdle struct {
+		Timer  *time.Timer
+		TimerC <-chan time.Time
+	}
+
+	defer func() {
+		if dnsConnIdle.Timer != nil {
+			dnsConnIdle.Timer.Stop()
+		}
+
+		if dnsConn != nil {
+			dnsConn.Close()
+		}
+	}()
+
+	var tlsConfig *tls.Config
+
+	dnsConnIdleTimeout := defaultIdleTimeout
+	dnsConnReadTimeout := defaultReadTimeout
+	dnsConnWriteTimeout := defaultWriteTimeout
+
+	for {
+		if dnsConn != nil {
+			if dnsConnIdle.Timer == nil {
+				dnsConnIdle.Timer = time.NewTimer(dnsConnIdleTimeout)
+				dnsConnIdle.TimerC = dnsConnIdle.Timer.C
+			} else {
+				if !dnsConnIdle.Timer.Stop() {
+					<-dnsConnIdle.TimerC
+				}
+				dnsConnIdle.Timer.Reset(dnsConnIdleTimeout)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-dnsConnIdle.TimerC:
+			dnsConnIdle.Timer = nil
+			dnsConnIdle.TimerC = nil
+
+			ctx.Logger.Trace("[dns] closing DNS connection due to idle timeout")
+
+			dnsConn.Close()
+			dnsConn = nil
+		case q := <-incoming:
+			opts := &q.Options
+
+			var result *dnsQueryResult
+
+			if cache, ok := opts.dnsCache.Load(q.Domain); ok {
+				r := cache.(*dnsQueryResult)
+				if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+					result = r
+					ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL)
+				}
+			}
+
+			if result == nil {
+				var r dnsQueryResult
+
+				fqDomain := dns.Fqdn(q.Domain)
+
+				qtypes := opts.DNS.Query.Type
+				for len(qtypes) > 0 {
+					if ctx.Err() != nil {
+						return
+					}
+
+					if q.Context.Err() != nil {
+						break
+					}
+
+					if dnsConn == nil {
+						host := opts.DNS.Server.Name
+
+						if len(opts.DNS.Server.IP) > 0 {
+							host = opts.DNS.Server.IP[rand.Intn(len(opts.DNS.Server.IP))]
+						}
+
+						port := 53
+
+						if opts.DNS.Server.Over == "TLS" {
+							port = 853
+						}
+
+						if opts.DNS.Server.Port != 0 {
+							port = int(opts.DNS.Server.Port)
+						}
+
+						hostport := net.JoinHostPort(host, strconv.Itoa(port))
+						ctx.Logger.Tracef("[dns] dialing to %v", hostport)
+
+						conn, err := ctx.Manager.Dial(q.Context, opts.dnsDialer, "tcp", hostport, opts.Dial.Timeout)
+						if err != nil {
+							ctx.Logger.Tracef("[dns] %v", err)
+							break
+						}
+
+						if opts.DNS.Server.Over == "TLS" {
+							if tlsConfig == nil || tlsConfig.ServerName != opts.DNS.Server.Name {
+								tlsConfig = &tls.Config{
+									ServerName:         opts.DNS.Server.Name,
+									ClientSessionCache: tls.NewLRUClientSessionCache(1),
+								}
+							}
+
+							conn = tls.Client(conn, tlsConfig)
+						}
+
+						dnsConn = &dns.Conn{Conn: conn}
+
+						dnsConnIdleTimeout = defaultIdleTimeout
+						dnsConnReadTimeout = defaultReadTimeout
+						dnsConnWriteTimeout = defaultWriteTimeout
+
+						if opts.DNS.Idle.Timeout > 0 {
+							dnsConnIdleTimeout = opts.DNS.Idle.Timeout
+						}
+
+						if opts.DNS.Read.Timeout > 0 {
+							dnsConnReadTimeout = opts.DNS.Read.Timeout
+						}
+
+						if opts.DNS.Write.Timeout > 0 {
+							dnsConnWriteTimeout = opts.DNS.Write.Timeout
+						}
+					}
+
+					var m dns.Msg
+
+					switch qtypes[0] {
+					case "A":
+						m.SetQuestion(fqDomain, dns.TypeA)
+					case "AAAA":
+						m.SetQuestion(fqDomain, dns.TypeAAAA)
+					}
+
+					_ = dnsConn.SetWriteDeadline(time.Now().Add(dnsConnWriteTimeout))
+
+					err := dnsConn.WriteMsg(&m)
+					if err == nil {
+						var in *dns.Msg
+
+						_ = dnsConn.SetReadDeadline(time.Now().Add(dnsConnReadTimeout))
+
+						in, err = dnsConn.ReadMsg()
+						if err == nil {
+							for _, ans := range in.Answer {
+								if r.Deadline.IsZero() {
+									if h := ans.Header(); h != nil {
+										ttl := time.Duration(h.Ttl) * time.Second
+										if opts.DNS.TTL.Min > 0 && ttl < opts.DNS.TTL.Min {
+											ttl = opts.DNS.TTL.Min
+										}
+
+										if opts.DNS.TTL.Max > 0 && ttl > opts.DNS.TTL.Max {
+											ttl = opts.DNS.TTL.Max
+										}
+
+										if ttl > 0 {
+											r.TTL = ttl
+											r.Deadline = time.Now().Add(ttl)
+										}
+									}
+								}
+
+								switch ans := ans.(type) {
+								case *dns.A:
+									r.IPList = append(r.IPList, ans.A)
+								case *dns.AAAA:
+									r.IPList = append(r.IPList, ans.AAAA)
+								}
+							}
+
+							qtypes = qtypes[1:]
+
+							if !opts.DNS.Query.All && len(r.IPList) > 0 {
+								break
+							}
+						} else {
+							ctx.Logger.Tracef("[dns] ReadMsg: %v", err)
+						}
+					} else {
+						ctx.Logger.Tracef("[dns] WriteMsg: %v", err)
+					}
+
+					if err != nil {
+						if dnsConnIdle.Timer != nil {
+							dnsConnIdle.Timer.Stop()
+							dnsConnIdle.Timer = nil
+							dnsConnIdle.TimerC = nil
+						}
+
+						dnsConn.Close()
+						dnsConn = nil
+					}
+				}
+
+				if len(r.IPList) > 0 {
+					result = &r
+					opts.dnsCache.Store(q.Domain, &r)
+					ctx.Logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL)
+				}
+			}
+
+			if result != nil {
+				select {
+				case <-ctx.Done():
+					return
+				case <-q.Context.Done():
+				case q.Result <- result:
+				default:
+				}
+			}
+
+			close(q.Result)
+		}
+	}
+}
+
+func shouldResetDNSCache(x, y Options) bool {
+	return x.DNS.TTL != y.DNS.TTL ||
+		!reflect.DeepEqual(&x.DNS.Query, &y.DNS.Query) ||
+		!reflect.DeepEqual(&x.DNS.Server, &y.DNS.Server)
+}
+
+func normalizeQueryTypes(qtypes []string) []string {
+	if len(qtypes) == 0 {
+		return qtypes
+	}
+
+	result := qtypes[:0]
+Outer:
+	for _, t := range qtypes {
+		t = strings.ToUpper(t)
+		if t != "A" && t != "AAAA" {
+			continue
+		}
+
+		for _, r := range result {
+			if r == t {
+				continue Outer
+			}
+		}
+
+		result = append(result, t)
+	}
+
+	return result
+}
+
+const (
+	defaultIdleTimeout  = 10 * time.Second
+	defaultReadTimeout  = 2 * time.Second
+	defaultWriteTimeout = 3 * time.Second
+)
