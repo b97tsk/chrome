@@ -14,10 +14,15 @@ func (man *Manager) Logger(name string) *log.Logger {
 	return man.getLogger(name)
 }
 
+func (man *Manager) SetLogOutput(w io.Writer) {
+	man.setLogOutput(w)
+}
+
 type loggingService struct {
 	mu      sync.Mutex
 	level   log.Level
 	file    *os.File
+	output  io.Writer
 	loggers map[string]*log.Logger
 }
 
@@ -78,17 +83,30 @@ func (l *loggingService) closeLogFile() {
 	}
 }
 
+func (l *loggingService) setLogOutput(w io.Writer) {
+	l.mu.Lock()
+	l.output = w
+	l.mu.Unlock()
+}
+
 func (l *loggingService) Write(p []byte) (n int, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	var w io.Writer = l.file
-
-	if l.file == nil {
-		w = stdlog.Writer()
+	if l.file != nil {
+		if _, err := l.file.Write(p); err != nil {
+			l.file.Close()
+			l.file = nil
+		}
 	}
 
-	return w.Write(p)
+	if l.output != nil {
+		if _, err := l.output.Write(p); err != nil {
+			l.output = nil
+		}
+	}
+
+	return len(p), nil
 }
 
 func (l *loggingService) Writable(lv log.Level) bool {

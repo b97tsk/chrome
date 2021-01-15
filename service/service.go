@@ -230,6 +230,7 @@ func (man *Manager) Shutdown() {
 
 	man.closeConnections()
 	man.closeLogFile()
+	man.setLogOutput(nil)
 }
 
 var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)

@@ -63,6 +63,8 @@ func Main() (code int) {
 	man := newManager()
 	defer man.Shutdown()
 
+	man.SetLogOutput(os.Stderr)
+
 	if configFile == "-" {
 		man.Load(os.Stdin)
 	} else {
