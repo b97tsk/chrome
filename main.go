@@ -18,6 +18,7 @@ import (
 	"github.com/b97tsk/chrome/service/socks/shadowsocks"
 	"github.com/b97tsk/chrome/service/socks/v2ray"
 	"github.com/b97tsk/chrome/service/tcptun"
+	"github.com/b97tsk/chrome/service/tcptun/dnstun"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -100,6 +101,7 @@ func Main() (code int) {
 
 func newManager() *service.Manager {
 	man := service.NewManager()
+	man.Add(dnstun.Service{})
 	man.Add(goagent.Service{})
 	man.Add(http.Service{})
 	man.Add(httpfs.Service{})
