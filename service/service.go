@@ -33,18 +33,8 @@ type Context struct {
 
 type Job struct {
 	context.Context
-	ServiceName string
-	Cancel      context.CancelFunc
-	Opts        chan<- interface{}
-}
-
-func (job *Job) Active() bool {
-	select {
-	case <-job.Done():
-		return false
-	default:
-		return true
-	}
+	Cancel context.CancelFunc
+	Opts   chan<- interface{}
 }
 
 func (job *Job) SendOpts(opts interface{}) {
@@ -67,15 +57,18 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	return &Manager{
-		services: make(map[string]Service),
-		jobs:     make(map[string]Job),
-	}
+	return new(Manager)
 }
 
 func (man *Manager) Add(service Service) {
 	man.mu.Lock()
+
+	if man.services == nil {
+		man.services = make(map[string]Service)
+	}
+
 	man.services[service.Name()] = service
+
 	man.mu.Unlock()
 }
 
@@ -104,26 +97,31 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	}
 
 	job, ok := man.jobs[name]
-	if !ok || !job.Active() {
+	if !ok || job.Err() != nil {
 		ctx1, done := context.WithCancel(context.Background())
 		ctx2, cancel := context.WithCancel(ctx1)
 		copts := make(chan interface{})
+		job = Job{ctx1, cancel, copts}
+
+		if man.jobs == nil {
+			man.jobs = make(map[string]Job)
+		}
+
+		man.jobs[name] = job
 
 		go func() {
 			defer func() {
+				done()
+
 				if err := recover(); err != nil {
 					logger := man.Logger("manager")
 					logger.Errorf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 			}()
-			defer done()
 
 			logger := man.Logger(serviceName)
 			service.Run(Context{ctx2, listenAddr, man, logger, copts})
 		}()
-
-		job = Job{ctx1, serviceName, cancel, copts}
-		man.jobs[name] = job
 	}
 
 	job.SendOpts(opts)
@@ -176,7 +174,8 @@ func (man *Manager) Load(r io.Reader) {
 					x++
 				}
 			} else {
-				for _, data := range data.([]interface{}) {
+				slice, _ := data.([]interface{})
+				for _, data := range slice {
 					config.Jobs[head+strconv.Itoa(x)+tail] = data
 					x++
 				}
