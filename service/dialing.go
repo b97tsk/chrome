@@ -19,11 +19,15 @@ func (man *Manager) Dial(
 }
 
 type dialingService struct {
-	dialTimeout int64
+	dialTimeout time.Duration
+}
+
+func (d *dialingService) DialTimeout() time.Duration {
+	return time.Duration(atomic.LoadInt64((*int64)(&d.dialTimeout)))
 }
 
 func (d *dialingService) SetDialTimeout(timeout time.Duration) {
-	atomic.StoreInt64(&d.dialTimeout, int64(timeout))
+	atomic.StoreInt64((*int64)(&d.dialTimeout), int64(timeout))
 }
 
 func (d *dialingService) Dial(
@@ -36,11 +40,11 @@ func (d *dialingService) Dial(
 		dialer = proxy.Direct
 	}
 
-	dialTimeout := defaultDialTimeout
-	if timeout > 0 {
-		dialTimeout = timeout
-	} else if timeout := atomic.LoadInt64(&d.dialTimeout); timeout > 0 {
-		dialTimeout = time.Duration(timeout)
+	if timeout <= 0 {
+		timeout = d.DialTimeout()
+		if timeout <= 0 {
+			timeout = defaultDialTimeout
+		}
 	}
 
 	for {
@@ -49,7 +53,7 @@ func (d *dialingService) Dial(
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 
 		conn, err = proxy.Dial(ctx, dialer, network, address)
 
