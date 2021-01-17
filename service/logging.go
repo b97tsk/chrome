@@ -11,11 +11,11 @@ import (
 )
 
 func (man *Manager) Logger(name string) *log.Logger {
-	return man.getLogger(name)
+	return man.builtin.Logger(name)
 }
 
 func (man *Manager) SetLogOutput(w io.Writer) {
-	man.setLogOutput(w)
+	man.builtin.SetLogOutput(w)
 }
 
 type loggingService struct {
@@ -26,7 +26,7 @@ type loggingService struct {
 	loggers map[string]*log.Logger
 }
 
-func (l *loggingService) getLogger(name string) *log.Logger {
+func (l *loggingService) Logger(name string) *log.Logger {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -44,15 +44,15 @@ func (l *loggingService) getLogger(name string) *log.Logger {
 	return logger
 }
 
-func (l *loggingService) getLogLevel() log.Level {
+func (l *loggingService) LogLevel() log.Level {
 	return log.Level(atomic.LoadInt32((*int32)(&l.level)))
 }
 
-func (l *loggingService) setLogLevel(level log.Level) {
+func (l *loggingService) SetLogLevel(level log.Level) {
 	atomic.StoreInt32((*int32)(&l.level), int32(level))
 }
 
-func (l *loggingService) setLogFile(name string) error {
+func (l *loggingService) SetLogFile(name string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -73,17 +73,7 @@ func (l *loggingService) setLogFile(name string) error {
 	return nil
 }
 
-func (l *loggingService) closeLogFile() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	if l.file != nil {
-		l.file.Close()
-		l.file = nil
-	}
-}
-
-func (l *loggingService) setLogOutput(w io.Writer) {
+func (l *loggingService) SetLogOutput(w io.Writer) {
 	l.mu.Lock()
 	l.output = w
 	l.mu.Unlock()
@@ -110,5 +100,5 @@ func (l *loggingService) Write(p []byte) (n int, err error) {
 }
 
 func (l *loggingService) Writable(lv log.Level) bool {
-	return lv <= l.getLogLevel()
+	return lv <= l.LogLevel()
 }

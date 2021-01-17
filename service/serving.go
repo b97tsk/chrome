@@ -6,14 +6,14 @@ import (
 )
 
 func (man *Manager) ServeListener(ln net.Listener, handle func(net.Conn)) {
-	man.serveListener(ln, handle)
+	man.builtin.ServeListener(ln, handle)
 }
 
 type servingService struct {
 	connections sync.Map
 }
 
-func (s *servingService) serveListener(ln net.Listener, handle func(net.Conn)) {
+func (s *servingService) ServeListener(ln net.Listener, handle func(net.Conn)) {
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -38,7 +38,7 @@ func (s *servingService) serveListener(ln net.Listener, handle func(net.Conn)) {
 	}()
 }
 
-func (s *servingService) closeConnections() {
+func (s *servingService) CloseConnections() {
 	s.connections.Range(func(key, _ interface{}) bool {
 		key.(net.Conn).Close()
 		return true

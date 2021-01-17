@@ -51,9 +51,11 @@ type Manager struct {
 	mu       sync.Mutex
 	services map[string]Service
 	jobs     map[string]Job
-	loggingService
-	dialingService
-	servingService
+	builtin  struct {
+		loggingService
+		dialingService
+		servingService
+	}
 }
 
 func NewManager() *Manager {
@@ -154,12 +156,12 @@ func (man *Manager) Load(r io.Reader) {
 		return
 	}
 
-	if err := man.setLogFile(string(config.Log.File)); err != nil {
+	if err := man.builtin.SetLogFile(string(config.Log.File)); err != nil {
 		logger.Errorf("Load: %v", err)
 	}
 
-	man.setLogLevel(config.Log.Level)
-	man.setDialTimeout(config.Dial.Timeout)
+	man.builtin.SetLogLevel(config.Log.Level)
+	man.builtin.SetDialTimeout(config.Dial.Timeout)
 
 	for name, data := range config.Jobs {
 		if r := reNumberPlus.FindStringIndex(name); r != nil {
@@ -227,9 +229,9 @@ func (man *Manager) Shutdown() {
 		<-job.Done()
 	}
 
-	man.closeConnections()
-	man.closeLogFile()
-	man.setLogOutput(nil)
+	_ = man.builtin.SetLogFile("")
+	man.builtin.SetLogOutput(nil)
+	man.builtin.CloseConnections()
 }
 
 var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)

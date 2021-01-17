@@ -15,18 +15,18 @@ func (man *Manager) Dial(
 	network, address string,
 	timeout time.Duration,
 ) (conn net.Conn, err error) {
-	return man.dial(ctx, dialer, network, address, timeout)
+	return man.builtin.Dial(ctx, dialer, network, address, timeout)
 }
 
 type dialingService struct {
 	dialTimeout int64
 }
 
-func (d *dialingService) setDialTimeout(timeout time.Duration) {
+func (d *dialingService) SetDialTimeout(timeout time.Duration) {
 	atomic.StoreInt64(&d.dialTimeout, int64(timeout))
 }
 
-func (d *dialingService) dial(
+func (d *dialingService) Dial(
 	ctx context.Context,
 	dialer proxy.Dialer,
 	network, address string,
