@@ -504,9 +504,9 @@ func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 		return // Exactly matched, very well.
 	}
 
-	shallowCopy := *resp
+	snapshot := *resp
 	bodySize := contentRangeLast - contentRangeFirst + 1
-	resp.Body = newAutoRangeBody(h, req, &shallowCopy, bodySize, requestRangeFirst, requestRangeLast)
+	resp.Body = newAutoRangeBody(h, req, &snapshot, bodySize, requestRangeFirst, requestRangeLast)
 	resp.ContentLength = requestRangeLast - requestRangeFirst + 1
 	resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 
@@ -840,7 +840,7 @@ func (r *autoRangeRequest) init() {
 
 		const NRetries = 3
 
-		req := copyRequestAndHeader(r.req)
+		req := r.req.Clone(r.req.Context())
 
 		for i := 0; i < NRetries; i++ {
 			rangeFirst, rangeLast := r.rangeLast-int64(len(buf))+1, r.rangeLast
@@ -977,17 +977,6 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 	req.Body = &bytesReadCloser{body, ioutil.NopCloser(bytes.NewReader(body))}
 
 	return body, nil
-}
-
-func copyRequestAndHeader(req *http.Request) *http.Request {
-	new := *req
-	new.Header = make(http.Header)
-
-	for k, v := range req.Header {
-		new.Header[k] = v
-	}
-
-	return &new
 }
 
 func isRequestCanceled(req *http.Request) bool {
