@@ -64,7 +64,9 @@ func (d *httpDialer) dialTCP(ctx context.Context, network, addr string) (net.Con
 		Method: http.MethodConnect,
 		URL:    &url.URL{Opaque: addr},
 		Host:   addr,
-		Header: make(http.Header),
+		Header: http.Header{
+			"User-Agent": []string(nil),
+		},
 	}
 
 	if d.Auth != nil {
