@@ -49,8 +49,8 @@ func (d *wsDialer) dialTCP(ctx context.Context, _, addr string) (net.Conn, error
 
 	u := d.URL
 	if u.Host == "" || u.Path == "" {
-		copy := *d.URL
-		u = &copy
+		snapshot := *d.URL
+		u = &snapshot
 
 		if u.Host == "" {
 			u.Host = addr
@@ -126,12 +126,14 @@ func (c *wsConnection) RemoteAddr() net.Addr {
 }
 
 func (c *wsConnection) SetDeadline(t time.Time) error {
-	err := c.SetReadDeadline(t)
-	if err != nil {
-		return err
+	err := c.ws.SetReadDeadline(t)
+	err2 := c.ws.SetWriteDeadline(t)
+
+	if err == nil {
+		err = err2
 	}
 
-	return c.SetWriteDeadline(t)
+	return err
 }
 
 func (c *wsConnection) SetReadDeadline(t time.Time) error {
