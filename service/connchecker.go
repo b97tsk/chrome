@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"net"
-	"os"
 	"time"
 )
 
@@ -77,7 +76,7 @@ func (c *ConnChecker) start(ctx context.Context) {
 
 				c.cbr <- br
 
-				if err != nil && err != bufio.ErrBufferFull && !os.IsTimeout(err) {
+				if err != nil && err != bufio.ErrBufferFull && !isTemporary(err) {
 					return
 				}
 			default:
@@ -90,6 +89,7 @@ func (c *ConnChecker) Read(p []byte) (n int, err error) {
 	br := <-c.cbr
 	n, err = br.Read(p)
 	c.cbr <- br
+
 	select {
 	case c.ping <- struct{}{}:
 	default:
