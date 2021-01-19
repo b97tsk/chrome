@@ -16,12 +16,9 @@ import (
 )
 
 type Options struct {
-	Server struct {
-		Name string
-		IP   service.StringList
-		Over string
-		Port uint16
-	}
+	Server  DNServer
+	Servers []DNServer
+
 	Dial struct {
 		Timeout time.Duration
 	}
@@ -38,6 +35,13 @@ type Options struct {
 	Proxy service.ProxyChain `yaml:"over"`
 
 	dialer proxy.Dialer
+}
+
+type DNServer struct {
+	Name string
+	IP   service.StringList
+	Over string
+	Port uint16
 }
 
 type Service struct{}
@@ -136,7 +140,7 @@ func (Service) Run(ctx service.Context) {
 			}
 		})
 	}
-
+MainLoop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -146,16 +150,28 @@ func (Service) Run(ctx service.Context) {
 				old := <-optsOut
 				new.dialer = old.dialer
 
-				if new.Server.Name == "" && len(new.Server.IP) == 0 {
-					ctx.Logger.Error("DNS server is not specified")
-					break
+				if len(new.Servers) == 0 {
+					if new.Server.Name == "" && len(new.Server.IP) == 0 {
+						ctx.Logger.Error("DNS server is not specified")
+						break
+					}
+
+					new.Servers = append(new.Servers, new.Server)
 				}
 
-				new.Server.Over = strings.ToUpper(new.Server.Over)
+				for i := range new.Servers {
+					server := &new.Servers[i]
+					if server.Name == "" && len(server.IP) == 0 {
+						ctx.Logger.Errorf("server #%v: invalid", i+1)
+						continue MainLoop
+					}
 
-				if new.Server.Over == "TLS" && new.Server.Name == "" {
-					ctx.Logger.Error("DNS-over-TLS requires a server name")
-					break
+					server.Over = strings.ToUpper(server.Over)
+
+					if server.Over == "TLS" && server.Name == "" {
+						ctx.Logger.Errorf("server #%v: DNS-over-TLS requires a server name", i+1)
+						continue MainLoop
+					}
 				}
 
 				if !new.Proxy.Equals(old.Proxy) {
@@ -206,6 +222,8 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 
 	var tlsConfig *tls.Config
 
+	var tlsConfigCache map[string]*tls.Config
+
 	var iplistBuffer []net.IP
 
 	dnsConnIdleTimeout := defaultIdleTimeout
@@ -250,20 +268,22 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 				}
 
 				if dnsConn == nil {
-					host := opts.Server.Name
+					server := opts.Servers[rand.Intn(len(opts.Servers))]
 
-					if len(opts.Server.IP) > 0 {
-						host = opts.Server.IP[rand.Intn(len(opts.Server.IP))]
+					host := server.Name
+
+					if len(server.IP) > 0 {
+						host = server.IP[rand.Intn(len(server.IP))]
 					}
 
 					port := 53
 
-					if opts.Server.Over == "TLS" {
+					if server.Over == "TLS" {
 						port = 853
 					}
 
-					if opts.Server.Port != 0 {
-						port = int(opts.Server.Port)
+					if server.Port != 0 {
+						port = int(server.Port)
 					}
 
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
@@ -275,11 +295,20 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 						break
 					}
 
-					if opts.Server.Over == "TLS" {
-						if tlsConfig == nil || tlsConfig.ServerName != opts.Server.Name {
-							tlsConfig = &tls.Config{
-								ServerName:         opts.Server.Name,
-								ClientSessionCache: tls.NewLRUClientSessionCache(1),
+					if server.Over == "TLS" {
+						if tlsConfig == nil || tlsConfig.ServerName != server.Name {
+							tlsConfig = tlsConfigCache[server.Name]
+							if tlsConfig == nil {
+								tlsConfig = &tls.Config{
+									ServerName:         server.Name,
+									ClientSessionCache: tls.NewLRUClientSessionCache(1),
+								}
+
+								if tlsConfigCache == nil {
+									tlsConfigCache = make(map[string]*tls.Config)
+								}
+
+								tlsConfigCache[server.Name] = tlsConfig
 							}
 						}
 
@@ -305,11 +334,11 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 					}
 				}
 
-				_ = dnsConn.SetWriteDeadline(time.Now().Add(dnsConnWriteTimeout))
+				_ = dnsConn.SetDeadline(time.Now().Add(dnsConnWriteTimeout))
 
 				err := dnsConn.WriteMsg(q.Message)
 				if err == nil {
-					_ = dnsConn.SetReadDeadline(time.Now().Add(dnsConnReadTimeout))
+					_ = dnsConn.SetDeadline(time.Now().Add(dnsConnReadTimeout))
 
 					result, err = dnsConn.ReadMsg()
 					if err == nil {
