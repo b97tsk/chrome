@@ -26,14 +26,9 @@ type Options struct {
 	}
 
 	DNS struct {
-		Enabled bool `yaml:"-"`
+		Server  DNServer
+		Servers []DNServer
 
-		Server struct {
-			Name string
-			IP   service.StringList
-			Over string
-			Port uint16
-		}
 		Query struct {
 			Type service.StringList
 			All  bool
@@ -57,6 +52,13 @@ type Options struct {
 	dialer    proxy.Dialer
 	dnsDialer proxy.Dialer
 	dnsCache  *sync.Map
+}
+
+type DNServer struct {
+	Name string
+	IP   service.StringList
+	Over string
+	Port uint16
 }
 
 type Service struct{}
@@ -121,7 +123,7 @@ func (Service) Run(ctx service.Context) {
 
 			hostport := addr.String()
 
-			if opts.DNS.Enabled {
+			if len(opts.DNS.Servers) > 0 {
 				if host, port, _ := net.SplitHostPort(hostport); net.ParseIP(host) == nil {
 					var result *dnsQueryResult
 
@@ -174,7 +176,7 @@ func (Service) Run(ctx service.Context) {
 			service.Relay(local, remote)
 		})
 	}
-
+MainLoop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -190,19 +192,29 @@ func (Service) Run(ctx service.Context) {
 					new.dialer, _ = new.Proxy.NewDialer()
 				}
 
-				if new.DNS.Server.Name != "" || len(new.DNS.Server.IP) > 0 {
-					new.DNS.Enabled = true
+				if len(new.DNS.Servers) == 0 && (new.DNS.Server.Name != "" || len(new.DNS.Server.IP) > 0) {
+					new.DNS.Servers = append(new.DNS.Servers, new.DNS.Server)
+				}
 
+				if len(new.DNS.Servers) > 0 {
 					new.DNS.Query.Type = normalizeQueryTypes(new.DNS.Query.Type)
 					if len(new.DNS.Query.Type) == 0 {
 						new.DNS.Query.Type = service.StringList{"A"}
 					}
 
-					new.DNS.Server.Over = strings.ToUpper(new.DNS.Server.Over)
+					for i := range new.DNS.Servers {
+						server := &new.DNS.Servers[i]
+						if server.Name == "" && len(server.IP) == 0 {
+							ctx.Logger.Errorf("[dns] server #%v: invalid", i+1)
+							continue MainLoop
+						}
 
-					if new.DNS.Server.Over == "TLS" && new.DNS.Server.Name == "" {
-						ctx.Logger.Error("[dns] DNS-over-TLS requires a server name")
-						break
+						server.Over = strings.ToUpper(server.Over)
+
+						if server.Over == "TLS" && server.Name == "" {
+							ctx.Logger.Errorf("[dns] server #%v: DNS-over-TLS requires a server name", i+1)
+							continue MainLoop
+						}
 					}
 
 					switch {
@@ -273,6 +285,8 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 
 	var tlsConfig *tls.Config
 
+	var tlsConfigCache map[string]*tls.Config
+
 	dnsConnIdleTimeout := defaultIdleTimeout
 	dnsConnReadTimeout := defaultReadTimeout
 	dnsConnWriteTimeout := defaultWriteTimeout
@@ -329,20 +343,22 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 					}
 
 					if dnsConn == nil {
-						host := opts.DNS.Server.Name
+						server := opts.DNS.Servers[rand.Intn(len(opts.DNS.Servers))]
 
-						if len(opts.DNS.Server.IP) > 0 {
-							host = opts.DNS.Server.IP[rand.Intn(len(opts.DNS.Server.IP))]
+						host := server.Name
+
+						if len(server.IP) > 0 {
+							host = server.IP[rand.Intn(len(server.IP))]
 						}
 
 						port := 53
 
-						if opts.DNS.Server.Over == "TLS" {
+						if server.Over == "TLS" {
 							port = 853
 						}
 
-						if opts.DNS.Server.Port != 0 {
-							port = int(opts.DNS.Server.Port)
+						if server.Port != 0 {
+							port = int(server.Port)
 						}
 
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
@@ -354,11 +370,20 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 							break
 						}
 
-						if opts.DNS.Server.Over == "TLS" {
-							if tlsConfig == nil || tlsConfig.ServerName != opts.DNS.Server.Name {
-								tlsConfig = &tls.Config{
-									ServerName:         opts.DNS.Server.Name,
-									ClientSessionCache: tls.NewLRUClientSessionCache(1),
+						if server.Over == "TLS" {
+							if tlsConfig == nil || tlsConfig.ServerName != server.Name {
+								tlsConfig = tlsConfigCache[server.Name]
+								if tlsConfig == nil {
+									tlsConfig = &tls.Config{
+										ServerName:         server.Name,
+										ClientSessionCache: tls.NewLRUClientSessionCache(1),
+									}
+
+									if tlsConfigCache == nil {
+										tlsConfigCache = make(map[string]*tls.Config)
+									}
+
+									tlsConfigCache[server.Name] = tlsConfig
 								}
 							}
 
@@ -393,13 +418,13 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 						m.SetQuestion(fqDomain, dns.TypeAAAA)
 					}
 
-					_ = dnsConn.SetWriteDeadline(time.Now().Add(dnsConnWriteTimeout))
+					_ = dnsConn.SetDeadline(time.Now().Add(dnsConnWriteTimeout))
 
 					err := dnsConn.WriteMsg(&m)
 					if err == nil {
 						var in *dns.Msg
 
-						_ = dnsConn.SetReadDeadline(time.Now().Add(dnsConnReadTimeout))
+						_ = dnsConn.SetDeadline(time.Now().Add(dnsConnReadTimeout))
 
 						in, err = dnsConn.ReadMsg()
 						if err == nil {
@@ -479,7 +504,7 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 func shouldResetDNSCache(x, y Options) bool {
 	return x.DNS.TTL != y.DNS.TTL ||
 		!reflect.DeepEqual(&x.DNS.Query, &y.DNS.Query) ||
-		!reflect.DeepEqual(&x.DNS.Server, &y.DNS.Server)
+		!reflect.DeepEqual(&x.DNS.Servers, &y.DNS.Servers)
 }
 
 func normalizeQueryTypes(qtypes []string) []string {
