@@ -1,18 +1,22 @@
 package service
 
-import "errors"
+import (
+	"errors"
+
+	"gopkg.in/yaml.v3"
+)
 
 type StringList []string
 
-func (s *StringList) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (s *StringList) UnmarshalYAML(v *yaml.Node) error {
 	var slice []string
-	if err := unmarshal(&slice); err == nil {
+	if err := v.Decode(&slice); err == nil {
 		*s = slice
 		return nil
 	}
 
 	var raw string
-	if err := unmarshal(&raw); err == nil {
+	if err := v.Decode(&raw); err == nil {
 		*s = []string{raw}
 		return nil
 	}

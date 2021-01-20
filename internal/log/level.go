@@ -2,6 +2,8 @@ package log
 
 import (
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Level int32
@@ -37,10 +39,10 @@ func (lv Level) String() string {
 	panic("unknown log level")
 }
 
-func (lv *Level) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (lv *Level) UnmarshalYAML(v *yaml.Node) error {
 	var s string
 
-	if err := unmarshal(&s); err != nil {
+	if err := v.Decode(&s); err != nil {
 		return err
 	}
 

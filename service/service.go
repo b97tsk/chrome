@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -14,7 +15,7 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/internal/log"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 type Service interface {
@@ -96,8 +97,12 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 		return nil
 	}
 
-	bytes, _ := yaml.Marshal(data)
-	if err := yaml.UnmarshalStrict(bytes, opts); err != nil {
+	byteSlice, _ := yaml.Marshal(data)
+
+	dec := yaml.NewDecoder(bytes.NewReader(byteSlice))
+	dec.KnownFields(true)
+
+	if err := dec.Decode(opts); err != nil {
 		return fmt.Errorf("%v: parse options: %w", name, err)
 	}
 
@@ -150,7 +155,7 @@ func (man *Manager) Load(r io.Reader) {
 	}
 
 	dec := yaml.NewDecoder(r)
-	dec.SetStrict(true)
+	dec.KnownFields(true)
 
 	logger := man.Logger("manager")
 

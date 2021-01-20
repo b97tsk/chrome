@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/b97tsk/chrome/internal/proxy"
+	"gopkg.in/yaml.v3"
 )
 
 type proxyData struct {
@@ -46,9 +47,9 @@ func (pc ProxyChain) NewDialer() (proxy.Dialer, error) {
 	return forward, nil
 }
 
-func (pc *ProxyChain) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (pc *ProxyChain) UnmarshalYAML(v *yaml.Node) error {
 	var rawurl string
-	if err := unmarshal(&rawurl); err == nil {
+	if err := v.Decode(&rawurl); err == nil {
 		if strings.EqualFold(rawurl, "DIRECT") {
 			pc.s = nil
 			return nil
@@ -66,7 +67,7 @@ func (pc *ProxyChain) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	}
 
 	var slice []string
-	if err := unmarshal(&slice); err == nil {
+	if err := v.Decode(&slice); err == nil {
 		pc.s = nil
 
 		for _, rawurl := range slice {
