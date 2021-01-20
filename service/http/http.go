@@ -22,7 +22,6 @@ import (
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
 	"github.com/fsnotify/fsnotify"
-	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
@@ -189,6 +188,10 @@ func (Service) Name() string {
 	return "http"
 }
 
+func (Service) Options() interface{} {
+	return new(Options)
+}
+
 func (Service) Run(ctx service.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
@@ -271,8 +274,9 @@ func (Service) Run(ctx service.Context) {
 		case <-serverDown:
 			return
 		case opts := <-ctx.Opts:
-			if new, ok := opts.(Options); ok {
+			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
+				new := *new
 				new.dialer = old.dialer
 				new.routes = old.routes
 				new.matches = old.matches
@@ -401,15 +405,6 @@ func (Service) Run(ctx service.Context) {
 			}
 		}
 	}
-}
-
-func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
-	var opts Options
-	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
-		return nil, err
-	}
-
-	return opts, nil
 }
 
 type Handler struct {

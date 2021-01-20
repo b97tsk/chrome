@@ -12,7 +12,6 @@ import (
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
 	"github.com/miekg/dns"
-	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
@@ -48,6 +47,10 @@ type Service struct{}
 
 func (Service) Name() string {
 	return "dnstun"
+}
+
+func (Service) Options() interface{} {
+	return new(Options)
 }
 
 func (Service) Run(ctx service.Context) {
@@ -146,8 +149,9 @@ MainLoop:
 		case <-ctx.Done():
 			return
 		case opts := <-ctx.Opts:
-			if new, ok := opts.(Options); ok {
+			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
+				new := *new
 				new.dialer = old.dialer
 
 				if len(new.Servers) == 0 {
@@ -184,15 +188,6 @@ MainLoop:
 			}
 		}
 	}
-}
-
-func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
-	var opts Options
-	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
-		return nil, err
-	}
-
-	return opts, nil
 }
 
 type dnsQuery struct {

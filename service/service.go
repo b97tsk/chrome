@@ -19,8 +19,8 @@ import (
 
 type Service interface {
 	Name() string
+	Options() interface{}
 	Run(Context)
-	UnmarshalOptions([]byte) (interface{}, error)
 }
 
 type Context struct {
@@ -91,10 +91,13 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 		return fmt.Errorf("%v: service not found", name)
 	}
 
-	text, _ := yaml.Marshal(data)
+	opts := service.Options()
+	if opts == nil {
+		return nil
+	}
 
-	opts, err := service.UnmarshalOptions(text)
-	if err != nil {
+	bytes, _ := yaml.Marshal(data)
+	if err := yaml.UnmarshalStrict(bytes, opts); err != nil {
 		return fmt.Errorf("%v: parse options: %w", name, err)
 	}
 

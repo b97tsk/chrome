@@ -10,12 +10,14 @@ import (
 	"github.com/b97tsk/chrome/service"
 )
 
-type Options struct{}
-
 type Service struct{}
 
 func (Service) Name() string {
 	return "pprof"
+}
+
+func (Service) Options() interface{} {
+	return nil
 }
 
 func (Service) Run(ctx service.Context) {
@@ -39,8 +41,4 @@ func (Service) Run(ctx service.Context) {
 		case <-ctx.Opts:
 		}
 	}
-}
-
-func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
-	return Options{}, nil
 }

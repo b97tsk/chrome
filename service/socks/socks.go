@@ -15,7 +15,6 @@ import (
 	"github.com/b97tsk/chrome/service"
 	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
-	"gopkg.in/yaml.v2"
 )
 
 type Options struct {
@@ -65,6 +64,10 @@ type Service struct{}
 
 func (Service) Name() string {
 	return "socks"
+}
+
+func (Service) Options() interface{} {
+	return new(Options)
 }
 
 func (Service) Run(ctx service.Context) {
@@ -182,8 +185,9 @@ MainLoop:
 		case <-ctx.Done():
 			return
 		case opts := <-ctx.Opts:
-			if new, ok := opts.(Options); ok {
+			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
+				new := *new
 				new.dialer = old.dialer
 				new.dnsDialer = old.dnsDialer
 				new.dnsCache = old.dnsCache
@@ -241,15 +245,6 @@ MainLoop:
 			}
 		}
 	}
-}
-
-func (Service) UnmarshalOptions(text []byte) (interface{}, error) {
-	var opts Options
-	if err := yaml.UnmarshalStrict(text, &opts); err != nil {
-		return nil, err
-	}
-
-	return opts, nil
 }
 
 type dnsQuery struct {
