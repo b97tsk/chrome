@@ -193,7 +193,7 @@ MainLoop:
 				new.dnsCache = old.dnsCache
 
 				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer, _ = new.Proxy.NewDialer()
+					new.dialer = new.Proxy.NewDialer()
 				}
 
 				if len(new.DNS.Servers) == 0 && (new.DNS.Server.Name != "" || len(new.DNS.Server.IP) > 0) {
@@ -225,7 +225,7 @@ MainLoop:
 					case new.DNS.Proxy == nil:
 						new.dnsDialer = new.dialer
 					case old.DNS.Proxy == nil || !new.DNS.Proxy.Equals(*old.DNS.Proxy):
-						new.dnsDialer, _ = new.DNS.Proxy.NewDialer()
+						new.dnsDialer = new.DNS.Proxy.NewDialer()
 					}
 
 					if new.dnsCache == nil || shouldResetDNSCache(old, new) {

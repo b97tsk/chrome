@@ -32,7 +32,12 @@ func (pc ProxyChain) Equals(other ProxyChain) bool {
 	return true
 }
 
-func (pc ProxyChain) NewDialer() (proxy.Dialer, error) {
+func (pc ProxyChain) NewDialer() proxy.Dialer {
+	d, _ := pc.newDialer()
+	return d
+}
+
+func (pc ProxyChain) newDialer() (proxy.Dialer, error) {
 	var forward proxy.Dialer = proxy.Direct
 
 	for i := len(pc.s) - 1; i > -1; i-- {
@@ -61,7 +66,7 @@ func (pc *ProxyChain) UnmarshalYAML(v *yaml.Node) error {
 		}
 
 		pc.s = []proxyData{{u, rawurl}}
-		_, err = pc.NewDialer()
+		_, err = pc.newDialer()
 
 		return err
 	}
@@ -83,7 +88,7 @@ func (pc *ProxyChain) UnmarshalYAML(v *yaml.Node) error {
 			pc.s = append(pc.s, proxyData{u, rawurl})
 		}
 
-		_, err = pc.NewDialer()
+		_, err = pc.newDialer()
 
 		return err
 	}

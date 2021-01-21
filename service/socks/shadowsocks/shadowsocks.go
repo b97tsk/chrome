@@ -118,7 +118,7 @@ func (Service) Run(ctx service.Context) {
 				}
 
 				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer, _ = new.Proxy.NewDialer()
+					new.dialer = new.Proxy.NewDialer()
 				}
 
 				optsIn <- new
