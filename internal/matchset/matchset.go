@@ -39,6 +39,7 @@ type MatchSet struct {
 	nextAtom      atom
 	charSetToAtom map[charset]atom
 	atomToCharSet map[atom]charset
+	atomsBuffer   []atom
 }
 
 func (set *MatchSet) lazyInit() {
@@ -146,10 +147,11 @@ func (set *MatchSet) readAtom(bytes []byte) (atom, []byte) {
 
 func (set *MatchSet) parse(bytes []byte) []atom {
 	var (
-		atoms        []atom
 		currentAtom  atom
 		lastReadAtom atom
 	)
+
+	atoms := set.atomsBuffer[:0]
 
 	for len(bytes) > 0 {
 		currentAtom, bytes = set.readAtom(bytes)
@@ -173,6 +175,8 @@ func (set *MatchSet) parse(bytes []byte) []atom {
 		}
 	}
 
+	set.atomsBuffer = atoms
+
 	if len(atoms) == 0 {
 		// Empty pattern matches any characters.
 		return []atom{specialDot}
@@ -193,6 +197,7 @@ func (set *MatchSet) parse(bytes []byte) []atom {
 
 func (set *MatchSet) Add(patt string, data interface{}) {
 	set.lazyInit()
+
 	atoms := set.parse([]byte(patt))
 	// Reverse atoms for better performance, because in practice,
 	// patterns like ".abc" are much more frequently used than
@@ -234,11 +239,11 @@ func (set *MatchSet) Match(source string, accumulate func(interface{})) {
 				matches = set.checkPattern(patt, bytes, i, matches, accumulate)
 			}
 
-			patterns, matches = matches, patterns
-
-			if len(patterns) == 0 {
+			if len(matches) == 0 {
 				break
 			}
+
+			patterns, matches = matches, patterns
 		}
 	}
 }
