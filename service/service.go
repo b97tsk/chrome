@@ -75,68 +75,17 @@ func (man *Manager) Add(service Service) {
 	man.mu.Unlock()
 }
 
-func (man *Manager) setOptions(name string, data interface{}) error {
-	if strings.TrimPrefix(name, "alias") != name {
-		return nil // If name starts with "alias", silently ignores it.
+func (man *Manager) LoadFile(name string) {
+	file, err := os.Open(name)
+	if err != nil {
+		logger := man.Logger("manager")
+		logger.Errorf("LoadFile: %v", err)
+
+		return
 	}
 
-	fields := strings.SplitN(name, "|", 3)
-	if len(fields) != 3 {
-		return fmt.Errorf("%v: ignored", name)
-	}
-
-	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
-
-	service, ok := man.services[serviceName]
-	if !ok {
-		return fmt.Errorf("%v: service not found", name)
-	}
-
-	opts := service.Options()
-	if opts == nil {
-		return nil
-	}
-
-	byteSlice, _ := yaml.Marshal(data)
-
-	dec := yaml.NewDecoder(bytes.NewReader(byteSlice))
-	dec.KnownFields(true)
-
-	if err := dec.Decode(opts); err != nil {
-		return fmt.Errorf("%v: parse options: %w", name, err)
-	}
-
-	job, ok := man.jobs[name]
-	if !ok || job.Err() != nil {
-		ctx1, done := context.WithCancel(context.Background())
-		ctx2, cancel := context.WithCancel(ctx1)
-		copts := make(chan interface{})
-		job = Job{ctx1, cancel, copts}
-
-		if man.jobs == nil {
-			man.jobs = make(map[string]Job)
-		}
-
-		man.jobs[name] = job
-
-		go func() {
-			defer func() {
-				done()
-
-				if err := recover(); err != nil {
-					logger := man.Logger("manager")
-					logger.Errorf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
-				}
-			}()
-
-			logger := man.Logger(serviceName)
-			service.Run(Context{ctx2, listenAddr, man, logger, copts})
-		}()
-	}
-
-	job.SendOpts(opts)
-
-	return nil
+	man.Load(file)
+	file.Close()
 }
 
 func (man *Manager) Load(r io.Reader) {
@@ -212,17 +161,68 @@ func (man *Manager) Load(r io.Reader) {
 	}
 }
 
-func (man *Manager) LoadFile(name string) {
-	file, err := os.Open(name)
-	if err != nil {
-		logger := man.Logger("manager")
-		logger.Errorf("LoadFile: %v", err)
-
-		return
+func (man *Manager) setOptions(name string, data interface{}) error {
+	if strings.TrimPrefix(name, "alias") != name {
+		return nil // If name starts with "alias", silently ignores it.
 	}
 
-	man.Load(file)
-	file.Close()
+	fields := strings.SplitN(name, "|", 3)
+	if len(fields) != 3 {
+		return fmt.Errorf("%v: ignored", name)
+	}
+
+	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
+
+	service, ok := man.services[serviceName]
+	if !ok {
+		return fmt.Errorf("%v: service not found", name)
+	}
+
+	opts := service.Options()
+	if opts == nil {
+		return nil
+	}
+
+	byteSlice, _ := yaml.Marshal(data)
+
+	dec := yaml.NewDecoder(bytes.NewReader(byteSlice))
+	dec.KnownFields(true)
+
+	if err := dec.Decode(opts); err != nil {
+		return fmt.Errorf("%v: parse options: %w", name, err)
+	}
+
+	job, ok := man.jobs[name]
+	if !ok || job.Err() != nil {
+		ctx1, done := context.WithCancel(context.Background())
+		ctx2, cancel := context.WithCancel(ctx1)
+		copts := make(chan interface{})
+		job = Job{ctx1, cancel, copts}
+
+		if man.jobs == nil {
+			man.jobs = make(map[string]Job)
+		}
+
+		man.jobs[name] = job
+
+		go func() {
+			defer func() {
+				done()
+
+				if err := recover(); err != nil {
+					logger := man.Logger("manager")
+					logger.Errorf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
+				}
+			}()
+
+			logger := man.Logger(serviceName)
+			service.Run(Context{ctx2, listenAddr, man, logger, copts})
+		}()
+	}
+
+	job.SendOpts(opts)
+
+	return nil
 }
 
 func (man *Manager) Shutdown() {
