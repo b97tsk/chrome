@@ -458,62 +458,121 @@ func (h *Handler) setRedirects(redirects map[string]string) {
 }
 
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	req.Header.Del("Proxy-Authorization")
+	req.Header.Del("Proxy-Connection")
+
 	if req.Method == http.MethodConnect {
-		if _, ok := rw.(http.Hijacker); !ok {
-			http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
-			return
-		}
+		h.handleConnect(rw, req)
+		return
+	}
 
-		conn, _, err := rw.(http.Hijacker).Hijack()
+	if req.Method == http.MethodGet && strings.EqualFold(req.Header.Get("Connection"), "Upgrade") {
+		h.handleUpgrade(rw, req)
+		return
+	}
+
+	if h.handleRedirect(rw, req) {
+		return
+	}
+
+	resp, err := h.tr.RoundTrip(req)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	header := rw.Header()
+	for key, values := range resp.Header {
+		header[key] = values
+	}
+
+	rw.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(rw, resp.Body)
+}
+
+func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
+	if _, ok := rw.(http.Hijacker); !ok {
+		http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
+		return
+	}
+
+	conn, _, err := rw.(http.Hijacker).Hijack()
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	go handle(conn)
+}
+
+func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
+	h.hijack(rw, func(conn net.Conn) {
+		defer conn.Close()
+
+		local, ctx := service.NewConnChecker(conn)
+
+		remoteHost := h.rewriteHost(req.RequestURI)
+
+		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
+			h.ctx.Logger.Tracef("handleConnect: dial to remote: %v", err)
 			return
 		}
-
-		requestURI := req.RequestURI
+		defer remote.Close()
 
 		httpVersion := "HTTP/1.0"
 		if req.ProtoAtLeast(1, 1) {
 			httpVersion = "HTTP/1.1"
 		}
 
-		go func() {
-			defer conn.Close()
+		responseString := httpVersion + " 200 OK\r\n\r\n"
+		if _, err := local.Write([]byte(responseString)); err != nil {
+			h.ctx.Logger.Tracef("handleConnect: write response to local: %v", err)
+			return
+		}
 
-			redirects, _ := h.redirects.Load().(map[string]string)
-			if s := redirects[requestURI]; s != "" {
-				if u, _ := url.Parse(s); u != nil && u.Path == "" && u.Port() != "" {
-					requestURI = u.Host
-				}
-			}
+		service.Relay(local, remote)
+	})
+}
 
-			local, ctx := service.NewConnChecker(conn)
+func (h *Handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
+	h.hijack(rw, func(conn net.Conn) {
+		defer conn.Close()
 
-			remote, err := h.tr.DialContext(ctx, "tcp", requestURI)
-			if err != nil {
-				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
-				_, _ = local.Write([]byte(responseString))
+		local, ctx := service.NewConnChecker(conn)
 
-				return
-			}
-			defer remote.Close()
+		remoteHost := h.rewriteHost(req.Host)
 
-			responseString := httpVersion + " 200 OK\r\n\r\n"
-			if _, err := local.Write([]byte(responseString)); err != nil {
-				return
-			}
+		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
+		if err != nil {
+			h.ctx.Logger.Tracef("handleUpgrade: dial to remote: %v", err)
+			return
+		}
+		defer remote.Close()
 
-			service.Relay(local, remote)
-		}()
+		if err := req.Write(remote); err != nil {
+			h.ctx.Logger.Tracef("handleUpgrade: write request to remote: %v", err)
+			return
+		}
 
-		return
-	}
+		resp, err := http.ReadResponse(bufio.NewReader(remote), req)
+		if err != nil {
+			h.ctx.Logger.Tracef("handleUpgrade: read response from remote: %v", err)
+			return
+		}
+		defer resp.Body.Close()
 
-	req.Header.Del("Connection")
-	req.Header.Del("Proxy-Connection")
-	req.Header.Del("Proxy-Authenticate")
-	req.Header.Del("Proxy-Authorization")
+		if err := resp.Write(local); err != nil {
+			h.ctx.Logger.Tracef("handleUpgrade: write response to local: %v", err)
+			return
+		}
 
+		service.Relay(local, remote)
+	})
+}
+
+func (h *Handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool {
 	redirects, _ := h.redirects.Load().(map[string]string)
 	if s := redirects[req.URL.Host]; s != "" {
 		if u, _ := url.Parse(s); u != nil {
@@ -523,28 +582,22 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 			http.Redirect(rw, req, u.String(), http.StatusFound)
 
-			return
+			return true
 		}
 	}
 
-	resp, err := h.tr.RoundTrip(req)
-	if err != nil {
-		http.Error(rw, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
-	copyHeader(rw.Header(), resp.Header)
-	rw.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(rw, resp.Body)
-	resp.Body.Close()
+	return false
 }
 
-func copyHeader(dst, src http.Header) {
-	for key, values := range src {
-		for _, value := range values {
-			dst.Add(key, value)
+func (h *Handler) rewriteHost(host string) string {
+	redirects, _ := h.redirects.Load().(map[string]string)
+	if s := redirects[host]; s != "" {
+		if u, _ := url.Parse(s); u != nil && u.Path == "" && u.Port() != "" {
+			host = u.Host
 		}
 	}
+
+	return host
 }
 
 func getHashCode(name string) (hashCode uint32, err error) {
