@@ -185,11 +185,13 @@ func (l *Listener) init() {
 
 func (l *Listener) Inject(conn net.Conn) {
 	l.mu.Lock()
+
 	if l.lane != nil {
 		l.lane <- conn
 	} else {
 		conn.Close()
 	}
+
 	l.mu.Unlock()
 }
 
@@ -286,73 +288,15 @@ func (h *Handler) SetAppIDList(appIDList []string) {
 
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodConnect {
-		if _, ok := rw.(http.Hijacker); !ok {
-			http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
-			return
-		}
-
-		conn, _, err := rw.(http.Hijacker).Hijack()
-		if err != nil {
-			http.Error(rw, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		requestURI := req.RequestURI
-
-		httpVersion := "HTTP/1.0"
-		if req.ProtoAtLeast(1, 1) {
-			httpVersion = "HTTP/1.1"
-		}
-
-		go func() {
-			_, port, err := net.SplitHostPort(requestURI)
-			if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
-				responseString := httpVersion + " 200 OK\r\n\r\n"
-				if _, err := conn.Write([]byte(responseString)); err != nil {
-					h.ctx.Logger.Debugf("write: %v", err)
-					conn.Close()
-
-					return
-				}
-
-				h.ln.Inject(conn)
-
-				return
-			}
-
-			defer conn.Close()
-
-			local, ctx := service.NewConnChecker(conn)
-
-			remote, err := h.tr.DialContext(ctx, "tcp", requestURI)
-			if err != nil {
-				responseString := httpVersion + " 503 Service Unavailable\r\n\r\n"
-				if _, err := local.Write([]byte(responseString)); err != nil {
-					h.ctx.Logger.Debugf("write: %v", err)
-				}
-
-				return
-			}
-			defer remote.Close()
-
-			responseString := httpVersion + " 200 OK\r\n\r\n"
-			if _, err := local.Write([]byte(responseString)); err != nil {
-				h.ctx.Logger.Debugf("write: %v", err)
-				return
-			}
-
-			service.Relay(local, remote)
-		}()
-
+		h.handleConnect(rw, req)
 		return
 	}
 
 	// Enable transparent http proxy.
 	if req.URL.Scheme == "" {
+		req.URL.Scheme = "http"
 		if req.TLS != nil && req.ProtoMajor == 1 {
 			req.URL.Scheme = "https"
-		} else {
-			req.URL.Scheme = "http"
 		}
 
 		if req.Host == "" && req.TLS != nil {
@@ -376,21 +320,77 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	appID := appIDFromRequest(resp.Request)
 	h.ctx.Logger.Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
+	header := rw.Header()
 	for key, values := range resp.Header {
-		for _, value := range values {
-			rw.Header().Add(key, value)
-		}
+		header[key] = values
 	}
 
 	if resp.ContentLength >= 0 && resp.Header.Get("Content-Length") == "" {
-		rw.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+		header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
 
 	rw.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(rw, resp.Body)
+}
 
-	if _, err := io.Copy(rw, resp.Body); err != nil {
-		h.ctx.Logger.Debugf("(%v) RECV %v: %v", appID, req.URL, err)
+func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
+	if _, ok := rw.(http.Hijacker); !ok {
+		http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
+		return
 	}
+
+	conn, _, err := rw.(http.Hijacker).Hijack()
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	go handle(conn)
+}
+
+func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
+	h.hijack(rw, func(conn net.Conn) {
+		httpVersion := "HTTP/1.0"
+		if req.ProtoAtLeast(1, 1) {
+			httpVersion = "HTTP/1.1"
+		}
+
+		remoteHost := req.RequestURI
+
+		_, port, err := net.SplitHostPort(remoteHost)
+		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
+			responseString := httpVersion + " 200 OK\r\n\r\n"
+			if _, err := conn.Write([]byte(responseString)); err != nil {
+				h.ctx.Logger.Tracef("handleConnect: write response to local: %v", err)
+				conn.Close()
+
+				return
+			}
+
+			h.ln.Inject(conn)
+
+			return
+		}
+
+		defer conn.Close()
+
+		local, ctx := service.NewConnChecker(conn)
+
+		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
+		if err != nil {
+			h.ctx.Logger.Tracef("handleConnect: dial to remote: %v", err)
+			return
+		}
+		defer remote.Close()
+
+		responseString := httpVersion + " 200 OK\r\n\r\n"
+		if _, err := local.Write([]byte(responseString)); err != nil {
+			h.ctx.Logger.Tracef("handleConnect: write response to local: %v", err)
+			return
+		}
+
+		service.Relay(local, remote)
+	})
 }
 
 func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
@@ -591,13 +591,12 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 	body, _ := ioutil.ReadAll(response.Body)
 	response.Body.Close()
 
+	response.Body = resp.Body
 	if len(body) > 0 {
 		response.Body = struct {
 			io.Reader
 			io.Closer
 		}{bytes.NewReader(body), resp.Body}
-	} else {
-		response.Body = resp.Body
 	}
 
 	if cookies, ok := response.Header["Set-Cookie"]; ok && len(cookies) == 1 {
@@ -1012,15 +1011,15 @@ var (
 	reContentRange = regexp.MustCompile(`^bytes (\d+)-(\d+)/(\d+)$`)
 
 	reqWriteExcludeHeader = map[string]bool{
-		"Vary":                true,
-		"Via":                 true,
-		"X-Forwarded-For":     true,
+		"Cache-Control":       true,
+		"Connection":          true,
 		"Proxy-Authorization": true,
 		"Proxy-Connection":    true,
 		"Upgrade":             true,
+		"Vary":                true,
+		"Via":                 true,
 		"X-Chrome-Variations": true,
-		"Connection":          true,
-		"Cache-Control":       true,
+		"X-Forwarded-For":     true,
 	}
 
 	reqBufferPool = sync.Pool{
