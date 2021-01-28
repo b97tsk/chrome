@@ -134,7 +134,7 @@ func (Service) Run(ctx service.Context) {
 						r := cache.(*dnsQueryResult)
 						if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
 							result = r
-							ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL)
+							ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL())
 						}
 					}
 
@@ -256,8 +256,11 @@ type dnsQuery struct {
 
 type dnsQueryResult struct {
 	IPList   []net.IP
-	TTL      time.Duration
 	Deadline time.Time
+}
+
+func (r *dnsQueryResult) TTL() time.Duration {
+	return time.Until(r.Deadline).Truncate(time.Second)
 }
 
 func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
@@ -318,7 +321,7 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 				r := cache.(*dnsQueryResult)
 				if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
 					result = r
-					ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL)
+					ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 				}
 			}
 
@@ -436,7 +439,6 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 										}
 
 										if ttl > 0 {
-											r.TTL = ttl
 											r.Deadline = time.Now().Add(ttl)
 										}
 									}
@@ -477,7 +479,7 @@ func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
 				if len(r.IPList) > 0 {
 					result = &r
 					opts.dnsCache.Store(q.Domain, &r)
-					ctx.Logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL)
+					ctx.Logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 				}
 			}
 
