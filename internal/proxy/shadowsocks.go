@@ -58,6 +58,9 @@ func shadowsocksFromURL(u *url.URL, forward proxy.Dialer) (proxy.Dialer, error) 
 }
 
 func decodeBase64String(s string) ([]byte, error) {
+	s = strings.ReplaceAll(s, "-", "+")
+	s = strings.ReplaceAll(s, "_", "/")
+
 	enc := base64.StdEncoding
 	if len(s)%4 != 0 {
 		enc = base64.RawStdEncoding
