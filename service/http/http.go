@@ -7,11 +7,10 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -21,7 +20,6 @@ import (
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
-	"github.com/fsnotify/fsnotify"
 )
 
 type Options struct {
@@ -40,23 +38,17 @@ type Options struct {
 type RouteInfo struct {
 	File     service.EnvString
 	Proxy    service.ProxyChain `yaml:"over"`
-	absFile  string
 	hashCode uint32
 }
 
 func (r *RouteInfo) Equals(other *RouteInfo) bool {
-	return r.absFile == other.absFile &&
+	return r.File == other.File &&
 		r.hashCode == other.hashCode &&
 		r.Proxy.Equals(other.Proxy)
 }
 
-func (r *RouteInfo) Init() error {
-	r.absFile = r.File.String()
-	if abs, err := filepath.Abs(r.absFile); err == nil {
-		r.absFile = abs
-	}
-
-	hashCode, err := getHashCode(r.absFile)
+func (r *RouteInfo) Init(fsys fs.FS) error {
+	hashCode, err := getHashCode(fsys, r.File.String())
 	if err == nil {
 		r.hashCode = hashCode
 	}
@@ -85,8 +77,8 @@ func (r *route) Recycle(r2 *route) {
 	r.matchset.Store(r2.matchset.Load())
 }
 
-func (r *route) Init() error {
-	hashCode, err := getHashCode(r.absFile)
+func (r *route) Init(fsys fs.FS) error {
+	hashCode, err := getHashCode(fsys, r.File.String())
 	if err != nil {
 		return err
 	}
@@ -95,7 +87,7 @@ func (r *route) Init() error {
 		return errNotModified
 	}
 
-	file, err := os.Open(r.absFile)
+	file, err := fsys.Open(r.File.String())
 	if err != nil {
 		return err
 	}
@@ -252,21 +244,6 @@ func (Service) Run(ctx service.Context) {
 		}
 	}()
 
-	var (
-		watcher      *fsnotify.Watcher
-		watchEvents  <-chan fsnotify.Event
-		watchErrors  <-chan error
-		delayTimers  = make(map[string]*time.Timer)
-		fileChanges  = make(chan string)
-		resetMatches <-chan time.Time
-	)
-
-	defer func() {
-		if watcher != nil {
-			watcher.Close()
-		}
-	}()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -282,7 +259,7 @@ func (Service) Run(ctx service.Context) {
 				new.matches = old.matches
 
 				for i := range new.Routes {
-					_ = new.Routes[i].Init()
+					_ = new.Routes[i].Init(ctx.Manager)
 				}
 
 				if !new.Proxy.Equals(old.Proxy) {
@@ -290,38 +267,11 @@ func (Service) Run(ctx service.Context) {
 				}
 
 				if !routesEquals(new.Routes, old.Routes) {
-					if watcher == nil {
-						var err error
-
-						watcher, err = fsnotify.NewWatcher()
-						if watcher != nil {
-							watchEvents = watcher.Events
-							watchErrors = watcher.Errors
-						}
-
-						if err != nil {
-							ctx.Logger.Error(err)
-						}
-					}
-
 					new.routes = make([]*route, len(new.Routes))
 					new.matches = &sync.Map{}
 
-					if watcher != nil {
-						for _, r := range old.routes {
-							_ = watcher.Remove(r.absFile)
-						}
-					}
-
 					for i, r := range new.Routes {
 						new.routes[i] = &route{RouteInfo: r}
-
-						if watcher != nil {
-							err := watcher.Add(filepath.Dir(r.absFile))
-							if err != nil {
-								ctx.Logger.Errorf("watcher: %v", err)
-							}
-						}
 
 						didRecycle := false
 
@@ -336,7 +286,7 @@ func (Service) Run(ctx service.Context) {
 						}
 
 						if !didRecycle {
-							switch err := new.routes[i].Init(); err {
+							switch err := new.routes[i].Init(ctx.Manager); err {
 							case nil:
 								ctx.Logger.Infof("loaded %v", r.File)
 							case errNotModified:
@@ -355,53 +305,6 @@ func (Service) Run(ctx service.Context) {
 				optsIn <- new
 
 				initialize()
-			}
-		case e := <-watchEvents:
-			const Mask = fsnotify.Create | fsnotify.Rename | fsnotify.Write
-			if e.Op&Mask != 0 {
-				timer := delayTimers[e.Name]
-				if timer == nil {
-					timer = time.AfterFunc(time.Second, func() {
-						select {
-						case <-ctx.Done():
-						case fileChanges <- e.Name:
-						}
-					})
-					delayTimers[e.Name] = timer
-				} else {
-					timer.Reset(time.Second)
-				}
-			}
-		case err := <-watchErrors:
-			ctx.Logger.Warnf("watcher: %v", err)
-		case name := <-fileChanges:
-			routesChanged := false
-
-			opts := <-optsOut
-			for _, r := range opts.routes {
-				if r.absFile == name {
-					switch err := r.Init(); err {
-					case nil:
-						ctx.Logger.Infof("loaded %v", r.File)
-
-						routesChanged = true
-					case errNotModified:
-					default:
-						ctx.Logger.Errorf("reload: %v", err)
-					}
-				}
-			}
-
-			delete(delayTimers, name)
-
-			if routesChanged {
-				resetMatches = time.After(time.Second)
-			}
-		case <-resetMatches:
-			opts := <-optsOut
-			if opts.routes != nil {
-				opts.matches = &sync.Map{}
-				optsIn <- opts
 			}
 		}
 	}
@@ -600,11 +503,12 @@ func (h *Handler) rewriteHost(host string) string {
 	return host
 }
 
-func getHashCode(name string) (hashCode uint32, err error) {
-	file, err := os.Open(name)
+func getHashCode(fsys fs.FS, name string) (hashCode uint32, err error) {
+	file, err := fsys.Open(name)
 	if err != nil {
 		return
 	}
+	defer file.Close()
 
 	digest := crc32.NewIEEE()
 
@@ -612,8 +516,6 @@ func getHashCode(name string) (hashCode uint32, err error) {
 	if err == nil {
 		hashCode = digest.Sum32()
 	}
-
-	file.Close()
 
 	return
 }

@@ -1,10 +1,12 @@
 package service
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"regexp"
@@ -12,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/b97tsk/chrome/internal/log"
@@ -52,11 +55,16 @@ type Manager struct {
 	mu       sync.Mutex
 	services map[string]Service
 	jobs     map[string]Job
+	fsys     atomic.Value
 	builtin  struct {
 		loggingService
 		dialingService
 		servingService
 	}
+}
+
+type fsysValue struct {
+	fs.FS
 }
 
 func NewManager() *Manager {
@@ -75,6 +83,15 @@ func (man *Manager) Add(service Service) {
 	man.mu.Unlock()
 }
 
+func (man *Manager) Open(name string) (fs.File, error) {
+	fsys, _ := man.fsys.Load().(fsysValue)
+	if fsys.FS == nil {
+		return nil, fs.ErrInvalid
+	}
+
+	return fsys.Open(name)
+}
+
 func (man *Manager) LoadFile(name string) {
 	file, err := os.Open(name)
 	if err != nil {
@@ -83,12 +100,40 @@ func (man *Manager) LoadFile(name string) {
 
 		return
 	}
+	defer file.Close()
+
+	filesize, _ := file.Seek(0, io.SeekEnd)
+
+	if zr, err := zip.NewReader(file, filesize); err == nil {
+		const ConfigFile = "chrome.yaml"
+
+		file, err := zr.Open(ConfigFile)
+		if err != nil {
+			logger := man.Logger("manager")
+			logger.Errorf("LoadFile: open %v in %v: %v", ConfigFile, name, err)
+
+			return
+		}
+		defer file.Close()
+
+		man.fsys.Store(fsysValue{zr})
+		man.loadConfig(file)
+		man.fsys.Store(fsysValue{})
+
+		return
+	}
+
+	_, _ = file.Seek(0, io.SeekStart)
 
 	man.Load(file)
-	file.Close()
 }
 
 func (man *Manager) Load(r io.Reader) {
+	man.fsys.Store(fsysValue{os.DirFS(".")})
+	man.loadConfig(r)
+}
+
+func (man *Manager) loadConfig(r io.Reader) {
 	man.mu.Lock()
 	defer man.mu.Unlock()
 
@@ -109,12 +154,12 @@ func (man *Manager) Load(r io.Reader) {
 	logger := man.Logger("manager")
 
 	if err := dec.Decode(&config); err != nil {
-		logger.Errorf("Load: %v", err)
+		logger.Errorf("loadConfig: %v", err)
 		return
 	}
 
 	if err := man.builtin.SetLogFile(string(config.Log.File)); err != nil {
-		logger.Errorf("Load: %v", err)
+		logger.Errorf("loadConfig: %v", err)
 	}
 
 	man.builtin.SetLogLevel(config.Log.Level)
@@ -156,7 +201,7 @@ func (man *Manager) Load(r io.Reader) {
 
 	for name, data := range config.Jobs {
 		if err := man.setOptions(name, data); err != nil {
-			logger.Errorf("Load: %v", err)
+			logger.Errorf("loadConfig: %v", err)
 		}
 	}
 }
