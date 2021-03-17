@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"math/rand"
 	"net"
@@ -20,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/b97tsk/chrome/internal/proxy"
@@ -120,6 +118,10 @@ func (Service) Run(ctx service.Context) {
 				old := <-optsOut
 				new := *new
 				new.dialer = old.dialer
+
+				if len(new.AppIDList) == 0 {
+					new.AppIDList = defaultAppIDList
+				}
 
 				if !isTwoAppIDListsIdentical(new.AppIDList, old.AppIDList) {
 					handler.SetAppIDList(new.AppIDList)
@@ -566,7 +568,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 			"User-Agent": []string(nil),
 		},
 		ContentLength: length,
-		Body:          ioutil.NopCloser(&buffers),
+		Body:          io.NopCloser(&buffers),
 	}
 
 	return request.WithContext(req.Context()), nil
@@ -588,7 +590,7 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 		return nil, fmt.Errorf("decodeResponse: %w", err)
 	}
 
-	body, _ := ioutil.ReadAll(response.Body)
+	body, _ := io.ReadAll(response.Body)
 	response.Body.Close()
 
 	response.Body = resp.Body
@@ -754,6 +756,10 @@ func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 }
 
 func (b *autoRangeBody) Close() error {
+	for _, req := range b.reqlist {
+		_ = req.Close()
+	}
+
 	return b.resp.Body.Close()
 }
 
@@ -764,13 +770,13 @@ type autoRangeRequest struct {
 	rangeFirst int64
 	rangeLast  int64
 
-	once      sync.Once
-	done      chan struct{}
-	buffers   chan []byte
+	once sync.Once
+	pipe struct {
+		*io.PipeReader
+		*io.PipeWriter
+	}
 	startTime time.Time
 	readSize  int64
-	buf       *[]byte
-	err       atomic.Value
 }
 
 func (r *autoRangeRequest) Init() {
@@ -778,56 +784,44 @@ func (r *autoRangeRequest) Init() {
 }
 
 func (r *autoRangeRequest) init() {
-	r.done = make(chan struct{})
-	r.buffers = make(chan []byte, 1)
+	r.pipe.PipeReader, r.pipe.PipeWriter = io.Pipe()
 	r.startTime = time.Now()
 
 	go func() {
-		defer close(r.done)
-
 		requestSize := r.rangeLast - r.rangeFirst + 1
-		if requestSize > perRequestSize {
-			buf := make([]byte, requestSize)
-			r.buf = &buf
-		} else {
-			r.buf = reqBufferPool.Get().(*[]byte)
-		}
 
-		buf := (*r.buf)[:requestSize]
+		readResponse := func(resp *http.Response) error {
+			defer resp.Body.Close()
 
-		readResponse := func(resp *http.Response) {
-			for len(buf) > 0 {
+			const bufferSize = 4096
+			buf := make([]byte, bufferSize)
+
+			for requestSize > 0 {
 				n, err := resp.Body.Read(buf)
 				if n > 0 {
-					for b := buf[:n]; b != nil; {
-						select {
-						case r.buffers <- b:
-							b = nil
-						case buf := <-r.buffers:
-							b = buf[:len(buf)+len(b)]
-						}
-					}
+					requestSize -= int64(n)
 
-					buf = buf[n:]
+					if _, err := r.pipe.Write(buf[:n]); err != nil {
+						return err
+					}
 				}
 
 				if err != nil {
-					break
+					return nil // Retry.
 				}
 			}
+
+			return io.EOF
 		}
 
 		if r.resp != nil { // Handle first response.
-			readResponse(r.resp)
-			r.resp.Body.Close()
-
-			if len(buf) == 0 {
-				r.err.Store(&io.EOF)
+			if err := readResponse(r.resp); err != nil {
+				_ = r.pipe.PipeWriter.CloseWithError(err)
 				return
 			}
 
 			if isRequestCanceled(r.req) {
-				r.err.Store(&context.Canceled)
+				_ = r.pipe.PipeWriter.CloseWithError(context.Canceled)
 				return
 			}
 		}
@@ -837,13 +831,13 @@ func (r *autoRangeRequest) init() {
 		req := r.req.Clone(r.req.Context())
 
 		for i := 0; i < NRetries; i++ {
-			rangeFirst, rangeLast := r.rangeLast-int64(len(buf))+1, r.rangeLast
+			rangeFirst, rangeLast := r.rangeLast-requestSize+1, r.rangeLast
 			req.Header.Set("Range", fmt.Sprintf("bytes=%v-%v", rangeFirst, rangeLast))
 
 			resp, err := r.h.roundTrip(req)
 			if err != nil {
 				if i+1 == NRetries || isRequestCanceled(req) {
-					r.err.Store(&err)
+					_ = r.pipe.PipeWriter.CloseWithError(err)
 					return
 				}
 
@@ -854,25 +848,20 @@ func (r *autoRangeRequest) init() {
 				resp.Body.Close()
 
 				if i+1 == NRetries || isRequestCanceled(req) {
-					err := errors.New(resp.Status)
-					r.err.Store(&err)
-
+					_ = r.pipe.PipeWriter.CloseWithError(errors.New(resp.Status))
 					return
 				}
 
 				continue
 			}
 
-			readResponse(resp)
-			resp.Body.Close()
-
-			if len(buf) == 0 {
-				r.err.Store(&io.EOF)
+			if err := readResponse(resp); err != nil {
+				_ = r.pipe.PipeWriter.CloseWithError(err)
 				return
 			}
 
 			if isRequestCanceled(req) {
-				r.err.Store(&context.Canceled)
+				_ = r.pipe.PipeWriter.CloseWithError(context.Canceled)
 				return
 			}
 
@@ -885,52 +874,23 @@ func (r *autoRangeRequest) init() {
 
 func (r *autoRangeRequest) Read(p []byte) (n int, err error) {
 	r.Init()
-	select {
-	case <-r.done:
-		err = *r.err.Load().(*error)
-		if err != io.EOF {
-			if r.buf != nil {
-				reqBufferPool.Put(r.buf)
-				r.buf = nil
-			}
 
-			return // Result in an error.
-		}
+	n, err = r.pipe.Read(p)
+	r.readSize += int64(n)
 
-		if len(r.buffers) > 0 {
-			buf := <-r.buffers
-			n = copy(p, buf)
-			r.readSize += int64(n)
-
-			if n < len(buf) {
-				r.buffers <- buf[n:]
-				return n, nil
-			}
-		}
-
-		if r.buf != nil {
-			reqBufferPool.Put(r.buf)
-			r.buf = nil
-		}
-
-		return // EOF
-	case buf := <-r.buffers:
-		n = copy(p, buf)
-		r.readSize += int64(n)
-
-		if n < len(buf) {
-			for b := buf[n:]; b != nil; {
-				select {
-				case r.buffers <- b:
-					b = nil
-				case buf := <-r.buffers:
-					b = b[:len(b)+len(buf)]
-				}
-			}
-		}
-
-		return
+	if err == io.ErrClosedPipe {
+		err = io.EOF
 	}
+
+	return
+}
+
+func (r *autoRangeRequest) Close() error {
+	if r.pipe.PipeReader != nil {
+		_ = r.pipe.PipeReader.Close()
+	}
+
+	return nil
 }
 
 func (r *autoRangeRequest) Progress() float64 {
@@ -963,12 +923,12 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 		return body.Bytes, nil
 	}
 
-	body, err := ioutil.ReadAll(req.Body)
+	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, fmt.Errorf("readRequestBody: %w", err)
 	}
 
-	req.Body = &bytesReadCloser{body, ioutil.NopCloser(bytes.NewReader(body))}
+	req.Body = &bytesReadCloser{body, io.NopCloser(bytes.NewReader(body))}
 
 	return body, nil
 }
@@ -1022,12 +982,10 @@ var (
 		"X-Forwarded-For":     true,
 	}
 
-	reqBufferPool = sync.Pool{
-		New: func() interface{} {
-			buf := make([]byte, perRequestSize)
-			return &buf
-		},
+	defaultAppIDList = []string{
+		"eeffefef", "profound-saga-402", "otod3r", "teefede", "teefet",
+		"teeffffe", "teefmeef", "teefmeefwd", "tjl379678792", "wzyabcd",
 	}
 )
 
-const perRequestSize = 4 * 1024 * 1024
+const perRequestSize = 4 << 20
