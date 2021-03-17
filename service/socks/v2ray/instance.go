@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 
-	"google.golang.org/protobuf/proto"
-	"v2ray.com/core"
-	"v2ray.com/core/common/net"
-	"v2ray.com/core/infra/conf"
+	core "github.com/v2fly/v2ray-core/v4"
+	"github.com/v2fly/v2ray-core/v4/common/net"
+	"github.com/v2fly/v2ray-core/v4/infra/conf"
 
-	// Import for side-effects.
-	_ "v2ray.com/core/main/distro/all"
+	// Imported for side-effects.
+	_ "github.com/v2fly/v2ray-core/v4/main/distro/all"
+	"google.golang.org/protobuf/proto"
 )
 
 type Instance struct {

@@ -1,12 +1,11 @@
 # chrome
 
-Services implemented by Go.
+Services implemented in Go.
 
 # Install
 
 ```console
-# go env -w GOPRIVATE=github.com/v2fly/v2ray-core
-# go get github.com/b97tsk/chrome
+# go install github.com/b97tsk/chrome@latest
 ```
 
 # Usage
