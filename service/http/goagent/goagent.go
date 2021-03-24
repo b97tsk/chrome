@@ -423,21 +423,10 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 				return resp, nil
 			}
 
-			if resp.StatusCode == http.StatusServiceUnavailable {
-				h.putBadAppID(appID)
-				resp.Body.Close()
+			h.putBadAppID(appID)
+			resp.Body.Close()
 
-				continue
-			}
-
-			switch resp.StatusCode {
-			case http.StatusFound, http.StatusNotFound,
-				http.StatusMethodNotAllowed, http.StatusBadGateway:
-				resp.Body.Close()
-				continue
-			}
-
-			return resp, nil
+			continue
 		}
 
 		response, err := h.decodeResponse(resp)
