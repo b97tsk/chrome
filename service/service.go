@@ -207,7 +207,7 @@ func (man *Manager) loadConfig(r io.Reader) {
 }
 
 func (man *Manager) setOptions(name string, data interface{}) error {
-	if strings.TrimPrefix(name, "alias") != name {
+	if strings.HasPrefix(name, "alias") {
 		return nil // If name starts with "alias", silently ignores it.
 	}
 
