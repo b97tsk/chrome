@@ -20,6 +20,7 @@ import (
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
+	"golang.org/x/net/http/httpguts"
 )
 
 type Options struct {
@@ -369,7 +370,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if req.Method == http.MethodGet && strings.EqualFold(req.Header.Get("Connection"), "Upgrade") {
+	if req.Method == http.MethodGet && httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {
 		h.handleUpgrade(rw, req)
 		return
 	}
