@@ -18,6 +18,10 @@ type ProxyChain struct {
 	s []proxyData
 }
 
+func (pc ProxyChain) Len() int {
+	return len(pc.s)
+}
+
 func (pc ProxyChain) Equals(other ProxyChain) bool {
 	if len(pc.s) != len(other.s) {
 		return false

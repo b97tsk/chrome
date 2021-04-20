@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
@@ -46,11 +47,17 @@ type Options struct {
 		DownlinkOnly int `json:"downlinkOnly"`
 	}
 
+	Proxy service.ProxyChain `yaml:"over"`
+
+	ForwardServer HostportOptions `yaml:"-"`
+
 	Dial struct {
 		Timeout time.Duration
 	}
 
 	stats statsINFO
+
+	forwardDialer proxy.Dialer
 }
 
 type statsINFO struct {
@@ -162,8 +169,8 @@ func (Service) Run(ctx service.Context) {
 		initialized = true
 
 		ctx.Manager.ServeListener(ln, func(c net.Conn) {
-			opts, ok := <-optsOut
-			if !ok || opts.stats.ins == nil {
+			opts := <-optsOut
+			if opts.stats.ins == nil {
 				return
 			}
 
@@ -241,18 +248,18 @@ func (Service) Run(ctx service.Context) {
 	defer stopInstance()
 
 	startInstance := func(opts Options) {
-		i, err := createInstance(opts)
+		ins, err := createInstance(opts)
 		if err != nil {
 			ctx.Logger.Errorf("create instance: %v", err)
 			return
 		}
 
-		if err := i.Start(); err != nil {
+		if err := ins.Start(); err != nil {
 			ctx.Logger.Errorf("start instance: %v", err)
 			return
 		}
 
-		stats.ins = i
+		stats.ins = ins
 		stats.ctx, stats.cancel = context.WithCancel(context.Background())
 		stats.readevents = make(chan struct{})
 
@@ -273,6 +280,13 @@ func (Service) Run(ctx service.Context) {
 		}
 	}
 
+	var forwardListener net.Listener
+	defer func() {
+		if forwardListener != nil {
+			_ = forwardListener.Close()
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -282,6 +296,58 @@ func (Service) Run(ctx service.Context) {
 				old := <-optsOut
 				new := *new
 				new.stats = old.stats
+
+				if new.Proxy.Len() != 0 {
+					if forwardListener == nil {
+						ln, err := net.Listen("tcp", "localhost:")
+						if err != nil {
+							ctx.Logger.Errorf("start forward server: %v", err)
+							return
+						}
+
+						forwardListener = ln
+
+						ctx.Manager.ServeListener(ln, func(c net.Conn) {
+							opts := <-optsOut
+							if opts.forwardDialer == nil {
+								return
+							}
+
+							addr, err := socks.Handshake(c)
+							if err != nil {
+								ctx.Logger.Debugf("socks handshake: %v", err)
+								return
+							}
+
+							local, localCtx := service.NewConnChecker(c)
+
+							remote, err := ctx.Manager.Dial(
+								localCtx,
+								opts.forwardDialer,
+								"tcp",
+								addr.String(),
+								opts.Dial.Timeout,
+							)
+							if err != nil {
+								ctx.Logger.Trace(err)
+								return
+							}
+							defer remote.Close()
+
+							service.Relay(local, remote)
+						})
+					}
+
+					host, port, _ := net.SplitHostPort(forwardListener.Addr().String())
+					new.ForwardServer.Address = host
+					new.ForwardServer.Port, _ = strconv.Atoi(port)
+
+					new.forwardDialer = old.forwardDialer
+
+					if !new.Proxy.Equals(old.Proxy) {
+						new.forwardDialer = new.Proxy.NewDialer()
+					}
+				}
 
 				if shouldRestart(old, new) {
 					stopInstance()
@@ -324,9 +390,15 @@ func (c *doOnReadConn) Read(p []byte) (n int, err error) {
 }
 
 func shouldRestart(x, y Options) bool {
+	if (x.Proxy.Len() != 0) != (y.Proxy.Len() != 0) {
+		return true
+	}
+
 	var z Options
+	x.Proxy, y.Proxy = z.Proxy, z.Proxy
 	x.Dial, y.Dial = z.Dial, z.Dial
 	x.stats, y.stats = z.stats, z.stats
+	x.forwardDialer, y.forwardDialer = nil, nil
 
 	return !reflect.DeepEqual(x, y)
 }

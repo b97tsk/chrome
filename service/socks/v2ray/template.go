@@ -133,7 +133,29 @@ const v2rayTemplateBody = `
           "tcpFastOpen": true
         }
       },
+{{- if .ForwardServer.Address }}
+      "proxySettings": {
+		"tag": "fwd",
+		"transportLayer": true
+      },
+{{- end }}
       "mux": {{ .Mux | json }}
+{{- if .ForwardServer.Address }}
+    },
+    {
+      "protocol": "socks",
+      "settings": {
+        "servers": [
+          {
+{{- with .ForwardServer }}
+            "address": {{ .Address | json }},
+            "port": {{ .Port }}
+{{- end }}{{/* with .ForwardServer */}}
+          }
+        ]
+      },
+	  "tag": "fwd"
+{{- end }}
     }
   ],
   "policy": {
