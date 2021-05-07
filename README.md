@@ -5,7 +5,7 @@ Services implemented in Go.
 # Install
 
 ```console
-# go install github.com/b97tsk/chrome@latest
+# go install github.com/b97tsk/chrome/cmd/chrome@latest
 ```
 
 # Usage
