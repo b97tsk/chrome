@@ -17,16 +17,16 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/service"
 	"golang.org/x/net/http/httpguts"
 )
 
 type Options struct {
 	Routes    []RouteInfo
 	Redirects map[string]string
-	Proxy     service.ProxyChain `yaml:"over"`
+	Proxy     chrome.ProxyChain `yaml:"over"`
 	Dial      struct {
 		Timeout time.Duration
 	}
@@ -37,8 +37,8 @@ type Options struct {
 }
 
 type RouteInfo struct {
-	File     service.EnvString
-	Proxy    service.ProxyChain `yaml:"over"`
+	File     chrome.EnvString
+	Proxy    chrome.ProxyChain `yaml:"over"`
 	hashCode uint32
 }
 
@@ -185,7 +185,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)
@@ -312,12 +312,12 @@ func (Service) Run(ctx service.Context) {
 }
 
 type Handler struct {
-	ctx       service.Context
+	ctx       chrome.Context
 	tr        *http.Transport
 	redirects atomic.Value
 }
 
-func NewHandler(ctx service.Context, opts <-chan Options) *Handler {
+func NewHandler(ctx chrome.Context, opts <-chan Options) *Handler {
 	h := &Handler{ctx: ctx}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -414,7 +414,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
 		defer conn.Close()
 
-		local, ctx := service.NewConnChecker(conn)
+		local, ctx := chrome.NewConnChecker(conn)
 
 		remoteHost := h.rewriteHost(req.RequestURI)
 
@@ -436,7 +436,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		service.Relay(local, remote)
+		chrome.Relay(local, remote)
 	})
 }
 
@@ -444,7 +444,7 @@ func (h *Handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
 		defer conn.Close()
 
-		local, ctx := service.NewConnChecker(conn)
+		local, ctx := chrome.NewConnChecker(conn)
 
 		remoteHost := h.rewriteHost(req.Host)
 
@@ -472,7 +472,7 @@ func (h *Handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		service.Relay(local, remote)
+		chrome.Relay(local, remote)
 	})
 }
 

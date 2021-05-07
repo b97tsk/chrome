@@ -4,8 +4,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
@@ -13,7 +13,7 @@ import (
 type Options struct {
 	Method   string
 	Password string
-	Proxy    service.ProxyChain `yaml:"over"`
+	Proxy    chrome.ProxyChain `yaml:"over"`
 	Dial     struct {
 		Timeout time.Duration
 	}
@@ -32,7 +32,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)
@@ -83,7 +83,7 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			local, localCtx := service.NewConnChecker(c)
+			local, localCtx := chrome.NewConnChecker(c)
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
@@ -92,7 +92,7 @@ func (Service) Run(ctx service.Context) {
 			}
 			defer remote.Close()
 
-			service.Relay(local, remote)
+			chrome.Relay(local, remote)
 		})
 	}
 

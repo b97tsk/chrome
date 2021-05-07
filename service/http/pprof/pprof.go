@@ -7,7 +7,7 @@ import (
 	// Import for side-effects.
 	_ "net/http/pprof"
 
-	"github.com/b97tsk/chrome/service"
+	"github.com/b97tsk/chrome"
 )
 
 type Service struct{}
@@ -20,7 +20,7 @@ func (Service) Options() interface{} {
 	return nil
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)

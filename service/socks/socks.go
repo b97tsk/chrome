@@ -13,15 +13,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/service"
 	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
 type Options struct {
-	Proxy service.ProxyChain `yaml:"over"`
+	Proxy chrome.ProxyChain `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration
@@ -32,7 +32,7 @@ type Options struct {
 		Servers []DNServer
 
 		Query struct {
-			Type service.StringList
+			Type chrome.StringList
 			All  bool
 		}
 		TTL struct {
@@ -48,7 +48,7 @@ type Options struct {
 			Timeout time.Duration
 		}
 
-		Proxy *service.ProxyChain `yaml:"over"`
+		Proxy *chrome.ProxyChain `yaml:"over"`
 	}
 
 	dialer    proxy.Dialer
@@ -58,7 +58,7 @@ type Options struct {
 
 type DNServer struct {
 	Name string
-	IP   service.StringList
+	IP   chrome.StringList
 	Over string
 	Port uint16
 }
@@ -73,7 +73,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)
@@ -132,7 +132,7 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			local, localCtx := service.NewConnChecker(c)
+			local, localCtx := chrome.NewConnChecker(c)
 
 			hostport := addr.String()
 
@@ -191,7 +191,7 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			service.Relay(local, remote)
+			chrome.Relay(local, remote)
 		})
 	}
 MainLoop:
@@ -218,7 +218,7 @@ MainLoop:
 				if len(new.DNS.Servers) > 0 {
 					new.DNS.Query.Type = normalizeQueryTypes(new.DNS.Query.Type)
 					if len(new.DNS.Query.Type) == 0 {
-						new.DNS.Query.Type = service.StringList{"A"}
+						new.DNS.Query.Type = chrome.StringList{"A"}
 					}
 
 					for i := range new.DNS.Servers {
@@ -278,7 +278,7 @@ func (r *dnsQueryResult) TTL() time.Duration {
 	return time.Until(r.Deadline).Truncate(time.Second)
 }
 
-func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
+func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 	var dnsConn *dns.Conn
 
 	var dnsConnIdle struct {

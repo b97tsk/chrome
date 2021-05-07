@@ -4,13 +4,13 @@ import (
 	"net"
 	"time"
 
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/service"
 )
 
 type Options struct {
-	ForwardAddr string             `yaml:"for"`
-	Proxy       service.ProxyChain `yaml:"over"`
+	ForwardAddr string            `yaml:"for"`
+	Proxy       chrome.ProxyChain `yaml:"over"`
 	Dial        struct {
 		Timeout time.Duration
 	}
@@ -28,7 +28,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)
@@ -72,7 +72,7 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			local, localCtx := service.NewConnChecker(c)
+			local, localCtx := chrome.NewConnChecker(c)
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", opts.ForwardAddr, opts.Dial.Timeout)
 			if err != nil {
@@ -81,7 +81,7 @@ func (Service) Run(ctx service.Context) {
 			}
 			defer remote.Close()
 
-			service.Relay(local, remote)
+			chrome.Relay(local, remote)
 		})
 	}
 

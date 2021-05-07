@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/b97tsk/chrome/service"
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/service/http"
 	"github.com/b97tsk/chrome/service/http/goagent"
 	"github.com/b97tsk/chrome/service/http/httpfs"
@@ -99,8 +99,8 @@ func Main() (code int) {
 	}
 }
 
-func newManager() *service.Manager {
-	man := service.NewManager()
+func newManager() *chrome.Manager {
+	man := chrome.NewManager()
 	man.Add(dnstun.Service{})
 	man.Add(goagent.Service{})
 	man.Add(http.Service{})

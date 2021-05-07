@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/service"
 	"github.com/miekg/dns"
 )
 
@@ -31,14 +31,14 @@ type Options struct {
 		Timeout time.Duration
 	}
 
-	Proxy service.ProxyChain `yaml:"over"`
+	Proxy chrome.ProxyChain `yaml:"over"`
 
 	dialer proxy.Dialer
 }
 
 type DNServer struct {
 	Name string
-	IP   service.StringList
+	IP   chrome.StringList
 	Over string
 	Port uint16
 }
@@ -53,7 +53,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)
@@ -101,7 +101,7 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			local, localCtx := service.NewConnChecker(c)
+			local, localCtx := chrome.NewConnChecker(c)
 
 			dnsConn := &dns.Conn{Conn: local}
 
@@ -197,7 +197,7 @@ type dnsQuery struct {
 	Options Options
 }
 
-func startWorker(ctx service.Context, incoming <-chan dnsQuery) {
+func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 	var dnsConn *dns.Conn
 
 	var dnsConnIdle struct {

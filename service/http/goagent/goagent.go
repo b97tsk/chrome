@@ -21,13 +21,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/service"
 )
 
 type Options struct {
-	AppIDList []string           `yaml:"appids"`
-	Proxy     service.ProxyChain `yaml:"over"`
+	AppIDList []string          `yaml:"appids"`
+	Proxy     chrome.ProxyChain `yaml:"over"`
 	Dial      struct {
 		Timeout time.Duration
 	}
@@ -45,7 +45,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)
@@ -226,7 +226,7 @@ func (l *Listener) Addr() net.Addr {
 }
 
 type Handler struct {
-	ctx          service.Context
+	ctx          chrome.Context
 	ln           *Listener
 	tr           *http.Transport
 	appIDMutex   sync.Mutex
@@ -234,7 +234,7 @@ type Handler struct {
 	badAppIDList []string
 }
 
-func NewHandler(ctx service.Context, ln *Listener, opts <-chan Options) *Handler {
+func NewHandler(ctx chrome.Context, ln *Listener, opts <-chan Options) *Handler {
 	h := &Handler{ctx: ctx, ln: ln}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -376,7 +376,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		defer conn.Close()
 
-		local, ctx := service.NewConnChecker(conn)
+		local, ctx := chrome.NewConnChecker(conn)
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
@@ -391,7 +391,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		service.Relay(local, remote)
+		chrome.Relay(local, remote)
 	})
 }
 

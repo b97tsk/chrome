@@ -5,11 +5,11 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/b97tsk/chrome/service"
+	"github.com/b97tsk/chrome"
 )
 
 type Options struct {
-	Dir service.EnvString
+	Dir chrome.EnvString
 
 	handler http.Handler
 }
@@ -24,7 +24,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)

@@ -18,9 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
 	"github.com/b97tsk/chrome/internal/proxy"
-	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -48,7 +48,7 @@ type Options struct {
 		DownlinkOnly int `json:"downlinkOnly"`
 	}
 
-	Proxy service.ProxyChain `yaml:"over"`
+	Proxy chrome.ProxyChain `yaml:"over"`
 
 	ForwardServer HostportOptions `yaml:"-"`
 
@@ -131,7 +131,7 @@ func (Service) Options() interface{} {
 	return new(Options)
 }
 
-func (Service) Run(ctx service.Context) {
+func (Service) Run(ctx chrome.Context) {
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
 		ctx.Logger.Error(err)
@@ -188,7 +188,7 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			local, localCtx := service.NewConnCheckerContext(opts.stats.ctx, c)
+			local, localCtx := chrome.NewConnCheckerContext(opts.stats.ctx, c)
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.stats.ins, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
@@ -210,7 +210,7 @@ func (Service) Run(ctx service.Context) {
 				}
 			})
 
-			service.Relay(local, remote)
+			chrome.Relay(local, remote)
 		})
 	}
 
@@ -339,7 +339,7 @@ func (Service) Run(ctx service.Context) {
 								return
 							}
 
-							local, localCtx := service.NewConnChecker(c)
+							local, localCtx := chrome.NewConnChecker(c)
 
 							remote, err := ctx.Manager.Dial(
 								localCtx,
@@ -359,7 +359,7 @@ func (Service) Run(ctx service.Context) {
 								return
 							}
 
-							service.Relay(local, remote)
+							chrome.Relay(local, remote)
 						})
 					}
 
