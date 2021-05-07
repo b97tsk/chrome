@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/ioutil"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
@@ -174,7 +175,14 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			addr, err := socks.Handshake(c)
+			var reply bytes.Buffer
+
+			rw := &struct {
+				io.Reader
+				io.Writer
+			}{c, ioutil.LimitWriter(c, 2, &reply)}
+
+			addr, err := socks.Handshake(rw)
 			if err != nil {
 				ctx.Logger.Debugf("socks handshake: %v", err)
 				return
@@ -188,6 +196,11 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 			defer remote.Close()
+
+			if _, err := reply.WriteTo(local); err != nil {
+				ctx.Logger.Trace(err)
+				return
+			}
 
 			readevents := opts.stats.readevents
 			remote = doOnRead(remote, func(int) {
@@ -313,7 +326,14 @@ func (Service) Run(ctx service.Context) {
 								return
 							}
 
-							addr, err := socks.Handshake(c)
+							var reply bytes.Buffer
+
+							rw := &struct {
+								io.Reader
+								io.Writer
+							}{c, ioutil.LimitWriter(c, 2, &reply)}
+
+							addr, err := socks.Handshake(rw)
 							if err != nil {
 								ctx.Logger.Debugf("socks handshake: %v", err)
 								return
@@ -333,6 +353,11 @@ func (Service) Run(ctx service.Context) {
 								return
 							}
 							defer remote.Close()
+
+							if _, err := reply.WriteTo(local); err != nil {
+								ctx.Logger.Trace(err)
+								return
+							}
 
 							service.Relay(local, remote)
 						})

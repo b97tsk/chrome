@@ -1,8 +1,10 @@
 package socks
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"io"
 	"math/rand"
 	"net"
 	"reflect"
@@ -11,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/b97tsk/chrome/internal/ioutil"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/b97tsk/chrome/service"
 	"github.com/miekg/dns"
@@ -116,7 +119,14 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 
-			addr, err := socks.Handshake(c)
+			var reply bytes.Buffer
+
+			rw := &struct {
+				io.Reader
+				io.Writer
+			}{c, ioutil.LimitWriter(c, 2, &reply)}
+
+			addr, err := socks.Handshake(rw)
 			if err != nil {
 				ctx.Logger.Debugf("socks handshake: %v", err)
 				return
@@ -175,6 +185,11 @@ func (Service) Run(ctx service.Context) {
 				return
 			}
 			defer remote.Close()
+
+			if _, err := reply.WriteTo(local); err != nil {
+				ctx.Logger.Trace(err)
+				return
+			}
 
 			service.Relay(local, remote)
 		})
