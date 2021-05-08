@@ -71,7 +71,7 @@ func NewManager() *Manager {
 	return new(Manager)
 }
 
-func (man *Manager) Add(service Service) {
+func (man *Manager) AddService(service Service) {
 	man.mu.Lock()
 
 	if man.services == nil {
