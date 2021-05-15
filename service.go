@@ -149,8 +149,6 @@ func (man *Manager) loadConfig(r io.Reader) {
 	}
 
 	dec := yaml.NewDecoder(r)
-	dec.KnownFields(true)
-
 	logger := man.Logger("manager")
 
 	if err := dec.Decode(&config); err != nil {
@@ -224,17 +222,15 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	}
 
 	opts := service.Options()
-	if opts == nil {
-		return nil
-	}
+	if opts != nil {
+		byteSlice, _ := yaml.Marshal(data)
 
-	byteSlice, _ := yaml.Marshal(data)
+		dec := yaml.NewDecoder(bytes.NewReader(byteSlice))
+		dec.KnownFields(true)
 
-	dec := yaml.NewDecoder(bytes.NewReader(byteSlice))
-	dec.KnownFields(true)
-
-	if err := dec.Decode(opts); err != nil {
-		return fmt.Errorf("%v: parse options: %w", name, err)
+		if err := dec.Decode(opts); err != nil {
+			return fmt.Errorf("%v: parse options: %w", name, err)
+		}
 	}
 
 	job, ok := man.jobs[name]
@@ -265,7 +261,9 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 		}()
 	}
 
-	job.SendOpts(opts)
+	if opts != nil {
+		job.SendOpts(opts)
+	}
 
 	return nil
 }
