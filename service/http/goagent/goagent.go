@@ -396,11 +396,10 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
-	const NRetries = 3
-	for i := 0; i < NRetries; i++ {
+	for {
 		request, err := h.encodeRequest(req)
 		if err != nil {
-			return nil, fmt.Errorf("roundTrip: %w", err)
+			return nil, fmt.Errorf("round trip: %w", err)
 		}
 
 		appID := appIDFromRequest(request)
@@ -409,8 +408,8 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			h.ctx.Logger.Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
 
-			if i+1 == NRetries || isRequestCanceled(req) {
-				return nil, fmt.Errorf("roundTrip: %w", err)
+			if isRequestCanceled(req) {
+				return nil, fmt.Errorf("round trip: %w", err)
 			}
 
 			continue
@@ -419,7 +418,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		if resp.StatusCode != http.StatusOK {
 			h.ctx.Logger.Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
-			if i+1 == NRetries || isRequestCanceled(req) {
+			if isRequestCanceled(req) {
 				return resp, nil
 			}
 
@@ -433,10 +432,10 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		if err != nil {
 			resp.Body.Close()
 
-			return nil, fmt.Errorf("roundTrip: %w", err)
+			return nil, fmt.Errorf("round trip: %w", err)
 		}
 
-		if i+1 == NRetries || isRequestCanceled(req) {
+		if isRequestCanceled(req) {
 			return response, nil
 		}
 
@@ -446,8 +445,6 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		response.Body.Close()
 	}
-
-	panic("should not happen")
 }
 
 func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
@@ -512,7 +509,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 
 	w, err := flate.NewWriter(&b, flate.BestCompression)
 	if err != nil {
-		return nil, fmt.Errorf("encodeRequest: %w", err)
+		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
 	fmt.Fprintf(w, "%v %v HTTP/1.1\r\n", req.Method, req.URL)
@@ -540,7 +537,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 
 	appID := h.getAppID(req)
 	if appID == "" {
-		return nil, errors.New("encodeRequest: no appid")
+		return nil, errors.New("encode request: no appid")
 	}
 
 	fetchserver := &url.URL{
@@ -566,17 +563,17 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 	var hdrLen uint16
 	if err := binary.Read(resp.Body, binary.BigEndian, &hdrLen); err != nil {
-		return nil, fmt.Errorf("decodeResponse: %w", err)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	hdrBuf := make([]byte, hdrLen)
 	if _, err := io.ReadFull(resp.Body, hdrBuf); err != nil {
-		return nil, fmt.Errorf("decodeResponse: %w", err)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	response, err := http.ReadResponse(bufio.NewReader(flate.NewReader(bytes.NewReader(hdrBuf))), resp.Request)
 	if err != nil {
-		return nil, fmt.Errorf("decodeResponse: %w", err)
+		return nil, fmt.Errorf("decode response: %w", err)
 	}
 
 	body, _ := io.ReadAll(response.Body)
@@ -590,7 +587,7 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 		}{bytes.NewReader(body), resp.Body}
 	}
 
-	if cookies, ok := response.Header["Set-Cookie"]; ok && len(cookies) == 1 {
+	if cookies := response.Header["Set-Cookie"]; len(cookies) == 1 {
 		var parts []string
 
 		for i, c := range strings.Split(cookies[0], ", ") {
@@ -602,11 +599,7 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 		}
 
 		if len(parts) > 1 {
-			response.Header.Del("Set-Cookie")
-
-			for _, c := range parts {
-				response.Header.Add("Set-Cookie", c)
-			}
+			response.Header["Set-Cookie"] = parts
 		}
 	}
 
@@ -796,6 +789,7 @@ func (r *autoRangeRequest) init() {
 				}
 
 				if err != nil {
+					r.h.ctx.Logger.Tracef("read response: %v", err)
 					return nil // Retry.
 				}
 			}
@@ -815,17 +809,15 @@ func (r *autoRangeRequest) init() {
 			}
 		}
 
-		const NRetries = 3
-
 		req := r.req.Clone(r.req.Context())
 
-		for i := 0; i < NRetries; i++ {
+		for {
 			rangeFirst, rangeLast := r.rangeLast-requestSize+1, r.rangeLast
 			req.Header.Set("Range", fmt.Sprintf("bytes=%v-%v", rangeFirst, rangeLast))
 
 			resp, err := r.h.roundTrip(req)
 			if err != nil {
-				if i+1 == NRetries || isRequestCanceled(req) {
+				if isRequestCanceled(req) {
 					_ = r.pipe.PipeWriter.CloseWithError(err)
 					return
 				}
@@ -836,7 +828,7 @@ func (r *autoRangeRequest) init() {
 			if resp.StatusCode != http.StatusPartialContent {
 				resp.Body.Close()
 
-				if i+1 == NRetries || isRequestCanceled(req) {
+				if isRequestCanceled(req) {
 					_ = r.pipe.PipeWriter.CloseWithError(errors.New(resp.Status))
 					return
 				}
@@ -853,11 +845,7 @@ func (r *autoRangeRequest) init() {
 				_ = r.pipe.PipeWriter.CloseWithError(context.Canceled)
 				return
 			}
-
-			i = -1 // Start over.
 		}
-
-		panic("should not happen")
 	}()
 }
 
@@ -914,7 +902,7 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		return nil, fmt.Errorf("readRequestBody: %w", err)
+		return nil, fmt.Errorf("read request body: %w", err)
 	}
 
 	req.Body = &bytesReadCloser{body, io.NopCloser(bytes.NewReader(body))}
