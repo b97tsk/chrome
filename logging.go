@@ -23,25 +23,17 @@ type loggingService struct {
 	level   log.Level
 	file    *os.File
 	output  io.Writer
-	loggers map[string]*log.Logger
+	loggers sync.Map
 }
 
 func (l *loggingService) Logger(name string) *log.Logger {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	logger := l.loggers[name]
-	if logger == nil {
-		logger = log.New(l, "["+name+"] ", stdlog.Flags()|stdlog.Lmsgprefix)
-
-		if l.loggers == nil {
-			l.loggers = make(map[string]*log.Logger)
-		}
-
-		l.loggers[name] = logger
+	logger, ok := l.loggers.Load(name)
+	if !ok {
+		logger = log.New(l, "["+name+"] ", stdlog.LstdFlags|stdlog.Lmsgprefix)
+		logger, _ = l.loggers.LoadOrStore(name, logger)
 	}
 
-	return logger
+	return logger.(*log.Logger)
 }
 
 func (l *loggingService) LogLevel() log.Level {
