@@ -31,7 +31,6 @@ type Context struct {
 	context.Context
 	ListenAddr string
 	Manager    *Manager
-	Logger     *log.Logger
 	Opts       <-chan interface{}
 }
 
@@ -248,16 +247,15 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 
 		go func() {
 			defer func() {
-				done()
-
 				if err := recover(); err != nil {
 					logger := man.Logger("manager")
 					logger.Errorf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
+
+				done()
 			}()
 
-			logger := man.Logger(serviceName)
-			service.Run(Context{ctx2, listenAddr, man, logger, copts})
+			service.Run(Context{ctx2, listenAddr, man, copts})
 		}()
 	}
 

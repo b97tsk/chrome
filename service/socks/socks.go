@@ -65,8 +65,10 @@ type DNServer struct {
 
 type Service struct{}
 
+const _ServiceName = "socks"
+
 func (Service) Name() string {
-	return "socks"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -74,14 +76,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 
@@ -128,7 +132,7 @@ func (Service) Run(ctx chrome.Context) {
 
 			addr, err := socks.Handshake(rw)
 			if err != nil {
-				ctx.Logger.Debugf("socks handshake: %v", err)
+				logger.Debugf("socks handshake: %v", err)
 				return
 			}
 
@@ -144,7 +148,7 @@ func (Service) Run(ctx chrome.Context) {
 						r := cache.(*dnsQueryResult)
 						if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
 							result = r
-							ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL())
+							logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL())
 						}
 					}
 
@@ -181,13 +185,13 @@ func (Service) Run(ctx chrome.Context) {
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", hostport, opts.Dial.Timeout)
 			if err != nil {
-				ctx.Logger.Trace(err)
+				logger.Trace(err)
 				return
 			}
 			defer remote.Close()
 
 			if _, err := reply.WriteTo(local); err != nil {
-				ctx.Logger.Trace(err)
+				logger.Trace(err)
 				return
 			}
 
@@ -224,14 +228,14 @@ MainLoop:
 					for i := range new.DNS.Servers {
 						server := &new.DNS.Servers[i]
 						if server.Name == "" && len(server.IP) == 0 {
-							ctx.Logger.Errorf("[dns] server #%v: invalid", i+1)
+							logger.Errorf("[dns] server #%v: invalid", i+1)
 							continue MainLoop
 						}
 
 						server.Over = strings.ToUpper(server.Over)
 
 						if server.Over == "TLS" && server.Name == "" {
-							ctx.Logger.Errorf("[dns] server #%v: DNS-over-TLS requires a server name", i+1)
+							logger.Errorf("[dns] server #%v: DNS-over-TLS requires a server name", i+1)
 							continue MainLoop
 						}
 					}
@@ -304,6 +308,8 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 	dnsConnReadTimeout := defaultReadTimeout
 	dnsConnWriteTimeout := defaultWriteTimeout
 
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	for {
 		if dnsConn != nil {
 			if dnsConnIdle.Timer == nil {
@@ -323,7 +329,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConnIdle.Timer = nil
 			dnsConnIdle.TimerC = nil
 
-			ctx.Logger.Trace("[dns] closing DNS connection due to idle timeout")
+			logger.Trace("[dns] closing DNS connection due to idle timeout")
 
 			dnsConn.Close()
 			dnsConn = nil
@@ -336,7 +342,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 				r := cache.(*dnsQueryResult)
 				if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
 					result = r
-					ctx.Logger.Tracef("[dns] (from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+					logger.Tracef("[dns] (from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 				}
 			}
 
@@ -375,11 +381,11 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 						}
 
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
-						ctx.Logger.Tracef("[dns] dialing to %v", hostport)
+						logger.Tracef("[dns] dialing to %v", hostport)
 
 						conn, err := ctx.Manager.Dial(q.Context, opts.dnsDialer, "tcp", hostport, opts.Dial.Timeout)
 						if err != nil {
-							ctx.Logger.Tracef("[dns] %v", err)
+							logger.Tracef("[dns] %v", err)
 							break
 						}
 
@@ -473,10 +479,10 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 								break
 							}
 						} else {
-							ctx.Logger.Tracef("[dns] ReadMsg: %v", err)
+							logger.Tracef("[dns] ReadMsg: %v", err)
 						}
 					} else {
-						ctx.Logger.Tracef("[dns] WriteMsg: %v", err)
+						logger.Tracef("[dns] WriteMsg: %v", err)
 					}
 
 					if err != nil {
@@ -494,7 +500,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 				if len(r.IPList) > 0 {
 					result = &r
 					opts.dnsCache.Store(q.Domain, &r)
-					ctx.Logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+					logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 				}
 			}
 

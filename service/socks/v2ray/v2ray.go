@@ -123,8 +123,10 @@ type PingOptions struct {
 
 type Service struct{}
 
+const _ServiceName = "v2ray"
+
 func (Service) Name() string {
-	return "v2ray"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -132,14 +134,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 
@@ -184,7 +188,7 @@ func (Service) Run(ctx chrome.Context) {
 
 			addr, err := socks.Handshake(rw)
 			if err != nil {
-				ctx.Logger.Debugf("socks handshake: %v", err)
+				logger.Debugf("socks handshake: %v", err)
 				return
 			}
 
@@ -192,13 +196,13 @@ func (Service) Run(ctx chrome.Context) {
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.stats.ins, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				ctx.Logger.Trace(err)
+				logger.Trace(err)
 				return
 			}
 			defer remote.Close()
 
 			if _, err := reply.WriteTo(local); err != nil {
-				ctx.Logger.Trace(err)
+				logger.Trace(err)
 				return
 			}
 
@@ -230,7 +234,7 @@ func (Service) Run(ctx chrome.Context) {
 			go func(stats statsINFO) {
 				defer func() {
 					if err := stats.ins.Close(); err != nil {
-						ctx.Logger.Debugf("close instance: %v", err)
+						logger.Debugf("close instance: %v", err)
 					}
 
 					stats.cancel()
@@ -263,12 +267,12 @@ func (Service) Run(ctx chrome.Context) {
 	startInstance := func(opts Options) {
 		ins, err := createInstance(opts)
 		if err != nil {
-			ctx.Logger.Errorf("create instance: %v", err)
+			logger.Errorf("create instance: %v", err)
 			return
 		}
 
 		if err := ins.Start(); err != nil {
-			ctx.Logger.Errorf("start instance: %v", err)
+			logger.Errorf("start instance: %v", err)
 			return
 		}
 
@@ -287,7 +291,7 @@ func (Service) Run(ctx chrome.Context) {
 			go func() {
 				err := startPing(ctxPing, opts.Mux.Ping, ctx.ListenAddr, restart)
 				if err != nil {
-					ctx.Logger.Errorf("ping: %v", err)
+					logger.Errorf("ping: %v", err)
 				}
 			}()
 		}
@@ -314,7 +318,7 @@ func (Service) Run(ctx chrome.Context) {
 					if forwardListener == nil {
 						ln, err := net.Listen("tcp", "localhost:")
 						if err != nil {
-							ctx.Logger.Errorf("start forward server: %v", err)
+							logger.Errorf("start forward server: %v", err)
 							return
 						}
 
@@ -335,7 +339,7 @@ func (Service) Run(ctx chrome.Context) {
 
 							addr, err := socks.Handshake(rw)
 							if err != nil {
-								ctx.Logger.Debugf("socks handshake: %v", err)
+								logger.Debugf("socks handshake: %v", err)
 								return
 							}
 
@@ -349,13 +353,13 @@ func (Service) Run(ctx chrome.Context) {
 								opts.Dial.Timeout,
 							)
 							if err != nil {
-								ctx.Logger.Trace(err)
+								logger.Trace(err)
 								return
 							}
 							defer remote.Close()
 
 							if _, err := reply.WriteTo(local); err != nil {
-								ctx.Logger.Trace(err)
+								logger.Trace(err)
 								return
 							}
 

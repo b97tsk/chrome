@@ -45,8 +45,10 @@ type DNServer struct {
 
 type Service struct{}
 
+const _ServiceName = "dnstun"
+
 func (Service) Name() string {
-	return "dnstun"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -54,14 +56,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 
@@ -108,7 +112,7 @@ func (Service) Run(ctx chrome.Context) {
 			for {
 				in, err := dnsConn.ReadMsg()
 				if err != nil {
-					ctx.Logger.Tracef("(local) ReadMsg: %v", err)
+					logger.Tracef("(local) ReadMsg: %v", err)
 					return
 				}
 
@@ -137,7 +141,7 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if err := dnsConn.WriteMsg(result); err != nil {
-					ctx.Logger.Tracef("(local) WriteMsg: %v", err)
+					logger.Tracef("(local) WriteMsg: %v", err)
 					return
 				}
 			}
@@ -156,7 +160,7 @@ MainLoop:
 
 				if len(new.Servers) == 0 {
 					if new.Server.Name == "" && len(new.Server.IP) == 0 {
-						ctx.Logger.Error("DNS server is not specified")
+						logger.Error("DNS server is not specified")
 						break
 					}
 
@@ -166,14 +170,14 @@ MainLoop:
 				for i := range new.Servers {
 					server := &new.Servers[i]
 					if server.Name == "" && len(server.IP) == 0 {
-						ctx.Logger.Errorf("server #%v: invalid", i+1)
+						logger.Errorf("server #%v: invalid", i+1)
 						continue MainLoop
 					}
 
 					server.Over = strings.ToUpper(server.Over)
 
 					if server.Over == "TLS" && server.Name == "" {
-						ctx.Logger.Errorf("server #%v: DNS-over-TLS requires a server name", i+1)
+						logger.Errorf("server #%v: DNS-over-TLS requires a server name", i+1)
 						continue MainLoop
 					}
 				}
@@ -225,6 +229,8 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 	dnsConnReadTimeout := defaultReadTimeout
 	dnsConnWriteTimeout := defaultWriteTimeout
 
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	for {
 		if dnsConn != nil {
 			if dnsConnIdle.Timer == nil {
@@ -244,7 +250,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConnIdle.Timer = nil
 			dnsConnIdle.TimerC = nil
 
-			ctx.Logger.Trace("closing DNS connection due to idle timeout")
+			logger.Trace("closing DNS connection due to idle timeout")
 
 			dnsConn.Close()
 			dnsConn = nil
@@ -282,11 +288,11 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 					}
 
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
-					ctx.Logger.Tracef("dialing to %v", hostport)
+					logger.Tracef("dialing to %v", hostport)
 
 					conn, err := ctx.Manager.Dial(q.Context, opts.dialer, "tcp", hostport, opts.Dial.Timeout)
 					if err != nil {
-						ctx.Logger.Trace(err)
+						logger.Trace(err)
 						break
 					}
 
@@ -337,7 +343,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 					result, err = dnsConn.ReadMsg()
 					if err == nil {
-						if len(result.Question) > 0 && ctx.Logger.TraceWritable() {
+						if len(result.Question) > 0 && logger.TraceWritable() {
 							switch q0 := result.Question[0]; q0.Qtype {
 							case dns.TypeA, dns.TypeAAAA:
 								iplist := iplistBuffer[:0]
@@ -353,7 +359,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 								if len(iplist) > 0 {
 									domain := strings.TrimSuffix(q0.Name, ".")
-									ctx.Logger.Tracef("(remote) %v: %v", domain, iplist)
+									logger.Tracef("(remote) %v: %v", domain, iplist)
 								}
 
 								iplistBuffer = iplist
@@ -363,9 +369,9 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 						break
 					}
 
-					ctx.Logger.Tracef("(remote) ReadMsg: %v", err)
+					logger.Tracef("(remote) ReadMsg: %v", err)
 				} else {
-					ctx.Logger.Tracef("(remote) WriteMsg: %v", err)
+					logger.Tracef("(remote) WriteMsg: %v", err)
 				}
 
 				if err != nil {

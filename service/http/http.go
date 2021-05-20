@@ -177,8 +177,10 @@ func (r *route) getDialer() proxy.Dialer {
 
 type Service struct{}
 
+const _ServiceName = "http"
+
 func (Service) Name() string {
-	return "http"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -186,14 +188,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -289,10 +293,10 @@ func (Service) Run(ctx chrome.Context) {
 						if !didRecycle {
 							switch err := new.routes[i].Init(ctx.Manager); err {
 							case nil:
-								ctx.Logger.Infof("loaded %v", r.File)
+								logger.Infof("loaded %v", r.File)
 							case errNotModified:
 							default:
-								ctx.Logger.Errorf("fatal: %v", err)
+								logger.Errorf("fatal: %v", err)
 								return // Consider fatal here.
 							}
 						}
@@ -328,7 +332,8 @@ func NewHandler(ctx chrome.Context, opts <-chan Options) *Handler {
 			} else {
 				for _, r := range opts.routes {
 					if r.Match(addr) {
-						h.ctx.Logger.Infof("%v matches %v", r.File, addr)
+						h.ctx.Manager.Logger(_ServiceName).Infof("%v matches %v", r.File, addr)
+
 						opts.dialer = r.getDialer()
 						opts.matches.Store(addr, r)
 
@@ -420,7 +425,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Logger.Tracef("handleConnect: dial to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
@@ -432,7 +437,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		responseString := httpVersion + " 200 OK\r\n\r\n"
 		if _, err := local.Write([]byte(responseString)); err != nil {
-			h.ctx.Logger.Tracef("handleConnect: write response to local: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
 			return
 		}
 
@@ -450,25 +455,25 @@ func (h *Handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Logger.Tracef("handleUpgrade: dial to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		if err := req.Write(remote); err != nil {
-			h.ctx.Logger.Tracef("handleUpgrade: write request to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: write request to remote: %v", err)
 			return
 		}
 
 		resp, err := http.ReadResponse(bufio.NewReader(remote), req)
 		if err != nil {
-			h.ctx.Logger.Tracef("handleUpgrade: read response from remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: read response from remote: %v", err)
 			return
 		}
 		defer resp.Body.Close()
 
 		if err := resp.Write(local); err != nil {
-			h.ctx.Logger.Tracef("handleUpgrade: write response to local: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: write response to local: %v", err)
 			return
 		}
 

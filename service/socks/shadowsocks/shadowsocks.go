@@ -24,8 +24,10 @@ type Options struct {
 
 type Service struct{}
 
+const _ServiceName = "shadowsocks"
+
 func (Service) Name() string {
-	return "shadowsocks"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -33,14 +35,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 
@@ -79,7 +83,7 @@ func (Service) Run(ctx chrome.Context) {
 			c = opts.cipher.StreamConn(c)
 			addr, err := socks.ReadAddr(c)
 			if err != nil {
-				ctx.Logger.Debugf("read addr: %v", err)
+				logger.Debugf("read addr: %v", err)
 				return
 			}
 
@@ -87,7 +91,7 @@ func (Service) Run(ctx chrome.Context) {
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
-				ctx.Logger.Trace(err)
+				logger.Trace(err)
 				return
 			}
 			defer remote.Close()
@@ -110,7 +114,7 @@ func (Service) Run(ctx chrome.Context) {
 				if new.Method != old.Method || new.Password != old.Password {
 					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
-						ctx.Logger.Errorf("fatal: pick cipher: %v", err)
+						logger.Errorf("fatal: pick cipher: %v", err)
 						return
 					}
 

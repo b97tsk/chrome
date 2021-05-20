@@ -12,8 +12,10 @@ import (
 
 type Service struct{}
 
+const _ServiceName = "pprof"
+
 func (Service) Name() string {
-	return "pprof"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -21,14 +23,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 

@@ -37,8 +37,10 @@ type Options struct {
 
 type Service struct{}
 
+const _ServiceName = "goagent"
+
 func (Service) Name() string {
-	return "goagent"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -46,14 +48,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -320,7 +324,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	h.autoRange(req, resp)
 
 	appID := appIDFromRequest(resp.Request)
-	h.ctx.Logger.Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
+	h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
 	header := rw.Header()
 	for key, values := range resp.Header {
@@ -363,7 +367,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
 			responseString := httpVersion + " 200 OK\r\n\r\n"
 			if _, err := conn.Write([]byte(responseString)); err != nil {
-				h.ctx.Logger.Tracef("handleConnect: write response to local: %v", err)
+				h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
 				conn.Close()
 
 				return
@@ -380,14 +384,14 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Logger.Tracef("handleConnect: dial to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		responseString := httpVersion + " 200 OK\r\n\r\n"
 		if _, err := local.Write([]byte(responseString)); err != nil {
-			h.ctx.Logger.Tracef("handleConnect: write response to local: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
 			return
 		}
 
@@ -406,7 +410,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		resp, err := h.tr.RoundTrip(request)
 		if err != nil {
-			h.ctx.Logger.Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
+			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
 
 			if isRequestCanceled(req) {
 				return nil, fmt.Errorf("round trip: %w", err)
@@ -416,7 +420,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			h.ctx.Logger.Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
+			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
 			if isRequestCanceled(req) {
 				return resp, nil
@@ -789,7 +793,7 @@ func (r *autoRangeRequest) init() {
 				}
 
 				if err != nil {
-					r.h.ctx.Logger.Tracef("read response: %v", err)
+					r.h.ctx.Manager.Logger(_ServiceName).Tracef("read response: %v", err)
 					return nil // Retry.
 				}
 			}

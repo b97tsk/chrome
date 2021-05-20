@@ -20,8 +20,10 @@ type Options struct {
 
 type Service struct{}
 
+const _ServiceName = "tcptun"
+
 func (Service) Name() string {
-	return "tcptun"
+	return _ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -29,14 +31,16 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
+	logger := ctx.Manager.Logger(_ServiceName)
+
 	ln, err := net.Listen("tcp", ctx.ListenAddr)
 	if err != nil {
-		ctx.Logger.Error(err)
+		logger.Error(err)
 		return
 	}
 
-	ctx.Logger.Infof("listening on %v", ln.Addr())
-	defer ctx.Logger.Infof("stopped listening on %v", ln.Addr())
+	logger.Infof("listening on %v", ln.Addr())
+	defer logger.Infof("stopped listening on %v", ln.Addr())
 
 	defer ln.Close()
 
@@ -76,7 +80,7 @@ func (Service) Run(ctx chrome.Context) {
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", opts.ForwardAddr, opts.Dial.Timeout)
 			if err != nil {
-				ctx.Logger.Trace(err)
+				logger.Trace(err)
 				return
 			}
 			defer remote.Close()
