@@ -9,6 +9,8 @@ import (
 )
 
 type Options struct {
+	ListenAddr string `yaml:"on"`
+
 	Dir chrome.EnvString
 
 	handler http.Handler
@@ -29,15 +31,6 @@ func (Service) Options() interface{} {
 func (Service) Run(ctx chrome.Context) {
 	logger := ctx.Manager.Logger(_ServiceName)
 
-	ln, err := net.Listen("tcp", ctx.ListenAddr)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	logger.Infof("listening on %v", ln.Addr())
-	defer logger.Infof("stopped listening on %v", ln.Addr())
-
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
 
@@ -55,43 +48,66 @@ func (Service) Run(ctx chrome.Context) {
 		close(optsOut)
 	}()
 
-	var (
-		server     *http.Server
-		serverDown chan error
+	handler := http.HandlerFunc(
+		func(rw http.ResponseWriter, req *http.Request) {
+			opts := <-optsOut
+			if opts.handler == nil {
+				http.NotFound(rw, req)
+				return
+			}
+			opts.handler.ServeHTTP(rw, req)
+		},
 	)
 
-	initialize := func() {
+	var (
+		server         *http.Server
+		serverDown     chan struct{}
+		serverListener net.Listener
+	)
+
+	startServer := func() error {
 		if server != nil {
+			return nil
+		}
+
+		opts := <-optsOut
+
+		ln, err := net.Listen("tcp", opts.ListenAddr)
+		if err != nil {
+			logger.Error(err)
+			return err
+		}
+
+		defer logger.Infof("listening on %v", ln.Addr())
+
+		server = &http.Server{Handler: handler}
+		serverDown = make(chan struct{})
+		serverListener = ln
+
+		go func() {
+			_ = server.Serve(ln)
+
+			close(serverDown)
+		}()
+
+		return nil
+	}
+
+	stopServer := func() {
+		if server == nil {
 			return
 		}
 
-		server = &http.Server{
-			Handler: http.HandlerFunc(
-				func(rw http.ResponseWriter, req *http.Request) {
-					opts := <-optsOut
-					if opts.handler == nil {
-						http.NotFound(rw, req)
-						return
-					}
-					opts.handler.ServeHTTP(rw, req)
-				},
-			),
-		}
-		serverDown = make(chan error, 1)
+		defer logger.Infof("stopped listening on %v", serverListener.Addr())
 
-		go func() {
-			serverDown <- server.Serve(ln)
-			close(serverDown)
-		}()
+		_ = server.Shutdown(context.Background())
+
+		server = nil
+		serverDown = nil
+		serverListener = nil
 	}
 
-	defer func() {
-		if server != nil {
-			_ = server.Shutdown(context.Background())
-
-			<-serverDown
-		}
-	}()
+	defer stopServer()
 
 	for {
 		select {
@@ -99,19 +115,25 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		case <-serverDown:
 			return
-		case opts := <-ctx.Opts:
+		case opts := <-ctx.Load:
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
 				new.handler = old.handler
+
+				if new.ListenAddr != old.ListenAddr {
+					stopServer()
+				}
 
 				if new.Dir != old.Dir {
 					new.handler = http.FileServer(http.Dir(new.Dir.String()))
 				}
 
 				optsIn <- new
-
-				initialize()
+			}
+		case <-ctx.Loaded:
+			if err := startServer(); err != nil {
+				return
 			}
 		}
 	}

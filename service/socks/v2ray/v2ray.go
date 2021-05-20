@@ -25,6 +25,8 @@ import (
 )
 
 type Options struct {
+	ListenAddr string `yaml:"on"`
+
 	URL string
 
 	Type      string
@@ -136,17 +138,6 @@ func (Service) Options() interface{} {
 func (Service) Run(ctx chrome.Context) {
 	logger := ctx.Manager.Logger(_ServiceName)
 
-	ln, err := net.Listen("tcp", ctx.ListenAddr)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	logger.Infof("listening on %v", ln.Addr())
-	defer logger.Infof("stopped listening on %v", ln.Addr())
-
-	defer ln.Close()
-
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
 
@@ -164,14 +155,24 @@ func (Service) Run(ctx chrome.Context) {
 		close(optsOut)
 	}()
 
-	var initialized bool
+	var server net.Listener
 
-	initialize := func() {
-		if initialized {
-			return
+	startServer := func() error {
+		if server != nil {
+			return nil
 		}
 
-		initialized = true
+		opts := <-optsOut
+
+		ln, err := net.Listen("tcp", opts.ListenAddr)
+		if err != nil {
+			logger.Error(err)
+			return err
+		}
+
+		defer logger.Infof("listening on %v", ln.Addr())
+
+		server = ln
 
 		ctx.Manager.ServeListener(ln, func(c net.Conn) {
 			opts := <-optsOut
@@ -216,7 +217,22 @@ func (Service) Run(ctx chrome.Context) {
 
 			chrome.Relay(local, remote)
 		})
+
+		return nil
 	}
+
+	stopServer := func() {
+		if server == nil {
+			return
+		}
+
+		defer logger.Infof("stopped listening on %v", server.Addr())
+
+		_ = server.Close()
+		server = nil
+	}
+
+	defer stopServer()
 
 	var (
 		stats      statsINFO
@@ -289,7 +305,7 @@ func (Service) Run(ctx chrome.Context) {
 			}
 
 			go func() {
-				err := startPing(ctxPing, opts.Mux.Ping, ctx.ListenAddr, restart)
+				err := startPing(ctxPing, opts.Mux.Ping, opts.ListenAddr, restart)
 				if err != nil {
 					logger.Errorf("ping: %v", err)
 				}
@@ -308,11 +324,15 @@ func (Service) Run(ctx chrome.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case opts := <-ctx.Opts:
+		case opts := <-ctx.Load:
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
 				new.stats = old.stats
+
+				if new.ListenAddr != old.ListenAddr {
+					stopServer()
+				}
 
 				if new.Proxy.Len() != 0 {
 					if forwardListener == nil {
@@ -385,8 +405,10 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				optsIn <- new
-
-				initialize()
+			}
+		case <-ctx.Loaded:
+			if err := startServer(); err != nil {
+				return
 			}
 		case <-restart:
 			opts := <-optsOut

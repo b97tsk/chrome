@@ -24,10 +24,14 @@ import (
 )
 
 type Options struct {
+	ListenAddr string `yaml:"on"`
+
 	Routes    []RouteInfo
 	Redirects map[string]string
-	Proxy     chrome.ProxyChain `yaml:"over"`
-	Dial      struct {
+
+	Proxy chrome.ProxyChain `yaml:"over"`
+
+	Dial struct {
 		Timeout time.Duration
 	}
 
@@ -190,15 +194,6 @@ func (Service) Options() interface{} {
 func (Service) Run(ctx chrome.Context) {
 	logger := ctx.Manager.Logger(_ServiceName)
 
-	ln, err := net.Listen("tcp", ctx.ListenAddr)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	logger.Infof("listening on %v", ln.Addr())
-	defer logger.Infof("stopped listening on %v", ln.Addr())
-
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
 
@@ -220,34 +215,57 @@ func (Service) Run(ctx chrome.Context) {
 	defer handler.CloseIdleConnections()
 
 	var (
-		server     *http.Server
-		serverDown chan error
+		server         *http.Server
+		serverDown     chan struct{}
+		serverListener net.Listener
 	)
 
-	initialize := func() {
+	startServer := func() error {
 		if server != nil {
-			return
+			return nil
 		}
+
+		opts := <-optsOut
+
+		ln, err := net.Listen("tcp", opts.ListenAddr)
+		if err != nil {
+			logger.Error(err)
+			return err
+		}
+
+		defer logger.Infof("listening on %v", ln.Addr())
 
 		server = &http.Server{
 			Handler:      handler,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
 		}
-		serverDown = make(chan error, 1)
+		serverDown = make(chan struct{})
+		serverListener = ln
 
 		go func() {
-			serverDown <- server.Serve(ln)
+			_ = server.Serve(ln)
+
 			close(serverDown)
 		}()
+
+		return nil
 	}
 
-	defer func() {
-		if server != nil {
-			_ = server.Shutdown(context.Background())
-
-			<-serverDown
+	stopServer := func() {
+		if server == nil {
+			return
 		}
-	}()
+
+		defer logger.Infof("stopped listening on %v", serverListener.Addr())
+
+		_ = server.Shutdown(context.Background())
+
+		server = nil
+		serverDown = nil
+		serverListener = nil
+	}
+
+	defer stopServer()
 
 	for {
 		select {
@@ -255,13 +273,17 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		case <-serverDown:
 			return
-		case opts := <-ctx.Opts:
+		case opts := <-ctx.Load:
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
 				new.dialer = old.dialer
 				new.routes = old.routes
 				new.matches = old.matches
+
+				if new.ListenAddr != old.ListenAddr {
+					stopServer()
+				}
 
 				for i := range new.Routes {
 					_ = new.Routes[i].Init(ctx.Manager)
@@ -308,8 +330,10 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				optsIn <- new
-
-				initialize()
+			}
+		case <-ctx.Loaded:
+			if err := startServer(); err != nil {
+				return
 			}
 		}
 	}

@@ -1,6 +1,7 @@
 package pprof
 
 import (
+	"context"
 	"net"
 	"net/http"
 
@@ -9,6 +10,10 @@ import (
 
 	"github.com/b97tsk/chrome"
 )
+
+type Options struct {
+	ListenAddr string `yaml:"on"`
+}
 
 type Service struct{}
 
@@ -19,30 +24,98 @@ func (Service) Name() string {
 }
 
 func (Service) Options() interface{} {
-	return nil
+	return new(Options)
 }
 
 func (Service) Run(ctx chrome.Context) {
 	logger := ctx.Manager.Logger(_ServiceName)
 
-	ln, err := net.Listen("tcp", ctx.ListenAddr)
-	if err != nil {
-		logger.Error(err)
-		return
+	optsIn, optsOut := make(chan Options), make(chan Options)
+	defer close(optsIn)
+
+	go func() {
+		var opts Options
+
+		ok := true
+		for ok {
+			select {
+			case opts, ok = <-optsIn:
+			case optsOut <- opts:
+			}
+		}
+
+		close(optsOut)
+	}()
+
+	var (
+		server         *http.Server
+		serverDown     chan struct{}
+		serverListener net.Listener
+	)
+
+	startServer := func() error {
+		if server != nil {
+			return nil
+		}
+
+		opts := <-optsOut
+
+		ln, err := net.Listen("tcp", opts.ListenAddr)
+		if err != nil {
+			logger.Error(err)
+			return err
+		}
+
+		defer logger.Infof("listening on %v", ln.Addr())
+
+		server = &http.Server{}
+		serverDown = make(chan struct{})
+		serverListener = ln
+
+		go func() {
+			_ = server.Serve(ln)
+
+			close(serverDown)
+		}()
+
+		return nil
 	}
 
-	logger.Infof("listening on %v", ln.Addr())
-	defer logger.Infof("stopped listening on %v", ln.Addr())
+	stopServer := func() {
+		if server == nil {
+			return
+		}
 
-	defer ln.Close()
+		defer logger.Infof("stopped listening on %v", serverListener.Addr())
 
-	go func() { _ = http.Serve(ln, nil) }()
+		_ = server.Shutdown(context.Background())
+
+		server = nil
+		serverDown = nil
+		serverListener = nil
+	}
+
+	defer stopServer()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ctx.Opts:
+		case opts := <-ctx.Load:
+			if new, ok := opts.(*Options); ok {
+				old := <-optsOut
+				new := *new
+
+				if new.ListenAddr != old.ListenAddr {
+					stopServer()
+				}
+
+				optsIn <- new
+			}
+		case <-ctx.Loaded:
+			if err := startServer(); err != nil {
+				return
+			}
 		}
 	}
 }

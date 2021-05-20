@@ -26,9 +26,13 @@ import (
 )
 
 type Options struct {
-	AppIDList []string          `yaml:"appids"`
-	Proxy     chrome.ProxyChain `yaml:"over"`
-	Dial      struct {
+	ListenAddr string `yaml:"on"`
+
+	AppIDList []string `yaml:"appids"`
+
+	Proxy chrome.ProxyChain `yaml:"over"`
+
+	Dial struct {
 		Timeout time.Duration
 	}
 
@@ -50,15 +54,6 @@ func (Service) Options() interface{} {
 func (Service) Run(ctx chrome.Context) {
 	logger := ctx.Manager.Logger(_ServiceName)
 
-	ln, err := net.Listen("tcp", ctx.ListenAddr)
-	if err != nil {
-		logger.Error(err)
-		return
-	}
-
-	logger.Infof("listening on %v", ln.Addr())
-	defer logger.Infof("stopped listening on %v", ln.Addr())
-
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
 
@@ -76,40 +71,96 @@ func (Service) Run(ctx chrome.Context) {
 		close(optsOut)
 	}()
 
-	listener := NewListener(ln, ctx.Done())
+	listener := NewListener(ctx.Context)
+	defer listener.Stop()
 
 	handler := NewHandler(ctx, listener, optsOut)
 	defer handler.CloseIdleConnections()
 
 	var (
-		server     *http.Server
-		serverDown chan error
+		server         *http.Server
+		serverDown     chan struct{}
+		serverListener net.Listener
 	)
 
-	initialize := func() {
+	startServer := func() error {
 		if server != nil {
-			return
+			return nil
 		}
+
+		opts := <-optsOut
+
+		ln, err := net.Listen("tcp", opts.ListenAddr)
+		if err != nil {
+			logger.Error(err)
+			return err
+		}
+
+		defer logger.Infof("listening on %v", ln.Addr())
 
 		server = &http.Server{
 			Handler:      handler,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
 		}
-		serverDown = make(chan error, 1)
+		serverDown = make(chan struct{})
+		serverListener = ln
 
 		go func() {
-			serverDown <- server.Serve(listener)
+			_ = server.Serve(listener)
+
 			close(serverDown)
 		}()
+
+		go func() {
+			var tempDelay time.Duration // how long to sleep on accept failure
+
+			for {
+				conn, err := ln.Accept()
+				if err != nil {
+					if ne, ok := err.(net.Error); ok && ne.Temporary() {
+						if tempDelay == 0 {
+							tempDelay = 5 * time.Millisecond
+						} else {
+							tempDelay *= 2
+						}
+
+						if max := 1 * time.Second; tempDelay > max {
+							tempDelay = max
+						}
+
+						time.Sleep(tempDelay)
+
+						continue
+					}
+
+					return
+				}
+
+				tempDelay = 0
+
+				go listener.Inject(conn)
+			}
+		}()
+
+		return nil
 	}
 
-	defer func() {
-		if server != nil {
-			_ = server.Shutdown(context.Background())
-
-			<-serverDown
+	stopServer := func() {
+		if server == nil {
+			return
 		}
-	}()
+
+		defer logger.Infof("stopped listening on %v", serverListener.Addr())
+
+		_ = serverListener.Close() // Manually closes it since we didn't pass it to server.Serve.
+		_ = server.Shutdown(context.Background())
+
+		server = nil
+		serverDown = nil
+		serverListener = nil
+	}
+
+	defer stopServer()
 
 	for {
 		select {
@@ -117,11 +168,15 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		case <-serverDown:
 			return
-		case opts := <-ctx.Opts:
+		case opts := <-ctx.Load:
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
 				new.dialer = old.dialer
+
+				if new.ListenAddr != old.ListenAddr {
+					stopServer()
+				}
 
 				if len(new.AppIDList) == 0 {
 					new.AppIDList = defaultAppIDList
@@ -136,81 +191,75 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				optsIn <- new
-
-				initialize()
+			}
+		case <-ctx.Loaded:
+			if err := startServer(); err != nil {
+				return
 			}
 		}
 	}
 }
 
 type Listener struct {
-	mu   sync.Mutex
-	once sync.Once
-	ln   net.Listener
-	done <-chan struct{}
-	lane chan net.Conn
+	mu     sync.RWMutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	lane   chan net.Conn
 }
 
-func NewListener(ln net.Listener, done <-chan struct{}) *Listener {
-	return &Listener{ln: ln, done: done}
+func NewListener(ctx context.Context) *Listener {
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &Listener{
+		ctx:    ctx,
+		cancel: cancel,
+		lane:   make(chan net.Conn, 32),
+	}
 }
 
-func (l *Listener) init() {
-	lane := make(chan net.Conn, 64)
+func (l *Listener) Stop() {
+	l.cancel()
 
 	l.mu.Lock()
-	l.lane = lane
+	lane := l.lane
+	l.lane = nil
 	l.mu.Unlock()
 
-	go func() {
-		defer func() {
-			l.mu.Lock()
-			l.lane = nil
-			l.mu.Unlock()
+	if lane == nil {
+		return
+	}
 
-			close(lane)
+	close(lane)
 
-			for conn := range lane {
-				conn.Close()
-			}
-		}()
-
-		for {
-			conn, err := l.ln.Accept()
-			if err != nil {
-				if isTemporary(err) {
-					continue
-				}
-
-				return
-			}
-			lane <- conn
-		}
-	}()
+	for conn := range lane {
+		conn.Close()
+	}
 }
 
 func (l *Listener) Inject(conn net.Conn) {
-	l.mu.Lock()
+	l.mu.RLock()
 
 	if l.lane != nil {
-		l.lane <- conn
+		select {
+		case <-l.ctx.Done():
+			conn.Close()
+		case l.lane <- conn:
+		}
 	} else {
 		conn.Close()
 	}
 
-	l.mu.Unlock()
+	l.mu.RUnlock()
 }
 
 func (l *Listener) Accept() (net.Conn, error) {
-	l.once.Do(l.init)
-
-	l.mu.Lock()
+	l.mu.RLock()
 	lane := l.lane
-	l.mu.Unlock()
+	l.mu.RUnlock()
 
 	if lane != nil {
 		select {
-		case <-l.done:
+		case <-l.ctx.Done():
 		case conn := <-lane:
 			if conn != nil {
 				return conn, nil
@@ -222,11 +271,11 @@ func (l *Listener) Accept() (net.Conn, error) {
 }
 
 func (l *Listener) Close() error {
-	return l.ln.Close()
+	return nil
 }
 
 func (l *Listener) Addr() net.Addr {
-	return l.ln.Addr()
+	return nil
 }
 
 type Handler struct {
@@ -926,11 +975,6 @@ func shuffleAppIDList(appIDList []string) {
 	rand.Shuffle(len(appIDList), func(i, j int) {
 		appIDList[i], appIDList[j] = appIDList[j], appIDList[i]
 	})
-}
-
-func isTemporary(err error) bool {
-	var t interface{ Temporary() bool }
-	return errors.As(err, &t) && t.Temporary()
 }
 
 func isTwoAppIDListsIdentical(a, b []string) bool {

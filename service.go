@@ -7,15 +7,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
 	"os"
-	"regexp"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/b97tsk/chrome/internal/log"
 	"gopkg.in/yaml.v3"
@@ -29,24 +27,32 @@ type Service interface {
 
 type Context struct {
 	context.Context
-	ListenAddr string
-	Manager    *Manager
-	Opts       <-chan interface{}
+	Manager *Manager
+	Load    <-chan interface{}
+	Loaded  <-chan struct{}
 }
 
 type Job struct {
 	context.Context
 	Cancel context.CancelFunc
-	Opts   chan<- interface{}
+	Load   chan<- interface{}
+	Loaded chan<- struct{}
 }
 
-func (job *Job) SendOpts(opts interface{}) {
+func (job *Job) sendOpts(opts interface{}) {
 	for _, v := range []interface{}{opts, nil} {
 		select {
 		case <-job.Done():
 			return
-		case job.Opts <- v:
+		case job.Load <- v:
 		}
+	}
+}
+
+func (job *Job) sendLoaded() {
+	select {
+	case job.Loaded <- struct{}{}:
+	default:
 	}
 }
 
@@ -162,30 +168,6 @@ func (man *Manager) loadConfig(r io.Reader) {
 	man.builtin.SetLogLevel(config.Log.Level)
 	man.builtin.SetDialTimeout(config.Dial.Timeout)
 
-	for name, data := range config.Jobs {
-		if r := reNumberPlus.FindStringIndex(name); r != nil {
-			head, tail := name[:r[0]], name[r[1]:]
-			s := reNumberPlus.FindStringSubmatch(name[r[0]:r[1]])
-			x, _ := strconv.Atoi(s[1])
-
-			if s[2] != "" {
-				n, _ := strconv.Atoi(s[2])
-				for i := 0; i <= n; i++ {
-					config.Jobs[head+strconv.Itoa(x)+tail] = data
-					x++
-				}
-			} else {
-				slice, _ := data.([]interface{})
-				for _, data := range slice {
-					config.Jobs[head+strconv.Itoa(x)+tail] = data
-					x++
-				}
-			}
-
-			delete(config.Jobs, name)
-		}
-	}
-
 	for name, job := range man.jobs {
 		if _, ok := config.Jobs[name]; ok {
 			continue
@@ -201,19 +183,17 @@ func (man *Manager) loadConfig(r io.Reader) {
 			logger.Errorf("loadConfig: %v", err)
 		}
 	}
+
+	for _, job := range man.jobs {
+		job.sendLoaded()
+	}
 }
 
 func (man *Manager) setOptions(name string, data interface{}) error {
-	if strings.HasPrefix(name, "alias") {
-		return nil // If name starts with "alias", silently ignores it.
+	serviceName := findServiceName(name)
+	if serviceName == "" || serviceName == "alias" {
+		return nil
 	}
-
-	fields := strings.SplitN(name, "|", 3)
-	if len(fields) != 3 {
-		return fmt.Errorf("%v: ignored", name)
-	}
-
-	serviceName, listenAddr := fields[0], net.JoinHostPort(fields[1], fields[2])
 
 	service, ok := man.services[serviceName]
 	if !ok {
@@ -236,8 +216,8 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	if !ok || job.Err() != nil {
 		ctx1, done := context.WithCancel(context.Background())
 		ctx2, cancel := context.WithCancel(ctx1)
-		copts := make(chan interface{})
-		job = Job{ctx1, cancel, copts}
+		loadChan, loadedChan := make(chan interface{}), make(chan struct{}, 1)
+		job = Job{ctx1, cancel, loadChan, loadedChan}
 
 		if man.jobs == nil {
 			man.jobs = make(map[string]Job)
@@ -255,12 +235,12 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 				done()
 			}()
 
-			service.Run(Context{ctx2, listenAddr, man, copts})
+			service.Run(Context{ctx2, man, loadChan, loadedChan})
 		}()
 	}
 
 	if opts != nil {
-		job.SendOpts(opts)
+		job.sendOpts(opts)
 	}
 
 	return nil
@@ -283,4 +263,13 @@ func (man *Manager) Shutdown() {
 	man.builtin.CloseConnections()
 }
 
-var reNumberPlus = regexp.MustCompile(`(\d+)\+(\d*)`)
+func findServiceName(s string) string {
+	i := strings.IndexFunc(s, func(r rune) bool {
+		return r != '-' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	if i > 0 {
+		return s[:i]
+	}
+
+	return s
+}
