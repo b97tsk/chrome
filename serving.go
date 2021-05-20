@@ -3,6 +3,7 @@ package chrome
 import (
 	"net"
 	"sync"
+	"time"
 )
 
 func (man *Manager) ServeListener(ln net.Listener, handle func(net.Conn)) {
@@ -15,15 +16,31 @@ type servingService struct {
 
 func (s *servingService) ServeListener(ln net.Listener, handle func(net.Conn)) {
 	go func() {
+		var tempDelay time.Duration // how long to sleep on accept failure
+
 		for {
 			c, err := ln.Accept()
 			if err != nil {
-				if isTemporary(err) {
+				if ne, ok := err.(net.Error); ok && ne.Temporary() {
+					if tempDelay == 0 {
+						tempDelay = 5 * time.Millisecond
+					} else {
+						tempDelay *= 2
+					}
+
+					if max := 1 * time.Second; tempDelay > max {
+						tempDelay = max
+					}
+
+					time.Sleep(tempDelay)
+
 					continue
 				}
 
 				return
 			}
+
+			tempDelay = 0
 
 			s.connections.Store(c, struct{}{})
 
@@ -40,7 +57,7 @@ func (s *servingService) ServeListener(ln net.Listener, handle func(net.Conn)) {
 
 func (s *servingService) CloseConnections() {
 	s.connections.Range(func(key, _ interface{}) bool {
-		key.(net.Conn).Close()
+		_ = key.(net.Conn).Close()
 		return true
 	})
 }
