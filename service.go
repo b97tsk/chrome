@@ -110,15 +110,23 @@ func (man *Manager) LoadFile(name string) {
 	filesize, _ := file.Seek(0, io.SeekEnd)
 
 	if zr, err := zip.NewReader(file, filesize); err == nil {
-		const ConfigFile = "chrome.yaml"
+		configFile := "chrome.yaml"
 
-		file, err := zr.Open(ConfigFile)
+		file, err := zr.Open(configFile)
+		if err != nil {
+			if matches, _ := fs.Glob(zr, "*.yaml"); len(matches) == 1 {
+				configFile = matches[0]
+				file, err = zr.Open(configFile)
+			}
+		}
+
 		if err != nil {
 			logger := man.Logger("manager")
-			logger.Errorf("LoadFile: open %v in %v: %v", ConfigFile, name, err)
+			logger.Errorf("LoadFile: open %v in %v: %v", configFile, name, err)
 
 			return
 		}
+
 		defer file.Close()
 
 		man.fsys.Store(fsysValue{zr})
