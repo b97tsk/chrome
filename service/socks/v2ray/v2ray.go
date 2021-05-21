@@ -174,7 +174,7 @@ func (Service) Run(ctx chrome.Context) {
 
 		server = ln
 
-		ctx.Manager.ServeListener(ln, func(c net.Conn) {
+		go ctx.Manager.Serve(ln, func(c net.Conn) {
 			opts := <-optsOut
 			if opts.stats.ins == nil {
 				return
@@ -344,7 +344,7 @@ func (Service) Run(ctx chrome.Context) {
 
 						forwardListener = ln
 
-						ctx.Manager.ServeListener(ln, func(c net.Conn) {
+						go ctx.Manager.Serve(ln, func(c net.Conn) {
 							opts := <-optsOut
 							if opts.forwardDialer == nil {
 								return

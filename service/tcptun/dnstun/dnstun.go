@@ -100,7 +100,7 @@ func (Service) Run(ctx chrome.Context) {
 
 		go startWorker(ctx, dnsQueryIn)
 
-		ctx.Manager.ServeListener(ln, func(c net.Conn) {
+		go ctx.Manager.Serve(ln, func(c net.Conn) {
 			opts, ok := <-optsOut
 			if !ok {
 				return

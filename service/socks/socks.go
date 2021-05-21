@@ -118,7 +118,7 @@ func (Service) Run(ctx chrome.Context) {
 
 		server = ln
 
-		ctx.Manager.ServeListener(ln, func(c net.Conn) {
+		go ctx.Manager.Serve(ln, func(c net.Conn) {
 			opts, ok := <-optsOut
 			if !ok {
 				return
