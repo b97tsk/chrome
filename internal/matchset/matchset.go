@@ -32,7 +32,7 @@ type pattern struct {
 	data  interface{}
 }
 
-const specialDot = 0
+const magicDot = 0
 
 type MatchSet struct {
 	patterns      []pattern
@@ -40,23 +40,6 @@ type MatchSet struct {
 	charSetToAtom map[charset]atom
 	atomToCharSet map[atom]charset
 	atomsBuffer   []atom
-}
-
-func (set *MatchSet) lazyInit() {
-	if set.nextAtom != 0 {
-		return
-	}
-
-	set.nextAtom = 256
-	set.charSetToAtom = make(map[charset]atom)
-	set.atomToCharSet = make(map[atom]charset)
-}
-
-func (set *MatchSet) getNextAtom() atom {
-	atom := set.nextAtom
-	set.nextAtom++
-
-	return atom
 }
 
 func charSetFromGroup(bytes []byte) (charset, []byte) {
@@ -135,7 +118,15 @@ func (set *MatchSet) readAtom(bytes []byte) (atom, []byte) {
 			return atom, bytesLeft
 		}
 
-		atom := set.getNextAtom()
+		if set.nextAtom == 0 {
+			set.nextAtom = 256
+			set.charSetToAtom = make(map[charset]atom)
+			set.atomToCharSet = make(map[atom]charset)
+		}
+
+		atom := set.nextAtom
+		set.nextAtom++
+
 		set.charSetToAtom[charSet] = atom
 		set.atomToCharSet[atom] = charSet
 
@@ -179,36 +170,37 @@ func (set *MatchSet) parse(bytes []byte) []atom {
 
 	if len(atoms) == 0 {
 		// Empty pattern matches any characters.
-		return []atom{specialDot}
+		return []atom{magicDot}
 	}
 
 	if atoms[0] == '.' {
 		// Starting with '.' means it could match any characters at the beginning.
-		atoms[0] = specialDot
+		atoms[0] = magicDot
 	}
 
 	if atoms[len(atoms)-1] == '.' {
 		// Ending with '.' means it could match any characters at the end.
-		atoms[len(atoms)-1] = specialDot
+		atoms[len(atoms)-1] = magicDot
 	}
 
 	return atoms
 }
 
 func (set *MatchSet) Add(patt string, data interface{}) {
-	set.lazyInit()
-
 	atoms := set.parse([]byte(patt))
+
 	// Reverse atoms for better performance, because in practice,
 	// patterns like ".abc" are much more frequently used than
 	// patterns like "abc.".
-	for i, j := 0, len(atoms)-1; i < j; i, j = i+1, j-1 {
-		atoms[i], atoms[j] = atoms[j], atoms[i]
-	}
+	{
+		for i, j := 0, len(atoms)-1; i < j; i, j = i+1, j-1 {
+			atoms[i], atoms[j] = atoms[j], atoms[i]
+		}
 
-	for i := 0; i < len(atoms)-1; i++ {
-		if atoms[i] == '*' && atoms[i+1] == '?' {
-			atoms[i], atoms[i+1] = atoms[i+1], atoms[i]
+		for i := 0; i < len(atoms)-1; i++ {
+			if atoms[i] == '*' && atoms[i+1] == '?' {
+				atoms[i], atoms[i+1] = atoms[i+1], atoms[i]
+			}
 		}
 	}
 
@@ -221,7 +213,12 @@ func (set *MatchSet) Empty() bool {
 }
 
 func (set *MatchSet) Match(source string, accumulate func(interface{})) {
+	if set.Empty() {
+		return
+	}
+
 	bytes := []byte(source)
+
 	// Also reverse source bytes, since all patterns are reversed.
 	for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
 		bytes[i], bytes[j] = bytes[j], bytes[i]
@@ -258,7 +255,7 @@ func (set *MatchSet) checkPattern(
 	nextpatt := pattern{patt.atoms[size:], patt.data}
 
 	switch {
-	case atom == specialDot:
+	case atom == magicDot:
 		if len(nextpatt.atoms) == 0 {
 			if i == 0 || bytes[i] == '.' {
 				accumulate(patt.data)
@@ -309,11 +306,11 @@ func (set *MatchSet) checkPattern(
 				accumulate(patt.data)
 			case 1:
 				switch nextpatt.atoms[0] {
-				case specialDot, '*':
+				case magicDot, '*':
 					accumulate(patt.data)
 				}
 			case 2:
-				if nextpatt.atoms[0] == '*' && nextpatt.atoms[1] == specialDot {
+				if nextpatt.atoms[0] == '*' && nextpatt.atoms[1] == magicDot {
 					accumulate(patt.data)
 				}
 			}
@@ -332,10 +329,6 @@ func (set *MatchSet) checkPattern(
 }
 
 func (set *MatchSet) MatchAll(source string) (matches []interface{}) {
-	if set.Empty() {
-		return
-	}
-
 	set.Match(source, func(data interface{}) {
 		matches = append(matches, data)
 	})
@@ -344,10 +337,6 @@ func (set *MatchSet) MatchAll(source string) (matches []interface{}) {
 }
 
 func (set *MatchSet) Test(source string) (ok bool) {
-	if set.Empty() {
-		return
-	}
-
 	set.Match(source, func(data interface{}) { ok = true })
 
 	return
