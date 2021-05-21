@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -34,6 +35,20 @@ func Main() (code int) {
 		base := filepath.Base(os.Args[0])
 		ext := filepath.Ext(base)
 		configFile = base[:len(base)-len(ext)] + ".yaml"
+
+		if _, err := os.Stat(configFile); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if matches, _ := filepath.Glob("*.yaml"); len(matches) == 1 {
+					configFile = matches[0]
+					_, err = os.Stat(configFile)
+				}
+			}
+
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+		}
 	}
 
 	if configFile != "-" {
