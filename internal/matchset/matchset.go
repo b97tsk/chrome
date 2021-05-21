@@ -212,7 +212,7 @@ func (set *MatchSet) Empty() bool {
 	return len(set.patterns) == 0
 }
 
-func (set *MatchSet) Match(source string, accumulate func(interface{})) {
+func (set *MatchSet) Match(source string, accumulate func(interface{}) bool) {
 	if set.Empty() {
 		return
 	}
@@ -224,6 +224,8 @@ func (set *MatchSet) Match(source string, accumulate func(interface{})) {
 		bytes[i], bytes[j] = bytes[j], bytes[i]
 	}
 
+	var ok bool
+
 	var patterns, matches []pattern
 
 	for _, patt := range set.patterns {
@@ -232,8 +234,11 @@ func (set *MatchSet) Match(source string, accumulate func(interface{})) {
 
 		for i := range bytes {
 			matches = matches[:0]
+
 			for _, patt := range patterns {
-				matches = set.checkPattern(patt, bytes, i, matches, accumulate)
+				if matches, ok = set.checkPattern(patt, bytes, i, matches, accumulate); !ok {
+					return
+				}
 			}
 
 			if len(matches) == 0 {
@@ -249,8 +254,8 @@ func (set *MatchSet) checkPattern(
 	patt pattern,
 	bytes []byte, i int,
 	matches []pattern,
-	accumulate func(interface{}),
-) []pattern {
+	accumulate func(interface{}) bool,
+) (_ []pattern, ok bool) {
 	atom, size := utf8.DecodeRune(patt.atoms)
 	nextpatt := pattern{patt.atoms[size:], patt.data}
 
@@ -258,14 +263,18 @@ func (set *MatchSet) checkPattern(
 	case atom == magicDot:
 		if len(nextpatt.atoms) == 0 {
 			if i == 0 || bytes[i] == '.' {
-				accumulate(patt.data)
+				if !accumulate(patt.data) {
+					return nil, false
+				}
 			}
 
-			return matches
+			return matches, true
 		}
 
 		if i == 0 {
-			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
+			if matches, ok = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate); !ok {
+				return nil, false
+			}
 		}
 
 		if bytes[i] == '.' {
@@ -275,27 +284,31 @@ func (set *MatchSet) checkPattern(
 		matches = append(matches, patt)
 	case atom == '*':
 		if len(nextpatt.atoms) > 0 {
-			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
+			if matches, ok = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate); !ok {
+				return nil, false
+			}
 		}
 
 		switch bytes[i] {
 		case '.', ':':
-			return matches // '*' does not match '.' or ':'.
+			return matches, true // '*' does not match '.' or ':'.
 		}
 
 		if i+1 == len(bytes) {
 			if len(nextpatt.atoms) == 0 {
-				accumulate(patt.data)
+				if !accumulate(patt.data) {
+					return nil, false
+				}
 			}
 
-			return matches
+			return matches, true
 		}
 
 		matches = append(matches, patt)
 	case atom == '?':
 		switch bytes[i] {
 		case '.', ':':
-			return matches // '?' does not match '.' or ':'.
+			return matches, true // '?' does not match '.' or ':'.
 		}
 
 		fallthrough
@@ -303,41 +316,51 @@ func (set *MatchSet) checkPattern(
 		if i+1 == len(bytes) {
 			switch len(nextpatt.atoms) {
 			case 0:
-				accumulate(patt.data)
+				if !accumulate(patt.data) {
+					return nil, false
+				}
 			case 1:
 				switch nextpatt.atoms[0] {
 				case magicDot, '*':
-					accumulate(patt.data)
+					if !accumulate(patt.data) {
+						return nil, false
+					}
 				}
 			case 2:
 				if nextpatt.atoms[0] == '*' && nextpatt.atoms[1] == magicDot {
-					accumulate(patt.data)
+					if !accumulate(patt.data) {
+						return nil, false
+					}
 				}
 			}
 
-			return matches
+			return matches, true
 		}
 
 		if len(nextpatt.atoms) == 0 {
-			return matches
+			return matches, true
 		}
 
 		matches = append(matches, nextpatt)
 	}
 
-	return matches
+	return matches, true
 }
 
 func (set *MatchSet) MatchAll(source string) (matches []interface{}) {
-	set.Match(source, func(data interface{}) {
+	set.Match(source, func(data interface{}) bool {
 		matches = append(matches, data)
+		return true
 	})
 
 	return
 }
 
 func (set *MatchSet) Test(source string) (ok bool) {
-	set.Match(source, func(data interface{}) { ok = true })
+	set.Match(source, func(data interface{}) bool {
+		ok = true
+		return false
+	})
 
 	return
 }

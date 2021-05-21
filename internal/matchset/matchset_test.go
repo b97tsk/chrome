@@ -7,10 +7,10 @@ import (
 )
 
 func TestMatchSet(t *testing.T) {
-	tests := []struct {
-		source  string
-		pattern string
-		matched bool
+	testCases := []struct {
+		Source  string
+		Pattern string
+		Matched bool
 	}{
 		{"co.uk", "co.uk", true},
 
@@ -121,16 +121,21 @@ func TestMatchSet(t *testing.T) {
 		{"", "a", false},
 	}
 
-	for _, tt := range tests {
+	for _, tc := range testCases {
 		var set matchset.MatchSet
 
-		set.Add(tt.pattern, struct{}{})
+		set.Add(tc.Pattern, struct{}{})
 
-		if tt.matched != set.Test(tt.source) {
-			if tt.matched {
-				t.Error(tt.source, "SHOULD match", tt.pattern)
+		matched := set.Test(tc.Source)
+		if matched != (set.MatchAll(tc.Source) != nil) {
+			t.Fatal("inconsistent")
+		}
+
+		if matched != tc.Matched {
+			if tc.Matched {
+				t.Error(tc.Source, "SHOULD match", tc.Pattern)
 			} else {
-				t.Error(tt.source, "SHOULD NOT match", tt.pattern)
+				t.Error(tc.Source, "SHOULD NOT match", tc.Pattern)
 			}
 		}
 	}
