@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/b97tsk/chrome/internal/proxy"
 )
@@ -19,15 +20,17 @@ func (man *Manager) Dial(
 }
 
 type dialingService struct {
-	dialTimeout time.Duration
+	dialTimeout [3]uint32
 }
 
 func (d *dialingService) DialTimeout() time.Duration {
-	return time.Duration(atomic.LoadInt64((*int64)(&d.dialTimeout)))
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&d.dialTimeout[1])) &^ 4))
+	return time.Duration(atomic.LoadInt64(ptr))
 }
 
 func (d *dialingService) SetDialTimeout(timeout time.Duration) {
-	atomic.StoreInt64((*int64)(&d.dialTimeout), int64(timeout))
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&d.dialTimeout[1])) &^ 4))
+	atomic.StoreInt64(ptr, int64(timeout))
 }
 
 func (d *dialingService) Dial(
