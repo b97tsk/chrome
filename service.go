@@ -72,10 +72,6 @@ type fsysValue struct {
 	fs.FS
 }
 
-func NewManager() *Manager {
-	return new(Manager)
-}
-
 func (man *Manager) AddService(service Service) {
 	man.mu.Lock()
 

@@ -115,16 +115,17 @@ func Main() (code int) {
 }
 
 func newManager() *chrome.Manager {
-	man := chrome.NewManager()
-	man.AddService(dnstun.Service{})
-	man.AddService(goagent.Service{})
-	man.AddService(http.Service{})
-	man.AddService(httpfs.Service{})
-	man.AddService(pprof.Service{})
-	man.AddService(shadowsocks.Service{})
-	man.AddService(socks.Service{})
-	man.AddService(tcptun.Service{})
-	man.AddService(v2ray.Service{})
+	var m chrome.Manager
 
-	return man
+	m.AddService(dnstun.Service{})
+	m.AddService(goagent.Service{})
+	m.AddService(http.Service{})
+	m.AddService(httpfs.Service{})
+	m.AddService(pprof.Service{})
+	m.AddService(shadowsocks.Service{})
+	m.AddService(socks.Service{})
+	m.AddService(tcptun.Service{})
+	m.AddService(v2ray.Service{})
+
+	return &m
 }
