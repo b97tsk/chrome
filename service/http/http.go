@@ -12,12 +12,14 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/b97tsk/chrome"
+	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"golang.org/x/net/http/httpguts"
@@ -391,33 +393,55 @@ func (h *Handler) setRedirects(redirects map[string]string) {
 }
 
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	req.Header.Del("Proxy-Authorization")
-	req.Header.Del("Proxy-Connection")
-
 	if req.Method == http.MethodConnect {
 		h.handleConnect(rw, req)
 		return
 	}
 
-	if req.Method == http.MethodGet && httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {
-		h.handleUpgrade(rw, req)
+	outreq := req.Clone(req.Context())
+	outreq.Close = false
+	outreq.RequestURI = ""
+
+	var upgradeType string
+	if httpguts.HeaderValuesContainsToken(req.Header["Connection"], "upgrade") {
+		upgradeType = req.Header.Get("Upgrade")
+	}
+
+	httputil.RemoveHopbyhopHeaders(outreq.Header)
+
+	if _, ok := outreq.Header["User-Agent"]; !ok {
+		outreq.Header.Set("User-Agent", "")
+	}
+
+	if upgradeType != "" {
+		outreq.Header.Set("Connection", "upgrade")
+		outreq.Header.Set("Upgrade", upgradeType)
+
+		h.handleUpgrade(rw, outreq)
+
 		return
 	}
 
-	if h.handleRedirect(rw, req) {
+	if h.handleRedirect(rw, outreq) {
 		return
 	}
 
-	resp, err := h.tr.RoundTrip(req)
+	resp, err := h.tr.RoundTrip(outreq)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	defer resp.Body.Close()
 
+	httputil.RemoveHopbyhopHeaders(resp.Header)
+
 	header := rw.Header()
 	for key, values := range resp.Header {
 		header[key] = values
+	}
+
+	if _, ok := header["Content-Length"]; !ok && resp.ContentLength >= 0 {
+		header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
 
 	rw.WriteHeader(resp.StatusCode)
@@ -454,13 +478,8 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 		}
 		defer remote.Close()
 
-		httpVersion := "HTTP/1.0"
-		if req.ProtoAtLeast(1, 1) {
-			httpVersion = "HTTP/1.1"
-		}
-
-		responseString := httpVersion + " 200 OK\r\n\r\n"
-		if _, err := local.Write([]byte(responseString)); err != nil {
+		const response = "HTTP/1.1 200 OK\r\n\r\n"
+		if _, err := local.Write([]byte(response)); err != nil {
 			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
 			return
 		}
