@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome"
+	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/proxy"
 )
 
@@ -347,40 +348,40 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Enable transparent http proxy.
-	if req.URL.Scheme == "" {
-		req.URL.Scheme = "http"
-		if req.TLS != nil && req.ProtoMajor == 1 {
-			req.URL.Scheme = "https"
-		}
+	outreq := req.Clone(req.Context())
+	outreq.Close = false
+	outreq.RequestURI = ""
 
-		if req.Host == "" && req.TLS != nil {
-			req.Host = req.TLS.ServerName
-		}
-
-		if req.URL.Host == "" {
-			req.URL.Host = req.Host
-		}
+	if outreq.URL.Scheme == "" {
+		outreq.URL.Scheme = "http"
 	}
 
-	resp, err := h.roundTrip(req)
+	if outreq.URL.Host == "" {
+		outreq.URL.Host = outreq.Host
+	}
+
+	httputil.RemoveHopbyhopHeaders(outreq.Header)
+
+	resp, err := h.roundTrip(outreq)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	h.autoRange(req, resp)
+	h.autoRange(outreq, resp)
 
 	appID := appIDFromRequest(resp.Request)
-	h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
+	h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, outreq.Method, outreq.URL, resp.Status)
+
+	httputil.RemoveHopbyhopHeaders(resp.Header)
 
 	header := rw.Header()
 	for key, values := range resp.Header {
 		header[key] = values
 	}
 
-	if resp.ContentLength >= 0 && resp.Header.Get("Content-Length") == "" {
+	if _, ok := header["Content-Length"]; !ok && resp.ContentLength >= 0 {
 		header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
 
@@ -405,17 +406,13 @@ func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 
 func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
-		httpVersion := "HTTP/1.0"
-		if req.ProtoAtLeast(1, 1) {
-			httpVersion = "HTTP/1.1"
-		}
+		const response = "HTTP/1.1 200 OK\r\n\r\n"
 
 		remoteHost := req.RequestURI
 
 		_, port, err := net.SplitHostPort(remoteHost)
 		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
-			responseString := httpVersion + " 200 OK\r\n\r\n"
-			if _, err := conn.Write([]byte(responseString)); err != nil {
+			if _, err := conn.Write([]byte(response)); err != nil {
 				h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
 				conn.Close()
 
@@ -438,8 +435,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 		}
 		defer remote.Close()
 
-		responseString := httpVersion + " 200 OK\r\n\r\n"
-		if _, err := local.Write([]byte(responseString)); err != nil {
+		if _, err := local.Write([]byte(response)); err != nil {
 			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
 			return
 		}
@@ -753,14 +749,14 @@ func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 	for i, req := range b.reqlist {
 		n, err = req.Read(p)
 		if err == nil {
-			if i+1 < len(b.reqlist) && req.AboutToComplete() {
-				// Start next range request in advance.
-				b.reqlist[i+1].Init()
-			}
-
 			if i > 0 {
 				// Remove finished requests.
 				b.reqlist = b.reqlist[i:]
+			}
+
+			if len(b.reqlist) > 1 && req.AboutToComplete() {
+				// Start next range request in advance.
+				b.reqlist[1].Init()
 			}
 
 			return
@@ -772,14 +768,13 @@ func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 		}
 
 		if n > 0 {
-			if i+1 == len(b.reqlist) { // Final request?
+			// Remove finished requests.
+			b.reqlist = b.reqlist[i+1:]
+
+			if len(b.reqlist) == 0 {
 				b.err = io.EOF
 				return
 			}
-
-			// No, we have more.
-			// Remove finished requests.
-			b.reqlist = b.reqlist[i+1:]
 
 			return n, nil
 		}
