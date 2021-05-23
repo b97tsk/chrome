@@ -10,30 +10,21 @@ import (
 	"github.com/b97tsk/chrome/internal/proxy"
 )
 
-func (man *Manager) Dial(
-	ctx context.Context,
-	dialer proxy.Dialer,
-	network, address string,
-	timeout time.Duration,
-) (conn net.Conn, err error) {
-	return man.builtin.Dial(ctx, dialer, network, address, timeout)
-}
-
 type dialingService struct {
 	dialTimeout [3]uint32
 }
 
-func (d *dialingService) DialTimeout() time.Duration {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&d.dialTimeout[1])) &^ 4))
+func (m *dialingService) DialTimeout() time.Duration {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.dialTimeout[1])) &^ 4))
 	return time.Duration(atomic.LoadInt64(ptr))
 }
 
-func (d *dialingService) SetDialTimeout(timeout time.Duration) {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&d.dialTimeout[1])) &^ 4))
+func (m *dialingService) SetDialTimeout(timeout time.Duration) {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.dialTimeout[1])) &^ 4))
 	atomic.StoreInt64(ptr, int64(timeout))
 }
 
-func (d *dialingService) Dial(
+func (m *dialingService) Dial(
 	ctx context.Context,
 	dialer proxy.Dialer,
 	network, address string,
@@ -44,7 +35,7 @@ func (d *dialingService) Dial(
 	}
 
 	if timeout <= 0 {
-		timeout = d.DialTimeout()
+		timeout = m.DialTimeout()
 		if timeout <= 0 {
 			timeout = defaultDialTimeout
 		}

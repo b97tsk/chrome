@@ -6,15 +6,11 @@ import (
 	"time"
 )
 
-func (man *Manager) Serve(ln net.Listener, fn func(net.Conn)) {
-	man.builtin.Serve(ln, fn)
-}
-
 type servingService struct {
 	connections sync.Map
 }
 
-func (s *servingService) Serve(ln net.Listener, fn func(net.Conn)) {
+func (m *servingService) Serve(ln net.Listener, fn func(net.Conn)) {
 	var tempDelay time.Duration // how long to sleep on accept failure
 
 	for {
@@ -41,20 +37,20 @@ func (s *servingService) Serve(ln net.Listener, fn func(net.Conn)) {
 
 		tempDelay = 0
 
-		s.connections.Store(c, struct{}{})
+		m.connections.Store(c, struct{}{})
 
 		go func() {
 			defer func() {
 				c.Close()
-				s.connections.Delete(c)
+				m.connections.Delete(c)
 			}()
 			fn(c)
 		}()
 	}
 }
 
-func (s *servingService) CloseConnections() {
-	s.connections.Range(func(key, _ interface{}) bool {
+func (m *servingService) CloseConnections() {
+	m.connections.Range(func(key, _ interface{}) bool {
 		_ = key.(net.Conn).Close()
 		return true
 	})

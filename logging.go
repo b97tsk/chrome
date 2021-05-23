@@ -10,14 +10,6 @@ import (
 	"github.com/b97tsk/chrome/internal/log"
 )
 
-func (man *Manager) Logger(name string) *log.Logger {
-	return man.builtin.Logger(name)
-}
-
-func (man *Manager) SetLogOutput(w io.Writer) {
-	man.builtin.SetLogOutput(w)
-}
-
 type loggingService struct {
 	mu      sync.Mutex
 	level   log.Level
@@ -26,31 +18,31 @@ type loggingService struct {
 	loggers sync.Map
 }
 
-func (l *loggingService) Logger(name string) *log.Logger {
-	logger, ok := l.loggers.Load(name)
+func (m *loggingService) Logger(name string) *log.Logger {
+	logger, ok := m.loggers.Load(name)
 	if !ok {
-		logger = log.New(l, "["+name+"] ", stdlog.LstdFlags|stdlog.Lmsgprefix)
-		logger, _ = l.loggers.LoadOrStore(name, logger)
+		logger = log.New(loggingWriter{m}, "["+name+"] ", stdlog.LstdFlags|stdlog.Lmsgprefix)
+		logger, _ = m.loggers.LoadOrStore(name, logger)
 	}
 
 	return logger.(*log.Logger)
 }
 
-func (l *loggingService) LogLevel() log.Level {
-	return log.Level(atomic.LoadInt32((*int32)(&l.level)))
+func (m *loggingService) LogLevel() log.Level {
+	return log.Level(atomic.LoadInt32((*int32)(&m.level)))
 }
 
-func (l *loggingService) SetLogLevel(level log.Level) {
-	atomic.StoreInt32((*int32)(&l.level), int32(level))
+func (m *loggingService) SetLogLevel(level log.Level) {
+	atomic.StoreInt32((*int32)(&m.level), int32(level))
 }
 
-func (l *loggingService) SetLogFile(name string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (m *loggingService) SetLogFile(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	if l.file != nil {
-		l.file.Close()
-		l.file = nil
+	if m.file != nil {
+		m.file.Close()
+		m.file = nil
 	}
 
 	if name != "" {
@@ -59,38 +51,42 @@ func (l *loggingService) SetLogFile(name string) error {
 			return err
 		}
 
-		l.file = file
+		m.file = file
 	}
 
 	return nil
 }
 
-func (l *loggingService) SetLogOutput(w io.Writer) {
-	l.mu.Lock()
-	l.output = w
-	l.mu.Unlock()
+func (m *loggingService) SetLogOutput(w io.Writer) {
+	m.mu.Lock()
+	m.output = w
+	m.mu.Unlock()
 }
 
-func (l *loggingService) Write(p []byte) (n int, err error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+type loggingWriter struct {
+	*loggingService
+}
 
-	if l.file != nil {
-		if _, err := l.file.Write(p); err != nil {
-			l.file.Close()
-			l.file = nil
+func (m loggingWriter) Write(p []byte) (n int, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.file != nil {
+		if _, err := m.file.Write(p); err != nil {
+			m.file.Close()
+			m.file = nil
 		}
 	}
 
-	if l.output != nil {
-		if _, err := l.output.Write(p); err != nil {
-			l.output = nil
+	if m.output != nil {
+		if _, err := m.output.Write(p); err != nil {
+			m.output = nil
 		}
 	}
 
 	return len(p), nil
 }
 
-func (l *loggingService) Writable(lv log.Level) bool {
-	return lv <= l.LogLevel()
+func (m loggingWriter) Writable(lv log.Level) bool {
+	return lv <= m.LogLevel()
 }

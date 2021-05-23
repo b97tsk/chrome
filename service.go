@@ -61,31 +61,30 @@ type Manager struct {
 	services map[string]Service
 	jobs     map[string]Job
 	fsys     atomic.Value
-	builtin  struct {
-		loggingService
-		dialingService
-		servingService
-	}
+
+	loggingService
+	dialingService
+	servingService
 }
 
 type fsysValue struct {
 	fs.FS
 }
 
-func (man *Manager) AddService(service Service) {
-	man.mu.Lock()
+func (m *Manager) AddService(service Service) {
+	m.mu.Lock()
 
-	if man.services == nil {
-		man.services = make(map[string]Service)
+	if m.services == nil {
+		m.services = make(map[string]Service)
 	}
 
-	man.services[service.Name()] = service
+	m.services[service.Name()] = service
 
-	man.mu.Unlock()
+	m.mu.Unlock()
 }
 
-func (man *Manager) Open(name string) (fs.File, error) {
-	fsys, _ := man.fsys.Load().(fsysValue)
+func (m *Manager) Open(name string) (fs.File, error) {
+	fsys, _ := m.fsys.Load().(fsysValue)
 	if fsys.FS == nil {
 		return nil, fs.ErrInvalid
 	}
@@ -93,10 +92,10 @@ func (man *Manager) Open(name string) (fs.File, error) {
 	return fsys.Open(name)
 }
 
-func (man *Manager) LoadFile(name string) {
+func (m *Manager) LoadFile(name string) {
 	file, err := os.Open(name)
 	if err != nil {
-		logger := man.Logger("manager")
+		logger := m.Logger("manager")
 		logger.Errorf("LoadFile: %v", err)
 
 		return
@@ -117,7 +116,7 @@ func (man *Manager) LoadFile(name string) {
 		}
 
 		if err != nil {
-			logger := man.Logger("manager")
+			logger := m.Logger("manager")
 			logger.Errorf("LoadFile: open %v in %v: %v", configFile, name, err)
 
 			return
@@ -125,26 +124,26 @@ func (man *Manager) LoadFile(name string) {
 
 		defer file.Close()
 
-		man.fsys.Store(fsysValue{zr})
-		man.loadConfig(file)
-		man.fsys.Store(fsysValue{})
+		m.fsys.Store(fsysValue{zr})
+		m.loadConfig(file)
+		m.fsys.Store(fsysValue{})
 
 		return
 	}
 
 	_, _ = file.Seek(0, io.SeekStart)
 
-	man.Load(file)
+	m.Load(file)
 }
 
-func (man *Manager) Load(r io.Reader) {
-	man.fsys.Store(fsysValue{os.DirFS(".")})
-	man.loadConfig(r)
+func (m *Manager) Load(r io.Reader) {
+	m.fsys.Store(fsysValue{os.DirFS(".")})
+	m.loadConfig(r)
 }
 
-func (man *Manager) loadConfig(r io.Reader) {
-	man.mu.Lock()
-	defer man.mu.Unlock()
+func (m *Manager) loadConfig(r io.Reader) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	var config struct {
 		Log struct {
@@ -158,48 +157,48 @@ func (man *Manager) loadConfig(r io.Reader) {
 	}
 
 	dec := yaml.NewDecoder(r)
-	logger := man.Logger("manager")
+	logger := m.Logger("manager")
 
 	if err := dec.Decode(&config); err != nil {
 		logger.Errorf("loadConfig: %v", err)
 		return
 	}
 
-	if err := man.builtin.SetLogFile(string(config.Log.File)); err != nil {
+	if err := m.SetLogFile(string(config.Log.File)); err != nil {
 		logger.Errorf("loadConfig: %v", err)
 	}
 
-	man.builtin.SetLogLevel(config.Log.Level)
-	man.builtin.SetDialTimeout(config.Dial.Timeout)
+	m.SetLogLevel(config.Log.Level)
+	m.SetDialTimeout(config.Dial.Timeout)
 
-	for name, job := range man.jobs {
+	for name, job := range m.jobs {
 		if _, ok := config.Jobs[name]; ok {
 			continue
 		}
 
 		job.Cancel()
 		<-job.Done()
-		delete(man.jobs, name)
+		delete(m.jobs, name)
 	}
 
 	for name, data := range config.Jobs {
-		if err := man.setOptions(name, data); err != nil {
+		if err := m.setOptions(name, data); err != nil {
 			logger.Errorf("loadConfig: %v", err)
 		}
 	}
 
-	for _, job := range man.jobs {
+	for _, job := range m.jobs {
 		job.sendLoaded()
 	}
 }
 
-func (man *Manager) setOptions(name string, data interface{}) error {
+func (m *Manager) setOptions(name string, data interface{}) error {
 	serviceName := findServiceName(name)
 	if serviceName == "" || serviceName == "alias" {
 		return nil
 	}
 
-	service, ok := man.services[serviceName]
+	service, ok := m.services[serviceName]
 	if !ok {
 		return fmt.Errorf("%v: service not found", name)
 	}
@@ -216,30 +215,30 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 		}
 	}
 
-	job, ok := man.jobs[name]
+	job, ok := m.jobs[name]
 	if !ok || job.Err() != nil {
 		ctx1, done := context.WithCancel(context.Background())
 		ctx2, cancel := context.WithCancel(ctx1)
 		loadChan, loadedChan := make(chan interface{}), make(chan struct{}, 1)
 		job = Job{ctx1, cancel, loadChan, loadedChan}
 
-		if man.jobs == nil {
-			man.jobs = make(map[string]Job)
+		if m.jobs == nil {
+			m.jobs = make(map[string]Job)
 		}
 
-		man.jobs[name] = job
+		m.jobs[name] = job
 
 		go func() {
 			defer func() {
 				if err := recover(); err != nil {
-					logger := man.Logger("manager")
+					logger := m.Logger("manager")
 					logger.Errorf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 
 				done()
 			}()
 
-			service.Run(Context{ctx2, man, loadChan, loadedChan})
+			service.Run(Context{ctx2, m, loadChan, loadedChan})
 		}()
 	}
 
@@ -250,21 +249,21 @@ func (man *Manager) setOptions(name string, data interface{}) error {
 	return nil
 }
 
-func (man *Manager) Shutdown() {
-	man.mu.Lock()
-	defer man.mu.Unlock()
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-	for _, job := range man.jobs {
+	for _, job := range m.jobs {
 		job.Cancel()
 	}
 
-	for _, job := range man.jobs {
+	for _, job := range m.jobs {
 		<-job.Done()
 	}
 
-	_ = man.builtin.SetLogFile("")
-	man.builtin.SetLogOutput(nil)
-	man.builtin.CloseConnections()
+	_ = m.SetLogFile("")
+	m.SetLogOutput(nil)
+	m.CloseConnections()
 }
 
 func findServiceName(s string) string {
