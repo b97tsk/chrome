@@ -65,6 +65,7 @@ type Manager struct {
 	loggingService
 	dialingService
 	servingService
+	relayService
 }
 
 type fsysValue struct {
@@ -153,7 +154,8 @@ func (m *Manager) loadConfig(r io.Reader) {
 		Dial struct {
 			Timeout time.Duration
 		}
-		Jobs map[string]interface{} `yaml:",inline"`
+		Relay RelayOptions
+		Jobs  map[string]interface{} `yaml:",inline"`
 	}
 
 	dec := yaml.NewDecoder(r)
@@ -170,6 +172,7 @@ func (m *Manager) loadConfig(r io.Reader) {
 
 	m.SetLogLevel(config.Log.Level)
 	m.SetDialTimeout(config.Dial.Timeout)
+	m.SetRelayOptions(config.Relay)
 
 	for name, job := range m.jobs {
 		if _, ok := config.Jobs[name]; ok {

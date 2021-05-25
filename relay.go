@@ -6,14 +6,78 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/b97tsk/chrome/internal/netutil"
 )
 
-func Relay(l, r net.Conn) {
-	const ConnIdle = 300 * time.Second
-	const UplinkIdle = 2 * time.Second
-	const DownlinkIdle = 5 * time.Second
+type RelayOptions struct {
+	ConnIdle     time.Duration
+	UplinkIdle   time.Duration
+	DownlinkIdle time.Duration
+}
+
+type relayService struct {
+	opts [7]uint32
+}
+
+func (m *relayService) connIdle() time.Duration {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[1])) &^ 4))
+	return time.Duration(atomic.LoadInt64(ptr))
+}
+
+func (m *relayService) setConnIdle(idle time.Duration) {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[1])) &^ 4))
+	atomic.StoreInt64(ptr, int64(idle))
+}
+
+func (m *relayService) uplinkIdle() time.Duration {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[3])) &^ 4))
+	return time.Duration(atomic.LoadInt64(ptr))
+}
+
+func (m *relayService) setUplinkIdle(idle time.Duration) {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[3])) &^ 4))
+	atomic.StoreInt64(ptr, int64(idle))
+}
+
+func (m *relayService) downlinkIdle() time.Duration {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[5])) &^ 4))
+	return time.Duration(atomic.LoadInt64(ptr))
+}
+
+func (m *relayService) setDownlinkIdle(idle time.Duration) {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[5])) &^ 4))
+	atomic.StoreInt64(ptr, int64(idle))
+}
+
+func (m *relayService) SetRelayOptions(opts RelayOptions) {
+	m.setConnIdle(opts.ConnIdle)
+	m.setUplinkIdle(opts.UplinkIdle)
+	m.setDownlinkIdle(opts.DownlinkIdle)
+}
+
+func (m *relayService) Relay(l, r net.Conn, opts RelayOptions) {
+	if opts.ConnIdle <= 0 {
+		opts.ConnIdle = m.connIdle()
+		if opts.ConnIdle <= 0 {
+			opts.ConnIdle = defaultConnIdle
+		}
+	}
+
+	if opts.UplinkIdle <= 0 {
+		opts.UplinkIdle = m.uplinkIdle()
+		if opts.UplinkIdle <= 0 {
+			opts.UplinkIdle = defaultUplinkIdle
+		}
+	}
+
+	if opts.DownlinkIdle <= 0 {
+		opts.DownlinkIdle = m.downlinkIdle()
+		if opts.DownlinkIdle <= 0 {
+			opts.DownlinkIdle = defaultDownlinkIdle
+		}
+	}
 
 	reset := make(chan time.Duration, 1)
 
@@ -45,11 +109,11 @@ func Relay(l, r net.Conn) {
 		}
 	}
 
-	go copy(l, netutil.DoR(r, do), UplinkIdle)
-	go copy(r, netutil.DoR(l, do), DownlinkIdle)
+	go copy(l, netutil.DoR(r, do), opts.UplinkIdle)
+	go copy(r, netutil.DoR(l, do), opts.DownlinkIdle)
 
 	expired := false
-	td := ConnIdle
+	td := opts.ConnIdle
 
 	t := time.AfterFunc(td, func() {
 		now := time.Now()
@@ -83,3 +147,9 @@ type relayBuffer [32 * 1024]byte
 var relayPool = sync.Pool{
 	New: func() interface{} { return new(relayBuffer) },
 }
+
+const (
+	defaultConnIdle     = 300 * time.Second
+	defaultUplinkIdle   = 2 * time.Second
+	defaultDownlinkIdle = 5 * time.Second
+)

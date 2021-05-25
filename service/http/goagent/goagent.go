@@ -36,6 +36,7 @@ type Options struct {
 	Dial struct {
 		Timeout time.Duration
 	}
+	Relay chrome.RelayOptions
 
 	dialer proxy.Dialer
 }
@@ -282,6 +283,7 @@ func (l *Listener) Addr() net.Addr {
 type Handler struct {
 	ctx          chrome.Context
 	ln           *Listener
+	opts         <-chan Options
 	tr           *http.Transport
 	appIDMutex   sync.Mutex
 	appIDList    []string
@@ -289,10 +291,10 @@ type Handler struct {
 }
 
 func NewHandler(ctx chrome.Context, ln *Listener, opts <-chan Options) *Handler {
-	h := &Handler{ctx: ctx, ln: ln}
+	h := &Handler{ctx: ctx, ln: ln, opts: opts}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		opts := <-opts
+		opts := <-h.opts
 
 		return h.ctx.Manager.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
 	}
@@ -440,7 +442,9 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		chrome.Relay(local, remote)
+		opts := <-h.opts
+
+		h.ctx.Manager.Relay(local, remote, opts.Relay)
 	})
 }
 

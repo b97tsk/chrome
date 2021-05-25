@@ -28,6 +28,7 @@ type Options struct {
 	Dial struct {
 		Timeout time.Duration
 	}
+	Relay chrome.RelayOptions
 
 	DNS struct {
 		Server  DNServer
@@ -196,7 +197,7 @@ func (Service) Run(ctx chrome.Context) {
 				return
 			}
 
-			chrome.Relay(local, remote)
+			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
 
 		return nil

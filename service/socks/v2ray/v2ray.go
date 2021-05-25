@@ -20,6 +20,7 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
+	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
@@ -57,6 +58,7 @@ type Options struct {
 	Dial struct {
 		Timeout time.Duration
 	}
+	Relay chrome.RelayOptions
 
 	stats statsINFO
 
@@ -208,14 +210,14 @@ func (Service) Run(ctx chrome.Context) {
 			}
 
 			readevents := opts.stats.readevents
-			remote = doOnRead(remote, func(int) {
+			remote = netutil.DoR(remote, func(int) {
 				select {
 				case readevents <- struct{}{}:
 				default:
 				}
 			})
 
-			chrome.Relay(local, remote)
+			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
 
 		return nil
@@ -383,7 +385,7 @@ func (Service) Run(ctx chrome.Context) {
 								return
 							}
 
-							chrome.Relay(local, remote)
+							ctx.Manager.Relay(local, remote, opts.Relay)
 						})
 					}
 
@@ -422,24 +424,6 @@ func (Service) Run(ctx chrome.Context) {
 	}
 }
 
-type doOnReadConn struct {
-	net.Conn
-	do func(int)
-}
-
-func doOnRead(c net.Conn, do func(int)) net.Conn {
-	return &doOnReadConn{c, do}
-}
-
-func (c *doOnReadConn) Read(p []byte) (n int, err error) {
-	n, err = c.Conn.Read(p)
-	if n > 0 {
-		c.do(n)
-	}
-
-	return
-}
-
 func shouldRestart(x, y Options) bool {
 	if (x.Proxy.Len() != 0) != (y.Proxy.Len() != 0) {
 		return true
@@ -448,6 +432,7 @@ func shouldRestart(x, y Options) bool {
 	var z Options
 	x.Proxy, y.Proxy = z.Proxy, z.Proxy
 	x.Dial, y.Dial = z.Dial, z.Dial
+	x.Relay, y.Relay = z.Relay, z.Relay
 	x.stats, y.stats = z.stats, z.stats
 	x.forwardDialer, y.forwardDialer = nil, nil
 

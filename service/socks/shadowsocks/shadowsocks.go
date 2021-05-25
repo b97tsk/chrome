@@ -21,6 +21,7 @@ type Options struct {
 	Dial struct {
 		Timeout time.Duration
 	}
+	Relay chrome.RelayOptions
 
 	dialer proxy.Dialer
 	cipher core.Cipher
@@ -99,7 +100,7 @@ func (Service) Run(ctx chrome.Context) {
 			}
 			defer remote.Close()
 
-			chrome.Relay(local, remote)
+			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
 
 		return nil
