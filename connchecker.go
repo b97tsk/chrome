@@ -3,20 +3,23 @@ package chrome
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
+	"os"
 	"time"
 )
 
 const (
-	checkInterval   = 1 * time.Second
-	checkBufferSize = 4096
+	checkInterval   = 500 * time.Millisecond
+	checkWindow     = 1 * time.Millisecond
+	checkBufferSize = 1024
 )
 
 type ConnChecker struct {
 	net.Conn
 
 	cbr      chan *bufio.Reader
-	ping     chan struct{}
+	beat     chan struct{}
 	cancel   func()
 	deadline time.Time
 }
@@ -30,11 +33,11 @@ func NewConnCheckerContext(ctx context.Context, conn net.Conn) (*ConnChecker, co
 	cbr := make(chan *bufio.Reader, 1)
 	cbr <- bufio.NewReaderSize(conn, checkBufferSize)
 
-	ping := make(chan struct{}, 1)
+	beat := make(chan struct{}, 1)
 	c := &ConnChecker{
 		Conn:   conn,
 		cbr:    cbr,
-		ping:   ping,
+		beat:   beat,
 		cancel: cancel,
 	}
 
@@ -57,7 +60,7 @@ func (c *ConnChecker) start(ctx context.Context) {
 		select {
 		case <-done:
 			return
-		case <-c.ping:
+		case <-c.beat:
 			skipNextCheck = true
 		case <-ticker.C:
 			if skipNextCheck {
@@ -69,14 +72,18 @@ func (c *ConnChecker) start(ctx context.Context) {
 				var err error
 
 				if br.Buffered() < checkBufferSize {
-					_ = c.Conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+					_ = c.Conn.SetReadDeadline(time.Now().Add(checkWindow))
 					_, err = br.Peek(checkBufferSize)
 					_ = c.Conn.SetReadDeadline(c.deadline)
 				}
 
 				c.cbr <- br
 
-				if err != nil && err != bufio.ErrBufferFull && !isTemporary(err) {
+				switch {
+				case err == nil:
+				case err == bufio.ErrBufferFull:
+				case errors.Is(err, os.ErrDeadlineExceeded):
+				default:
 					return
 				}
 			default:
@@ -91,7 +98,7 @@ func (c *ConnChecker) Read(p []byte) (n int, err error) {
 	c.cbr <- br
 
 	select {
-	case c.ping <- struct{}{}:
+	case c.beat <- struct{}{}:
 	default:
 	}
 
