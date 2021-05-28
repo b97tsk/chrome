@@ -2,6 +2,7 @@ package chrome
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync/atomic"
 	"time"
@@ -53,10 +54,15 @@ func (m *dialingService) Dial(
 
 		cancel()
 
-		if err == nil || !isTemporary(err) {
+		if err == nil || !isTimeout(err) {
 			return
 		}
 	}
+}
+
+func isTimeout(err error) bool {
+	var t interface{ Timeout() bool }
+	return errors.As(err, &t) && t.Timeout()
 }
 
 const defaultDialTimeout = 30 * time.Second
