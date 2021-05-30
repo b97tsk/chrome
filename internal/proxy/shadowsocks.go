@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
@@ -88,27 +89,61 @@ func (d *shadowsocksDialer) DialContext(ctx context.Context, network, addr strin
 	}
 }
 
-func (d *shadowsocksDialer) dialTCP(ctx context.Context, network, addr string) (net.Conn, error) {
+func (d *shadowsocksDialer) dialTCP(ctx context.Context, network, addr string) (c net.Conn, err error) {
 	remoteAddr := socks.ParseAddr(addr)
 	if remoteAddr == nil {
 		return nil, shadowsocksParseAddrError(addr)
 	}
 
-	conn, err := Dial(ctx, d.Forward, network, d.Server)
+	c, err = Dial(ctx, d.Forward, network, d.Server)
 	if err != nil {
 		return nil, fmt.Errorf("proxy/shadowsocks: dial %v: %w", d.Server, err)
 	}
 
-	conn = d.Cipher.StreamConn(conn)
+	defer func() {
+		if c != nil {
+			var noDeadline time.Time
+			_ = c.SetDeadline(noDeadline)
+		}
+	}()
 
-	_, err = conn.Write(remoteAddr)
+	if d, ok := ctx.Deadline(); ok && !d.IsZero() {
+		_ = c.SetDeadline(d)
+	}
+
+	if ctx.Done() != nil {
+		watch := make(chan struct{})
+		done := make(chan struct{})
+
+		defer func() {
+			close(done)
+
+			if err == nil {
+				<-watch
+			}
+		}()
+
+		go func(c net.Conn) {
+			defer close(watch)
+			select {
+			case <-done:
+			case <-ctx.Done():
+				aLongTimeAgo := time.Unix(1, 0)
+				_ = c.SetDeadline(aLongTimeAgo)
+			}
+		}(c)
+	}
+
+	c = d.Cipher.StreamConn(c)
+
+	_, err = c.Write(remoteAddr)
 	if err != nil {
-		conn.Close()
+		c.Close()
 
 		return nil, fmt.Errorf("proxy/shadowsocks: write %v: %w", addr, err)
 	}
 
-	return conn, nil
+	return c, nil
 }
 
 type shadowsocksParseAddrError string
