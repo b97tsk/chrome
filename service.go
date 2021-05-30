@@ -97,7 +97,7 @@ func (m *Manager) LoadFile(name string) {
 	file, err := os.Open(name)
 	if err != nil {
 		logger := m.Logger("manager")
-		logger.Errorf("LoadFile: %v", err)
+		logger.Errorf("load file: %v", err)
 
 		return
 	}
@@ -118,7 +118,7 @@ func (m *Manager) LoadFile(name string) {
 
 		if err != nil {
 			logger := m.Logger("manager")
-			logger.Errorf("LoadFile: open %v in %v: %v", configFile, name, err)
+			logger.Errorf("load file: open %v in %v: %v", configFile, name, err)
 
 			return
 		}
@@ -162,12 +162,12 @@ func (m *Manager) loadConfig(r io.Reader) {
 	logger := m.Logger("manager")
 
 	if err := dec.Decode(&config); err != nil {
-		logger.Errorf("loadConfig: %v", err)
+		logger.Errorf("load config: %v", err)
 		return
 	}
 
 	if err := m.SetLogFile(string(config.Log.File)); err != nil {
-		logger.Errorf("loadConfig: %v", err)
+		logger.Errorf("load config: %v", err)
 	}
 
 	m.SetLogLevel(config.Log.Level)
@@ -186,7 +186,7 @@ func (m *Manager) loadConfig(r io.Reader) {
 
 	for name, data := range config.Jobs {
 		if err := m.setOptions(name, data); err != nil {
-			logger.Errorf("loadConfig: %v", err)
+			logger.Errorf("load config: %v", err)
 		}
 	}
 
@@ -235,7 +235,7 @@ func (m *Manager) setOptions(name string, data interface{}) error {
 			defer func() {
 				if err := recover(); err != nil {
 					logger := m.Logger("manager")
-					logger.Errorf("job %q panic: %v\n%v", name, err, string(debug.Stack()))
+					logger.Errorf("job %q: panic: %v\n%v", name, err, string(debug.Stack()))
 				}
 
 				done()

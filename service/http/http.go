@@ -475,14 +475,14 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: dial to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		const response = "HTTP/1.1 200 OK\r\n\r\n"
 		if _, err := local.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: write response to local: %v", err)
 			return
 		}
 
@@ -502,25 +502,25 @@ func (h *Handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: dial to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		if err := req.Write(remote); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: write request to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: write request to remote: %v", err)
 			return
 		}
 
 		resp, err := http.ReadResponse(bufio.NewReader(remote), req)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: read response from remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: read response from remote: %v", err)
 			return
 		}
 		defer resp.Body.Close()
 
 		if err := resp.Write(local); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleUpgrade: write response to local: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: write response to local: %v", err)
 			return
 		}
 

@@ -113,7 +113,7 @@ func (Service) Run(ctx chrome.Context) {
 			for {
 				in, err := dnsConn.ReadMsg()
 				if err != nil {
-					logger.Tracef("(local) ReadMsg: %v", err)
+					logger.Tracef("(local) read msg: %v", err)
 					return
 				}
 
@@ -142,7 +142,7 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if err := dnsConn.WriteMsg(result); err != nil {
-					logger.Tracef("(local) WriteMsg: %v", err)
+					logger.Tracef("(local) write msg: %v", err)
 					return
 				}
 			}
@@ -392,9 +392,9 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 						break
 					}
 
-					logger.Tracef("(remote) ReadMsg: %v", err)
+					logger.Tracef("(remote) read msg: %v", err)
 				} else {
-					logger.Tracef("(remote) WriteMsg: %v", err)
+					logger.Tracef("(remote) write msg: %v", err)
 				}
 
 				if err != nil {

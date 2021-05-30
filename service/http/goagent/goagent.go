@@ -415,7 +415,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 		_, port, err := net.SplitHostPort(remoteHost)
 		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
 			if _, err := conn.Write([]byte(response)); err != nil {
-				h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
+				h.ctx.Manager.Logger(_ServiceName).Tracef("connect: write response to local: %v", err)
 				conn.Close()
 
 				return
@@ -432,13 +432,13 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: dial to remote: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		if _, err := local.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("handleConnect: write response to local: %v", err)
+			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: write response to local: %v", err)
 			return
 		}
 

@@ -503,10 +503,10 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 								break
 							}
 						} else {
-							logger.Tracef("[dns] ReadMsg: %v", err)
+							logger.Tracef("[dns] read msg: %v", err)
 						}
 					} else {
-						logger.Tracef("[dns] WriteMsg: %v", err)
+						logger.Tracef("[dns] write msg: %v", err)
 					}
 
 					if err != nil {
