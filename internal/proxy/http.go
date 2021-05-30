@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"time"
 
 	"golang.org/x/net/proxy"
 )
@@ -54,10 +55,44 @@ func (d *httpDialer) DialContext(ctx context.Context, network, addr string) (net
 	}
 }
 
-func (d *httpDialer) dialTCP(ctx context.Context, network, addr string) (net.Conn, error) {
-	conn, err := Dial(ctx, d.Forward, network, d.Server)
+func (d *httpDialer) dialTCP(ctx context.Context, network, addr string) (c net.Conn, err error) {
+	c, err = Dial(ctx, d.Forward, network, d.Server)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("proxy/http: dial %v: %w", d.Server, err)
+	}
+
+	defer func() {
+		if c != nil {
+			var noDeadline time.Time
+			_ = c.SetDeadline(noDeadline)
+		}
+	}()
+
+	if d, ok := ctx.Deadline(); ok && !d.IsZero() {
+		_ = c.SetDeadline(d)
+	}
+
+	if ctx.Done() != nil {
+		watch := make(chan struct{})
+		done := make(chan struct{})
+
+		defer func() {
+			close(done)
+
+			if err == nil {
+				<-watch
+			}
+		}()
+
+		go func(c net.Conn) {
+			defer close(watch)
+			select {
+			case <-done:
+			case <-ctx.Done():
+				aLongTimeAgo := time.Unix(1, 0)
+				_ = c.SetDeadline(aLongTimeAgo)
+			}
+		}(c)
 	}
 
 	req := &http.Request{
@@ -75,25 +110,25 @@ func (d *httpDialer) dialTCP(ctx context.Context, network, addr string) (net.Con
 		req.Header.Set("Proxy-Authorization", "Basic "+authString)
 	}
 
-	if err := req.Write(conn); err != nil {
-		conn.Close()
+	if err := req.Write(c); err != nil {
+		c.Close()
 
 		return nil, fmt.Errorf("proxy/http: dial %v over %v: %w", addr, d.Server, err)
 	}
 
-	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	resp, err := http.ReadResponse(bufio.NewReader(c), req)
 	if err != nil {
-		conn.Close()
+		c.Close()
 
 		return nil, fmt.Errorf("proxy/http: dial %v over %v: %w", addr, d.Server, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		conn.Close()
+		c.Close()
 
 		return nil, fmt.Errorf("proxy/http: dial %v over %v: %v", addr, d.Server, resp.Status)
 	}
 
-	return conn, nil
+	return c, nil
 }
