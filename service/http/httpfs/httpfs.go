@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/b97tsk/chrome"
+	"github.com/b97tsk/chrome/internal/log"
 )
 
 type Options struct {
@@ -80,7 +81,10 @@ func (Service) Run(ctx chrome.Context) {
 
 		defer logger.Infof("listening on %v", ln.Addr())
 
-		server = &http.Server{Handler: handler}
+		server = &http.Server{
+			Handler:  handler,
+			ErrorLog: logger.Get(log.LevelDebug),
+		}
 		serverDown = make(chan struct{})
 		serverListener = ln
 

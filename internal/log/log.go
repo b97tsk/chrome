@@ -38,6 +38,27 @@ func New(w Writer, prefix string, flags int) *Logger {
 	}
 }
 
+var noneLogger = log.New(io.Discard, "", 0)
+
+func (l *Logger) Get(lv Level) *log.Logger {
+	switch lv {
+	case LevelNone:
+		return noneLogger
+	case LevelError:
+		return l.e
+	case LevelWarn:
+		return l.w
+	case LevelInfo:
+		return l.i
+	case LevelDebug:
+		return l.d
+	case LevelTrace:
+		return l.t
+	}
+
+	panic("unknown log level")
+}
+
 func (l *Logger) Error(v ...interface{}) {
 	if l.ErrorWritable() {
 		l.e.Print(v...)
@@ -124,6 +145,10 @@ type writer struct {
 }
 
 func (w *writer) Write(p []byte) (n int, err error) {
+	if !w.w.Writable(w.lv) {
+		return len(p), nil
+	}
+
 	if i := bytes.Index(p, []byte(levelPlaceHolder)); i >= 0 {
 		b := pool.Get().(*buffer)
 		defer pool.Put(b)

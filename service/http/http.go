@@ -20,6 +20,7 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/httputil"
+	"github.com/b97tsk/chrome/internal/log"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/proxy"
 	"golang.org/x/net/http/httpguts"
@@ -241,6 +242,7 @@ func (Service) Run(ctx chrome.Context) {
 		server = &http.Server{
 			Handler:      handler,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
+			ErrorLog:     logger.Get(log.LevelDebug),
 		}
 		serverDown = make(chan struct{})
 		serverListener = ln
