@@ -238,7 +238,7 @@ func (l *Listener) Stop() {
 	}
 }
 
-func (l *Listener) Inject(conn net.Conn) {
+func (l *Listener) Inject(conn net.Conn) { //nolint:interfacer
 	l.mu.RLock()
 
 	if l.lane != nil {
@@ -256,7 +256,7 @@ func (l *Listener) Inject(conn net.Conn) {
 
 func (l *Listener) Accept() (net.Conn, error) {
 	l.mu.RLock()
-	lane := l.lane
+	lane := l.lane //nolint:ifshort
 	l.mu.RUnlock()
 
 	if lane != nil {
@@ -448,9 +448,17 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
+	numBadAppID := 0
+	numBadResponse := 0
+
 	for {
+		if isRequestCanceled(req) {
+			return nil, errors.New("round trip: canceled")
+		}
+
 		request, err := h.encodeRequest(req)
 		if err != nil {
+			h.ctx.Manager.Logger(_ServiceName).Debug(err)
 			return nil, fmt.Errorf("round trip: %w", err)
 		}
 
@@ -459,43 +467,49 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 		resp, err := h.tr.RoundTrip(request)
 		if err != nil {
 			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
-
-			if isRequestCanceled(req) {
-				return nil, fmt.Errorf("round trip: %w", err)
-			}
-
-			continue
+			return nil, fmt.Errorf("round trip: %w", err)
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
-			if isRequestCanceled(req) {
-				return resp, nil
-			}
+			resp.Body.Close()
+
+			numBadAppID++
+			numBadResponse = 0 //nolint:wsl
 
 			h.putBadAppID(appID)
-			resp.Body.Close()
+
+			if numBadAppID == perRequestBadAppIDLimit {
+				return nil, errors.New("round trip: too many bad app ids")
+			}
 
 			continue
 		}
 
 		response, err := h.decodeResponse(resp)
 		if err != nil {
+			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
+
 			resp.Body.Close()
 
-			return nil, fmt.Errorf("round trip: %w", err)
+			numBadResponse++
+
+			if numBadResponse == perRequestBadResponseLimit {
+				numBadAppID++
+				numBadResponse = 0 //nolint:wsl
+
+				h.putBadAppID(appID)
+
+				if numBadAppID == perRequestBadAppIDLimit {
+					return nil, errors.New("round trip: too many bad app ids")
+				}
+			}
+
+			continue
 		}
 
-		if isRequestCanceled(req) {
-			return response, nil
-		}
-
-		if response.StatusCode != http.StatusBadGateway {
-			return response, nil
-		}
-
-		response.Body.Close()
+		return response, nil
 	}
 }
 
@@ -868,23 +882,24 @@ func (r *autoRangeRequest) init() {
 
 			resp, err := r.h.roundTrip(req)
 			if err != nil {
-				if isRequestCanceled(req) {
-					_ = r.pipe.PipeWriter.CloseWithError(err)
-					return
-				}
-
-				continue
+				_ = r.pipe.PipeWriter.CloseWithError(err)
+				return
 			}
 
 			if resp.StatusCode != http.StatusPartialContent {
+				r.h.ctx.Manager.Logger(_ServiceName).Debugf(
+					"(%v) %v %v %v: %v",
+					appIDFromRequest(resp.Request),
+					req.Method, req.URL,
+					req.Header.Get("Range"),
+					resp.Status,
+				)
+
 				resp.Body.Close()
 
-				if isRequestCanceled(req) {
-					_ = r.pipe.PipeWriter.CloseWithError(errors.New(resp.Status))
-					return
-				}
+				_ = r.pipe.PipeWriter.CloseWithError(errors.New(resp.Status))
 
-				continue
+				return
 			}
 
 			if err := readResponse(resp); err != nil {
@@ -905,10 +920,6 @@ func (r *autoRangeRequest) Read(p []byte) (n int, err error) {
 
 	n, err = r.pipe.Read(p)
 	r.readSize += int64(n)
-
-	if err == io.ErrClosedPipe {
-		err = io.EOF
-	}
 
 	return
 }
@@ -1011,4 +1022,8 @@ var (
 	}
 )
 
-const perRequestSize = 4 << 20
+const (
+	perRequestSize             = 4 << 20
+	perRequestBadAppIDLimit    = 3
+	perRequestBadResponseLimit = 2
+)
