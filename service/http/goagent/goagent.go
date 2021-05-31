@@ -366,8 +366,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	resp, err := h.roundTrip(outreq)
 	if err != nil {
-		http.Error(rw, err.Error(), http.StatusBadGateway)
-		return
+		panic(http.ErrAbortHandler)
 	}
 	defer resp.Body.Close()
 
@@ -393,14 +392,14 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 	if _, ok := rw.(http.Hijacker); !ok {
-		http.Error(rw, "http.ResponseWriter does not implement http.Hijacker.", http.StatusInternalServerError)
-		return
+		h.ctx.Manager.Logger(_ServiceName).Debug("hijack: impossible")
+		panic(http.ErrAbortHandler)
 	}
 
 	conn, _, err := rw.(http.Hijacker).Hijack()
 	if err != nil {
-		http.Error(rw, err.Error(), http.StatusInternalServerError)
-		return
+		h.ctx.Manager.Logger(_ServiceName).Debugf("hijack: %v", err)
+		panic(http.ErrAbortHandler)
 	}
 
 	go handle(conn)
