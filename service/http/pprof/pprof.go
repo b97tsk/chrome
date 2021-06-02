@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"time"
 
 	// Import for side-effects.
 	_ "net/http/pprof"
@@ -91,7 +92,10 @@ func (Service) Run(ctx chrome.Context) {
 
 		defer logger.Infof("stopped listening on %v", serverListener.Addr())
 
-		_ = server.Shutdown(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		_ = server.Shutdown(ctx)
 
 		server = nil
 		serverDown = nil

@@ -156,8 +156,11 @@ func (Service) Run(ctx chrome.Context) {
 
 		defer logger.Infof("stopped listening on %v", serverListener.Addr())
 
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
 		_ = serverListener.Close() // Manually closes it since we didn't pass it to server.Serve.
-		_ = server.Shutdown(context.Background())
+		_ = server.Shutdown(ctx)
 
 		server = nil
 		serverDown = nil
