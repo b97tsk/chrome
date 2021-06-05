@@ -94,56 +94,64 @@ func (m *Manager) Open(name string) (fs.File, error) {
 	return fsys.Open(name)
 }
 
-func (m *Manager) LoadFile(name string) {
-	file, err := os.Open(name)
-	if err != nil {
-		logger := m.Logger("manager")
-		logger.Errorf("load file: %v", err)
+type osfs struct{}
 
-		return
+func (osfs) Open(name string) (fs.File, error) { return os.Open(name) }
+
+func (m *Manager) Load(r io.Reader) error { return m.load(osfs{}, r) }
+
+func (m *Manager) LoadFile(name string) error { return m.LoadFS(osfs{}, name) }
+
+func (m *Manager) LoadFS(fsys fs.FS, name string) error {
+	file, err := fsys.Open(name)
+	if err != nil {
+		return err
 	}
 	defer file.Close()
 
-	filesize, _ := file.Seek(0, io.SeekEnd)
-
-	if zr, err := zip.NewReader(file, filesize); err == nil {
-		configFile := "chrome.yaml"
-
-		file, err := zr.Open(configFile)
-		if err != nil {
-			if matches, _ := fs.Glob(zr, "*.yaml"); len(matches) == 1 {
-				configFile = matches[0]
-				file, err = zr.Open(configFile)
-			}
-		}
-
-		if err != nil {
-			logger := m.Logger("manager")
-			logger.Errorf("load file: open %v in %v: %v", configFile, name, err)
-
-			return
-		}
-
-		defer file.Close()
-
-		m.fsys.Store(fsysValue{zr})
-		m.loadConfig(file)
-		m.fsys.Store(fsysValue{})
-
-		return
+	readerAt, ok := file.(io.ReaderAt)
+	if !ok {
+		return m.load(fsys, file)
 	}
 
-	_, _ = file.Seek(0, io.SeekStart)
+	stat, err := file.Stat()
+	if err != nil {
+		return m.load(fsys, file)
+	}
 
-	m.Load(file)
+	zr, err := zip.NewReader(readerAt, stat.Size())
+	if err != nil {
+		return m.load(fsys, file)
+	}
+
+	configFile := "chrome.yaml"
+
+	zf, err := zr.Open(configFile)
+	if err != nil {
+		if matches, _ := fs.Glob(zr, "*.yaml"); len(matches) == 1 {
+			configFile = matches[0]
+			zf, err = zr.Open(configFile)
+		}
+	}
+
+	if err != nil {
+		return err
+	}
+
+	defer zf.Close()
+
+	return m.load(zr, zf)
 }
 
-func (m *Manager) Load(r io.Reader) {
-	m.fsys.Store(fsysValue{os.DirFS(".")})
-	m.loadConfig(r)
+func (m *Manager) load(fsys fs.FS, file io.Reader) error {
+	m.fsys.Store(fsysValue{fsys})
+	err := m.loadConfig(file)
+	m.fsys.Store(fsysValue{})
+
+	return err
 }
 
-func (m *Manager) loadConfig(r io.Reader) {
+func (m *Manager) loadConfig(r io.Reader) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -160,12 +168,11 @@ func (m *Manager) loadConfig(r io.Reader) {
 	}
 
 	dec := yaml.NewDecoder(r)
-	logger := m.Logger("manager")
-
 	if err := dec.Decode(&config); err != nil {
-		logger.Errorf("load config: %v", err)
-		return
+		return err
 	}
+
+	logger := m.Logger("manager")
 
 	if err := m.SetLogFile(string(config.Log.File)); err != nil {
 		logger.Errorf("load config: %v", err)
@@ -194,6 +201,8 @@ func (m *Manager) loadConfig(r io.Reader) {
 	for _, job := range m.jobs {
 		job.sendLoaded()
 	}
+
+	return nil
 }
 
 func (m *Manager) setOptions(name string, data interface{}) error {
