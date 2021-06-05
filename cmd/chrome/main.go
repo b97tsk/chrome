@@ -82,9 +82,14 @@ func Main() (code int) {
 	man.SetLogOutput(os.Stderr)
 
 	if configFile == "-" {
-		man.Load(os.Stdin)
+		err = man.Load(os.Stdin)
 	} else {
-		man.LoadFile(configFile)
+		err = man.LoadFile(configFile)
+	}
+
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 
 	interrupt := make(chan os.Signal, 1)
@@ -105,7 +110,10 @@ func Main() (code int) {
 			logger := man.Logger("main")
 			logger.Warn(err)
 		case <-reload:
-			man.LoadFile(configFile)
+			if err := man.LoadFile(configFile); err != nil {
+				logger := man.Logger("main")
+				logger.Warn(err)
+			}
 
 			reload = nil
 		case <-interrupt:
