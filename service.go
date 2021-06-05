@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,7 +16,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/b97tsk/chrome/internal/log"
+	"github.com/b97tsk/log"
 	"gopkg.in/yaml.v3"
 )
 
@@ -149,7 +150,7 @@ func (m *Manager) loadConfig(r io.Reader) {
 	var config struct {
 		Log struct {
 			File  EnvString
-			Level log.Level
+			Level logLevel
 		}
 		Dial struct {
 			Timeout time.Duration
@@ -170,7 +171,7 @@ func (m *Manager) loadConfig(r io.Reader) {
 		logger.Errorf("load config: %v", err)
 	}
 
-	m.SetLogLevel(config.Log.Level)
+	m.SetLogLevel(config.Log.Level.Level)
 	m.SetDialTimeout(config.Dial.Timeout)
 	m.SetRelayOptions(config.Relay)
 
@@ -267,6 +268,37 @@ func (m *Manager) Shutdown() {
 	_ = m.SetLogFile("")
 	m.SetLogOutput(nil)
 	m.CloseConnections()
+}
+
+type logLevel struct {
+	log.Level
+}
+
+func (lv *logLevel) UnmarshalYAML(v *yaml.Node) error {
+	var s string
+
+	if err := v.Decode(&s); err != nil {
+		return err
+	}
+
+	switch {
+	case strings.EqualFold(s, log.LevelNone.String()):
+		lv.Level = log.LevelNone
+	case strings.EqualFold(s, log.LevelError.String()):
+		lv.Level = log.LevelError
+	case strings.EqualFold(s, log.LevelWarn.String()):
+		lv.Level = log.LevelWarn
+	case strings.EqualFold(s, log.LevelInfo.String()):
+		lv.Level = log.LevelInfo
+	case strings.EqualFold(s, log.LevelDebug.String()):
+		lv.Level = log.LevelDebug
+	case strings.EqualFold(s, log.LevelTrace.String()):
+		lv.Level = log.LevelTrace
+	default:
+		return errors.New("unknown logging level: " + s)
+	}
+
+	return nil
 }
 
 func findServiceName(s string) string {

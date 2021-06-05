@@ -3,6 +3,7 @@ module github.com/b97tsk/chrome
 go 1.16
 
 require (
+	github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1
 	github.com/b97tsk/proxy v0.0.0-20210605155610-83df57f3887c
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/miekg/dns v1.1.42

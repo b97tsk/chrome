@@ -9,6 +9,8 @@ dmitri.shuralyov.com/state v0.0.0-20180228185332-28bcc343414c/go.mod h1:0PRwlb0D
 git.apache.org/thrift.git v0.0.0-20180902110319-2566ecd5d999/go.mod h1:fPE2ZNJGynbRyZ4dJvy6G277gSllfV2HJqblrnkyeyg=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/anmitsu/go-shlex v0.0.0-20161002113705-648efa622239/go.mod h1:2FmKhYUyUczH0OGQWaF5ceTx0UBShxjsH6f8oGKYe2c=
+github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1 h1:rLk3BFYzpX2uIw9ek0f42yqO2k1LTYDJ6VCiHt/hgVA=
+github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1/go.mod h1:WYjdsAU8i5C+dJ/OGm5gjb0y6Gk8k3jrQoKCEpaM6eg=
 github.com/b97tsk/proxy v0.0.0-20210605155610-83df57f3887c h1:r/iEsH5ou6Y379btZUnWNt0iB+H7YCDuFjtq9A0OsA0=
 github.com/b97tsk/proxy v0.0.0-20210605155610-83df57f3887c/go.mod h1:irs6pPO27+Au5tAQAqsGV461DvYE+YpvkOk5Ch1dC8g=
 github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=

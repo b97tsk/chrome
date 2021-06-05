@@ -10,7 +10,7 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/chrome/internal/log"
+	"github.com/b97tsk/log"
 )
 
 type Options struct {

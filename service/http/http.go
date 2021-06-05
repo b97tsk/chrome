@@ -20,8 +20,8 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/httputil"
-	"github.com/b97tsk/chrome/internal/log"
 	"github.com/b97tsk/chrome/internal/matchset"
+	"github.com/b97tsk/log"
 	"github.com/b97tsk/proxy"
 	"golang.org/x/net/http/httpguts"
 )

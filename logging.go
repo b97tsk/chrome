@@ -7,12 +7,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/b97tsk/chrome/internal/log"
+	"github.com/b97tsk/log"
 )
 
 type loggingService struct {
 	mu      sync.Mutex
-	level   log.Level
+	level   int32
 	file    *os.File
 	output  io.Writer
 	loggers sync.Map
@@ -29,11 +29,11 @@ func (m *loggingService) Logger(name string) *log.Logger {
 }
 
 func (m *loggingService) LogLevel() log.Level {
-	return log.Level(atomic.LoadInt32((*int32)(&m.level)))
+	return log.Level(atomic.LoadInt32(&m.level))
 }
 
 func (m *loggingService) SetLogLevel(level log.Level) {
-	atomic.StoreInt32((*int32)(&m.level), int32(level))
+	atomic.StoreInt32(&m.level, int32(level))
 }
 
 func (m *loggingService) SetLogFile(name string) error {
@@ -88,5 +88,5 @@ func (m loggingWriter) Write(p []byte) (n int, err error) {
 }
 
 func (m loggingWriter) Writable(lv log.Level) bool {
-	return lv <= m.LogLevel()
+	return lv >= m.LogLevel()
 }
