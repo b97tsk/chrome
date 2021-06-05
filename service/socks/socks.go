@@ -15,7 +15,7 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
-	"github.com/b97tsk/chrome/internal/proxy"
+	"github.com/b97tsk/proxy"
 	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )

@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/b97tsk/chrome/internal/proxy"
+	"github.com/b97tsk/proxy"
 	"gopkg.in/yaml.v3"
 )
 

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/chrome/internal/proxy"
+	"github.com/b97tsk/proxy"
 )
 
 type Options struct {
