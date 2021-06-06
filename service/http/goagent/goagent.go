@@ -30,7 +30,7 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
-	AppIDList []string `yaml:"appids"`
+	AppIDList chrome.StringList `yaml:"appids"`
 
 	Proxy chrome.ProxyChain `yaml:"over"`
 
@@ -74,10 +74,10 @@ func (Service) Run(ctx chrome.Context) {
 		close(optsOut)
 	}()
 
-	listener := NewListener(ctx.Context)
+	listener := newListener(ctx.Context)
 	defer listener.Stop()
 
-	handler := NewHandler(ctx, listener, optsOut)
+	handler := newHandler(ctx, listener, optsOut)
 	defer handler.CloseIdleConnections()
 
 	var (
@@ -207,24 +207,24 @@ func (Service) Run(ctx chrome.Context) {
 	}
 }
 
-type Listener struct {
+type listener struct {
 	mu     sync.RWMutex
 	ctx    context.Context
 	cancel context.CancelFunc
 	lane   chan net.Conn
 }
 
-func NewListener(ctx context.Context) *Listener {
+func newListener(ctx context.Context) *listener {
 	ctx, cancel := context.WithCancel(ctx)
 
-	return &Listener{
+	return &listener{
 		ctx:    ctx,
 		cancel: cancel,
 		lane:   make(chan net.Conn, 32),
 	}
 }
 
-func (l *Listener) Stop() {
+func (l *listener) Stop() {
 	l.cancel()
 
 	l.mu.Lock()
@@ -243,7 +243,7 @@ func (l *Listener) Stop() {
 	}
 }
 
-func (l *Listener) Inject(conn net.Conn) { //nolint:interfacer
+func (l *listener) Inject(conn net.Conn) { //nolint:interfacer
 	l.mu.RLock()
 
 	if l.lane != nil {
@@ -259,7 +259,7 @@ func (l *Listener) Inject(conn net.Conn) { //nolint:interfacer
 	l.mu.RUnlock()
 }
 
-func (l *Listener) Accept() (net.Conn, error) {
+func (l *listener) Accept() (net.Conn, error) {
 	l.mu.RLock()
 	lane := l.lane //nolint:ifshort
 	l.mu.RUnlock()
@@ -277,17 +277,17 @@ func (l *Listener) Accept() (net.Conn, error) {
 	return nil, errors.New("service stopped")
 }
 
-func (l *Listener) Close() error {
+func (l *listener) Close() error {
 	return nil
 }
 
-func (l *Listener) Addr() net.Addr {
+func (l *listener) Addr() net.Addr {
 	return nil
 }
 
-type Handler struct {
+type handler struct {
 	ctx          chrome.Context
-	ln           *Listener
+	ln           *listener
 	opts         <-chan Options
 	tr           *http.Transport
 	appIDMutex   sync.Mutex
@@ -295,8 +295,8 @@ type Handler struct {
 	badAppIDList []string
 }
 
-func NewHandler(ctx chrome.Context, ln *Listener, opts <-chan Options) *Handler {
-	h := &Handler{ctx: ctx, ln: ln, opts: opts}
+func newHandler(ctx chrome.Context, ln *listener, opts <-chan Options) *handler {
+	h := &handler{ctx: ctx, ln: ln, opts: opts}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-h.opts
@@ -316,11 +316,11 @@ func NewHandler(ctx chrome.Context, ln *Listener, opts <-chan Options) *Handler 
 	return h
 }
 
-func (h *Handler) CloseIdleConnections() {
+func (h *handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
 }
 
-func (h *Handler) SetAppIDList(appIDList []string) {
+func (h *handler) SetAppIDList(appIDList []string) {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
 
@@ -349,7 +349,7 @@ func (h *Handler) SetAppIDList(appIDList []string) {
 	}
 }
 
-func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodConnect {
 		h.handleConnect(rw, req)
 		return
@@ -395,7 +395,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	_, _ = io.Copy(rw, resp.Body)
 }
 
-func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
+func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 	if _, ok := rw.(http.Hijacker); !ok {
 		h.ctx.Manager.Logger(_ServiceName).Debug("hijack: impossible")
 		panic(http.ErrAbortHandler)
@@ -410,7 +410,7 @@ func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 	go handle(conn)
 }
 
-func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
+func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
 		const response = "HTTP/1.1 200 OK\r\n\r\n"
 
@@ -452,7 +452,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
+func (h *handler) roundTrip(req *http.Request) (*http.Response, error) {
 	numBadAppID := 0
 	numBadResponse := 0
 
@@ -518,7 +518,7 @@ func (h *Handler) roundTrip(req *http.Request) (*http.Response, error) {
 	}
 }
 
-func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
+func (h *handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 	if resp.StatusCode != http.StatusPartialContent {
 		return
 	}
@@ -575,7 +575,7 @@ func (h *Handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 	return true
 }
 
-func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
+func (h *handler) encodeRequest(req *http.Request) (*http.Request, error) {
 	var b bytes.Buffer
 
 	w, err := flate.NewWriter(&b, flate.BestCompression)
@@ -631,7 +631,7 @@ func (h *Handler) encodeRequest(req *http.Request) (*http.Request, error) {
 	return request.WithContext(req.Context()), nil
 }
 
-func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
+func (h *handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 	var hdrLen uint16
 	if err := binary.Read(resp.Body, binary.BigEndian, &hdrLen); err != nil {
 		return nil, fmt.Errorf("decode response: %w", err)
@@ -677,7 +677,7 @@ func (h *Handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 	return response, nil
 }
 
-func (h *Handler) getAppID(req *http.Request) string {
+func (h *handler) getAppID(req *http.Request) string {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
 
@@ -692,7 +692,7 @@ func (h *Handler) getAppID(req *http.Request) string {
 	return h.appIDList[rand.Intn(len(h.appIDList))]
 }
 
-func (h *Handler) putBadAppID(badAppID string) {
+func (h *handler) putBadAppID(badAppID string) {
 	h.appIDMutex.Lock()
 	defer h.appIDMutex.Unlock()
 
@@ -719,7 +719,7 @@ func (h *Handler) putBadAppID(badAppID string) {
 }
 
 type autoRangeBody struct {
-	h       *Handler
+	h       *handler
 	req     *http.Request
 	resp    *http.Response
 	reqlist []*autoRangeRequest
@@ -727,7 +727,7 @@ type autoRangeBody struct {
 }
 
 func newAutoRangeBody(
-	h *Handler, req *http.Request, resp *http.Response,
+	h *handler, req *http.Request, resp *http.Response,
 	bodySize, rangeFirst, rangeLast int64,
 ) *autoRangeBody {
 	reqlist := []*autoRangeRequest{{
@@ -816,7 +816,7 @@ func (b *autoRangeBody) Close() error {
 }
 
 type autoRangeRequest struct {
-	h          *Handler
+	h          *handler
 	req        *http.Request
 	resp       *http.Response
 	rangeFirst int64
