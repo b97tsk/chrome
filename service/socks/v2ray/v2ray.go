@@ -66,7 +66,7 @@ type Options struct {
 }
 
 type statsINFO struct {
-	ins        *Instance
+	ins        *instance
 	ctx        context.Context
 	cancel     context.CancelFunc
 	readevents chan struct{}
@@ -439,7 +439,7 @@ func shouldRestart(x, y Options) bool {
 	return !reflect.DeepEqual(x, y)
 }
 
-func createInstance(opts Options) (*Instance, error) {
+func createInstance(opts Options) (*instance, error) {
 	if err := parseURL(&opts); err != nil {
 		return nil, err
 	}
@@ -505,7 +505,7 @@ func createInstance(opts Options) (*Instance, error) {
 		return nil, err
 	}
 
-	return NewInstanceFromJSON(buf.Bytes())
+	return newInstanceFromJSON(buf.Bytes())
 }
 
 func parseURL(opts *Options) error {
@@ -668,21 +668,11 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		opts.Interval.Max = defaultPingIntervalMax
 	}
 
-	reqURL := urls[rand.Intn(len(urls))]
-
-	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("User-Agent", "") // Reduce header size.
-
 	jar, _ := cookiejar.New(nil)
-	proxy := &url.URL{Scheme: "socks5", Host: laddr}
 
 	client := &http.Client{
 		Transport: &http.Transport{
-			Proxy: func(*http.Request) (*url.URL, error) { return proxy, nil },
+			Proxy: http.ProxyURL(&url.URL{Scheme: "socks5", Host: laddr}),
 		},
 		Jar: jar,
 	}
@@ -695,17 +685,33 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 	for {
 		ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 
-		resp, err := client.Do(req.WithContext(ctx))
-		if err != nil {
-			number--
+		url := urls[0]
+		if len(urls) > 1 {
+			url = urls[rand.Intn(len(urls))]
+		}
 
-			sleep = 0
-		} else {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			cancel()
+			return err
+		}
+
+		req.Header.Set("User-Agent", "") // Reduce header size.
+
+		resp, err := client.Do(req)
+		if err == nil {
 			const maxBodySlurpSize = 2 << 10
-			if resp.ContentLength == -1 || resp.ContentLength <= maxBodySlurpSize {
+			if resp.ContentLength <= maxBodySlurpSize {
 				_, _ = io.CopyN(io.Discard, resp.Body, maxBodySlurpSize)
 			}
+
 			resp.Body.Close()
+		}
+
+		if err != nil {
+			number--
+			sleep = 0 //nolint:wsl
+		} else {
 			number = opts.Number
 			switch {
 			case sleep == 0:

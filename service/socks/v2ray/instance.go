@@ -9,17 +9,15 @@ import (
 	core "github.com/v2fly/v2ray-core/v4"
 	"github.com/v2fly/v2ray-core/v4/common/net"
 	"github.com/v2fly/v2ray-core/v4/infra/conf"
-
-	// Imported for side-effects.
-	_ "github.com/v2fly/v2ray-core/v4/main/distro/all"
+	_ "github.com/v2fly/v2ray-core/v4/main/distro/all" // Imported for side-effect.
 	"google.golang.org/protobuf/proto"
 )
 
-type Instance struct {
-	inst *core.Instance
+type instance struct {
+	ins *core.Instance
 }
 
-func NewInstanceFromJSON(data []byte) (*Instance, error) {
+func newInstanceFromJSON(data []byte) (*instance, error) {
 	var config conf.Config
 
 	if err := json.Unmarshal(data, &config); err != nil {
@@ -43,40 +41,37 @@ func NewInstanceFromJSON(data []byte) (*Instance, error) {
 		return nil, err
 	}
 
-	inst, err := core.New(coreConfig)
+	ins, err := core.New(coreConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	return &Instance{inst}, nil
+	return &instance{ins}, nil
 }
 
-func (v *Instance) Start() error {
-	return v.inst.Start()
+func (v *instance) Start() error {
+	return v.ins.Start()
 }
 
-func (v *Instance) Close() error {
-	return v.inst.Close()
+func (v *instance) Close() error {
+	return v.ins.Close()
 }
 
-func (v *Instance) Dial(network, addr string) (net.Conn, error) {
+func (v *instance) Dial(network, addr string) (net.Conn, error) {
 	return v.DialContext(context.Background(), network, addr)
 }
 
-func (v *Instance) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+func (v *instance) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
-		return v.dialTCP(ctx, network, addr)
+	default:
+		return nil, errors.New("network not implemented: " + network)
 	}
 
-	return nil, errors.New("unsupported network " + network)
-}
-
-func (v *Instance) dialTCP(ctx context.Context, _, addr string) (net.Conn, error) {
 	dest, err := net.ParseDestination("tcp:" + addr)
 	if err != nil {
 		return nil, err
 	}
 
-	return core.Dial(ctx, v.inst, dest)
+	return core.Dial(ctx, v.ins, dest)
 }
