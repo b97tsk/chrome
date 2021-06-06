@@ -215,7 +215,7 @@ func (Service) Run(ctx chrome.Context) {
 		close(optsOut)
 	}()
 
-	handler := NewHandler(ctx, optsOut)
+	handler := newHandler(ctx, optsOut)
 	defer handler.CloseIdleConnections()
 
 	var (
@@ -347,15 +347,15 @@ func (Service) Run(ctx chrome.Context) {
 	}
 }
 
-type Handler struct {
+type handler struct {
 	ctx       chrome.Context
 	opts      <-chan Options
 	tr        *http.Transport
 	redirects atomic.Value
 }
 
-func NewHandler(ctx chrome.Context, opts <-chan Options) *Handler {
-	h := &Handler{ctx: ctx, opts: opts}
+func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
+	h := &handler{ctx: ctx, opts: opts}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-h.opts
@@ -391,15 +391,15 @@ func NewHandler(ctx chrome.Context, opts <-chan Options) *Handler {
 	return h
 }
 
-func (h *Handler) CloseIdleConnections() {
+func (h *handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
 }
 
-func (h *Handler) setRedirects(redirects map[string]string) {
+func (h *handler) setRedirects(redirects map[string]string) {
 	h.redirects.Store(redirects)
 }
 
-func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if req.Method == http.MethodConnect {
 		h.handleConnect(rw, req)
 		return
@@ -455,7 +455,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	_, _ = io.Copy(rw, resp.Body)
 }
 
-func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
+func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 	if _, ok := rw.(http.Hijacker); !ok {
 		h.ctx.Manager.Logger(_ServiceName).Debug("hijack: impossible")
 		panic(http.ErrAbortHandler)
@@ -470,7 +470,7 @@ func (h *Handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 	go handle(conn)
 }
 
-func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
+func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
 		defer conn.Close()
 
@@ -497,7 +497,7 @@ func (h *Handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func (h *Handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
+func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
 		defer conn.Close()
 
@@ -535,7 +535,7 @@ func (h *Handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func (h *Handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool {
+func (h *handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool {
 	redirects, _ := h.redirects.Load().(map[string]string)
 	if s := redirects[req.URL.Host]; s != "" {
 		if u, _ := url.Parse(s); u != nil {
@@ -552,7 +552,7 @@ func (h *Handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool
 	return false
 }
 
-func (h *Handler) rewriteHost(host string) string {
+func (h *handler) rewriteHost(host string) string {
 	redirects, _ := h.redirects.Load().(map[string]string)
 	if s := redirects[host]; s != "" {
 		if u, _ := url.Parse(s); u != nil && u.Path == "" && u.Port() != "" {
