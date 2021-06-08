@@ -24,7 +24,6 @@ import (
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/log"
-	"github.com/b97tsk/proxy"
 )
 
 type Options struct {
@@ -38,8 +37,6 @@ type Options struct {
 		Timeout time.Duration
 	}
 	Relay chrome.RelayOptions
-
-	dialer proxy.Dialer
 }
 
 type Service struct{}
@@ -179,7 +176,6 @@ func (Service) Run(ctx chrome.Context) {
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
-				new.dialer = old.dialer
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
@@ -191,10 +187,6 @@ func (Service) Run(ctx chrome.Context) {
 
 				if !isTwoAppIDListsIdentical(new.AppIDList, old.AppIDList) {
 					handler.SetAppIDList(new.AppIDList)
-				}
-
-				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer = new.Proxy.NewDialer()
 				}
 
 				optsIn <- new
@@ -301,7 +293,7 @@ func newHandler(ctx chrome.Context, ln *listener, opts <-chan Options) *handler 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-h.opts
 
-		return h.ctx.Manager.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
+		return h.ctx.Manager.Dial(ctx, opts.Proxy.Dialer(), network, addr, opts.Dial.Timeout)
 	}
 
 	h.tr = &http.Transport{

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/proxy"
 )
 
 type Options struct {
@@ -18,8 +17,6 @@ type Options struct {
 		Timeout time.Duration
 	}
 	Relay chrome.RelayOptions
-
-	dialer proxy.Dialer
 }
 
 type Service struct{}
@@ -74,14 +71,14 @@ func (Service) Run(ctx chrome.Context) {
 		server = ln
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
-			opts, ok := <-optsOut
-			if !ok || opts.ForwardAddr == "" {
+			opts := <-optsOut
+			if opts.ForwardAddr == "" {
 				return
 			}
 
 			local, localCtx := chrome.NewConnChecker(c)
 
-			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", opts.ForwardAddr, opts.Dial.Timeout)
+			remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
 			if err != nil {
 				logger.Trace(err)
 				return
@@ -115,14 +112,9 @@ func (Service) Run(ctx chrome.Context) {
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
-				new.dialer = old.dialer
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
-				}
-
-				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer = new.Proxy.NewDialer()
 				}
 
 				optsIn <- new

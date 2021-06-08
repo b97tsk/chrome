@@ -16,6 +16,7 @@ type proxyData struct {
 
 type ProxyChain struct {
 	s []proxyData
+	d proxy.Dialer
 }
 
 func (pc ProxyChain) IsZero() bool {
@@ -36,9 +37,12 @@ func (pc ProxyChain) Equals(other ProxyChain) bool {
 	return true
 }
 
-func (pc ProxyChain) NewDialer() proxy.Dialer {
-	d, _ := pc.newDialer()
-	return d
+func (pc ProxyChain) Dialer() proxy.Dialer {
+	if pc.d != nil {
+		return pc.d
+	}
+
+	return proxy.Direct
 }
 
 func (pc ProxyChain) newDialer() (proxy.Dialer, error) {
@@ -57,42 +61,50 @@ func (pc ProxyChain) newDialer() (proxy.Dialer, error) {
 }
 
 func (pc *ProxyChain) UnmarshalYAML(v *yaml.Node) error {
-	var rawurl string
-	if err := v.Decode(&rawurl); err == nil {
-		if strings.EqualFold(rawurl, "DIRECT") {
-			pc.s = nil
+	var tmp ProxyChain
+
+	var s string
+	if err := v.Decode(&s); err == nil {
+		if strings.EqualFold(s, "DIRECT") {
+			*pc = tmp
 			return nil
 		}
 
-		u, err := url.Parse(rawurl)
+		u, err := url.Parse(s)
 		if err != nil {
-			return errors.New("invalid proxy: " + rawurl)
+			return errors.New("invalid proxy: " + s)
 		}
 
-		pc.s = []proxyData{{u, rawurl}}
-		_, err = pc.newDialer()
+		tmp.s = []proxyData{{u, s}}
+		tmp.d, err = tmp.newDialer()
+
+		if err == nil {
+			*pc = tmp
+		}
 
 		return err
 	}
 
 	var slice []string
 	if err := v.Decode(&slice); err == nil {
-		pc.s = nil
-
-		for _, rawurl := range slice {
-			if strings.EqualFold(rawurl, "DIRECT") {
+		for _, s := range slice {
+			if strings.EqualFold(s, "DIRECT") {
 				continue
 			}
 
-			u, err := url.Parse(rawurl)
+			u, err := url.Parse(s)
 			if err != nil {
-				return errors.New("invalid proxy: " + rawurl)
+				return errors.New("invalid proxy: " + s)
 			}
 
-			pc.s = append(pc.s, proxyData{u, rawurl})
+			tmp.s = append(tmp.s, proxyData{u, s})
 		}
 
-		_, err = pc.newDialer()
+		tmp.d, err = tmp.newDialer()
+
+		if err == nil {
+			*pc = tmp
+		}
 
 		return err
 	}

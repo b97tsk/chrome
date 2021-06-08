@@ -21,7 +21,6 @@ import (
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
 	"github.com/b97tsk/chrome/internal/netutil"
-	"github.com/b97tsk/proxy"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -61,8 +60,6 @@ type Options struct {
 	Relay chrome.RelayOptions
 
 	stats statsINFO
-
-	forwardDialer proxy.Dialer
 }
 
 type statsINFO struct {
@@ -347,8 +344,8 @@ func (Service) Run(ctx chrome.Context) {
 						forwardListener = ln
 
 						go ctx.Manager.Serve(ln, func(c net.Conn) {
-							opts := <-optsOut
-							if opts.forwardDialer == nil {
+							opts, ok := <-optsOut
+							if !ok {
 								return
 							}
 
@@ -369,7 +366,7 @@ func (Service) Run(ctx chrome.Context) {
 
 							remote, err := ctx.Manager.Dial(
 								localCtx,
-								opts.forwardDialer,
+								opts.Proxy.Dialer(),
 								"tcp",
 								addr.String(),
 								opts.Dial.Timeout,
@@ -392,12 +389,6 @@ func (Service) Run(ctx chrome.Context) {
 					host, port, _ := net.SplitHostPort(forwardListener.Addr().String())
 					new.ForwardServer.Address = host
 					new.ForwardServer.Port, _ = strconv.Atoi(port)
-
-					new.forwardDialer = old.forwardDialer
-
-					if !new.Proxy.Equals(old.Proxy) {
-						new.forwardDialer = new.Proxy.NewDialer()
-					}
 				}
 
 				if shouldRestart(old, new) {
@@ -434,7 +425,6 @@ func shouldRestart(x, y Options) bool {
 	x.Dial, y.Dial = z.Dial, z.Dial
 	x.Relay, y.Relay = z.Relay, z.Relay
 	x.stats, y.stats = z.stats, z.stats
-	x.forwardDialer, y.forwardDialer = nil, nil
 
 	return !reflect.DeepEqual(x, y)
 }

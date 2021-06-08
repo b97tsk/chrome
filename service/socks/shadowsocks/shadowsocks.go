@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/proxy"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
@@ -23,7 +22,6 @@ type Options struct {
 	}
 	Relay chrome.RelayOptions
 
-	dialer proxy.Dialer
 	cipher core.Cipher
 }
 
@@ -79,8 +77,8 @@ func (Service) Run(ctx chrome.Context) {
 		server = ln
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
-			opts, ok := <-optsOut
-			if !ok || opts.cipher == nil {
+			opts := <-optsOut
+			if opts.cipher == nil {
 				return
 			}
 
@@ -93,7 +91,7 @@ func (Service) Run(ctx chrome.Context) {
 
 			local, localCtx := chrome.NewConnChecker(c)
 
-			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", addr.String(), opts.Dial.Timeout)
+			remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
 				logger.Trace(err)
 				return
@@ -128,7 +126,6 @@ func (Service) Run(ctx chrome.Context) {
 				old := <-optsOut
 				new := *new
 				new.cipher = old.cipher
-				new.dialer = old.dialer
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
@@ -142,10 +139,6 @@ func (Service) Run(ctx chrome.Context) {
 					}
 
 					new.cipher = cipher
-				}
-
-				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer = new.Proxy.NewDialer()
 				}
 
 				optsIn <- new

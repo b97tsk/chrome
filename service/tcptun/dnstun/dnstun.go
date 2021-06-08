@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/proxy"
 	"github.com/miekg/dns"
 )
 
@@ -34,8 +33,6 @@ type Options struct {
 	}
 
 	Proxy chrome.ProxyOptions `yaml:"over"`
-
-	dialer proxy.Dialer
 }
 
 type DNServer struct {
@@ -173,7 +170,6 @@ MainLoop:
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
-				new.dialer = old.dialer
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
@@ -201,10 +197,6 @@ MainLoop:
 						logger.Errorf("server #%v: DNS-over-TLS requires a server name", i+1)
 						continue MainLoop
 					}
-				}
-
-				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer = new.Proxy.NewDialer()
 				}
 
 				optsIn <- new
@@ -313,7 +305,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
 					logger.Tracef("dialing to %v", hostport)
 
-					conn, err := ctx.Manager.Dial(q.Context, opts.dialer, "tcp", hostport, opts.Dial.Timeout)
+					conn, err := ctx.Manager.Dial(q.Context, opts.Proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
 					if err != nil {
 						logger.Trace(err)
 						break

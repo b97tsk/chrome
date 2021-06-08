@@ -22,7 +22,6 @@ import (
 	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/log"
-	"github.com/b97tsk/proxy"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -39,7 +38,6 @@ type Options struct {
 	}
 	Relay chrome.RelayOptions
 
-	dialer  proxy.Dialer
 	routes  []*route
 	matches *sync.Map
 }
@@ -68,7 +66,6 @@ func (r *RouteInfo) Init(fsys fs.FS) error {
 type route struct {
 	RouteInfo
 	hash     uint32
-	dialer   atomic.Value
 	matchset atomic.Value
 }
 
@@ -166,21 +163,6 @@ func (r *route) Match(hostport string) bool {
 	host, port, _ := net.SplitHostPort(hostport)
 
 	return ok && match(&set.includes, host, port) && !match(&set.excludes, host, port)
-}
-
-func (r *route) getDialer() proxy.Dialer {
-	type dialer struct {
-		proxy.Dialer
-	}
-
-	if x := r.dialer.Load(); x != nil {
-		return x.(*dialer).Dialer
-	}
-
-	d := r.Proxy.NewDialer()
-	r.dialer.Store(&dialer{d})
-
-	return d
 }
 
 type Service struct{}
@@ -285,7 +267,6 @@ func (Service) Run(ctx chrome.Context) {
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
-				new.dialer = old.dialer
 				new.routes = old.routes
 				new.matches = old.matches
 
@@ -295,10 +276,6 @@ func (Service) Run(ctx chrome.Context) {
 
 				for i := range new.Routes {
 					_ = new.Routes[i].Init(ctx.Manager)
-				}
-
-				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer = new.Proxy.NewDialer()
 				}
 
 				if !routesEquals(new.Routes, old.Routes) {
@@ -359,15 +336,17 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-h.opts
+		d := opts.Proxy.Dialer()
+
 		if opts.routes != nil {
 			if r, ok := opts.matches.Load(addr); ok {
-				opts.dialer = r.(*route).getDialer()
+				d = r.(*route).Proxy.Dialer()
 			} else {
 				for _, r := range opts.routes {
 					if r.Match(addr) {
 						h.ctx.Manager.Logger(_ServiceName).Infof("%v matches %v", r.File, addr)
 
-						opts.dialer = r.getDialer()
+						d = r.Proxy.Dialer()
 						opts.matches.Store(addr, r)
 
 						break
@@ -376,7 +355,7 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 			}
 		}
 
-		return h.ctx.Manager.Dial(ctx, opts.dialer, network, addr, opts.Dial.Timeout)
+		return h.ctx.Manager.Dial(ctx, d, network, addr, opts.Dial.Timeout)
 	}
 
 	h.tr = &http.Transport{

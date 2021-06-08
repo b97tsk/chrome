@@ -18,6 +18,7 @@ type ProxyOptions struct {
 		Strategy string
 		Dialers  []ProxyChain
 	}
+	d proxy.Dialer
 }
 
 func (opts ProxyOptions) IsZero() bool {
@@ -29,47 +30,46 @@ func (opts ProxyOptions) Equals(other ProxyOptions) bool {
 		isTwoProxyChainsIdentical(opts.x.Dialers, other.x.Dialers)
 }
 
-func (opts ProxyOptions) NewDialer() proxy.Dialer {
-	if len(opts.x.Dialers) == 0 {
-		return proxy.Direct
+func (opts ProxyOptions) Dialer() proxy.Dialer {
+	if opts.d != nil {
+		return opts.d
 	}
 
-	if opts.x.Strategy == "" {
-		return opts.x.Dialers[0].NewDialer()
-	}
-
-	dialers := make([]proxy.Dialer, len(opts.x.Dialers))
-
-	for i := range dialers {
-		dialers[i] = opts.x.Dialers[i].NewDialer()
-	}
-
-	return loadbalance.Get(opts.x.Strategy)(dialers...)
+	return proxy.Direct
 }
 
 func (opts *ProxyOptions) UnmarshalYAML(v *yaml.Node) error {
+	var tmp ProxyOptions
+
 	var pc ProxyChain
 	if err := pc.UnmarshalYAML(v); err == nil {
-		opts.x.Strategy = ""
-		opts.x.Dialers = nil
-
 		if !pc.IsZero() {
-			opts.x.Dialers = []ProxyChain{pc}
+			tmp.x.Dialers = []ProxyChain{pc}
 		}
+
+		opts.x = tmp.x
+		opts.d = pc.Dialer()
 
 		return nil
 	}
 
-	var tmp ProxyOptions
 	if err := v.Decode(&tmp.x); err != nil {
 		return err
 	}
 
-	if s := loadbalance.Get(tmp.x.Strategy); s == nil {
+	s := loadbalance.Get(tmp.x.Strategy)
+	if s == nil {
 		return fmt.Errorf("unknown loadbalance strategy: %v", tmp.x.Strategy)
 	}
 
+	dialers := make([]proxy.Dialer, len(tmp.x.Dialers))
+
+	for i := range dialers {
+		dialers[i] = tmp.x.Dialers[i].Dialer()
+	}
+
 	opts.x = tmp.x
+	opts.d = s(dialers...)
 
 	return nil
 }

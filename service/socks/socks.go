@@ -15,7 +15,6 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
-	"github.com/b97tsk/proxy"
 	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
@@ -54,9 +53,7 @@ type Options struct {
 		Proxy *chrome.ProxyOptions `yaml:"over"`
 	}
 
-	dialer    proxy.Dialer
-	dnsDialer proxy.Dialer
-	dnsCache  *sync.Map
+	dnsCache *sync.Map
 }
 
 type DNServer struct {
@@ -185,7 +182,7 @@ func (Service) Run(ctx chrome.Context) {
 				}
 			}
 
-			remote, err := ctx.Manager.Dial(localCtx, opts.dialer, "tcp", hostport, opts.Dial.Timeout)
+			remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
 			if err != nil {
 				logger.Trace(err)
 				return
@@ -225,16 +222,10 @@ MainLoop:
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
-				new.dialer = old.dialer
-				new.dnsDialer = old.dnsDialer
 				new.dnsCache = old.dnsCache
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
-				}
-
-				if !new.Proxy.Equals(old.Proxy) {
-					new.dialer = new.Proxy.NewDialer()
 				}
 
 				if len(new.DNS.Servers) == 0 && (new.DNS.Server.Name != "" || len(new.DNS.Server.IP) > 0) {
@@ -260,13 +251,6 @@ MainLoop:
 							logger.Errorf("[dns] server #%v: DNS-over-TLS requires a server name", i+1)
 							continue MainLoop
 						}
-					}
-
-					switch {
-					case new.DNS.Proxy == nil:
-						new.dnsDialer = new.dialer
-					case old.DNS.Proxy == nil || !new.DNS.Proxy.Equals(*old.DNS.Proxy):
-						new.dnsDialer = new.DNS.Proxy.NewDialer()
 					}
 
 					if new.dnsCache == nil || shouldResetDNSCache(old, new) {
@@ -407,7 +391,12 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
 						logger.Tracef("[dns] dialing to %v", hostport)
 
-						conn, err := ctx.Manager.Dial(q.Context, opts.dnsDialer, "tcp", hostport, opts.Dial.Timeout)
+						d := opts.Proxy.Dialer()
+						if opts.DNS.Proxy != nil {
+							d = opts.DNS.Proxy.Dialer()
+						}
+
+						conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial.Timeout)
 						if err != nil {
 							logger.Tracef("[dns] %v", err)
 							break
