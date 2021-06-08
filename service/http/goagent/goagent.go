@@ -31,7 +31,7 @@ type Options struct {
 
 	AppIDList chrome.StringList `yaml:"appids"`
 
-	Proxy chrome.ProxyOptions `yaml:"over"`
+	Proxy chrome.Proxy `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration

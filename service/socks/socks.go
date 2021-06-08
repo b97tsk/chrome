@@ -22,7 +22,7 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
-	Proxy chrome.ProxyOptions `yaml:"over"`
+	Proxy chrome.Proxy `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration
@@ -50,7 +50,7 @@ type Options struct {
 			Timeout time.Duration
 		}
 
-		Proxy *chrome.ProxyOptions `yaml:"over"`
+		Proxy *chrome.Proxy `yaml:"over"`
 	}
 
 	dnsCache *sync.Map

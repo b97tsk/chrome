@@ -15,7 +15,7 @@ type Options struct {
 	Method   string
 	Password string
 
-	Proxy chrome.ProxyOptions `yaml:"over"`
+	Proxy chrome.Proxy `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration

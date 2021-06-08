@@ -31,7 +31,7 @@ type Options struct {
 	Routes    []RouteInfo
 	Redirects map[string]string
 
-	Proxy chrome.ProxyOptions `yaml:"over"`
+	Proxy chrome.Proxy `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration
@@ -44,7 +44,7 @@ type Options struct {
 
 type RouteInfo struct {
 	File     chrome.EnvString
-	Proxy    chrome.ProxyOptions `yaml:"over"`
+	Proxy    chrome.Proxy `yaml:"over"`
 	hashCode uint32
 }
 

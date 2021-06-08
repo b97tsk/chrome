@@ -50,7 +50,7 @@ type Options struct {
 		DownlinkOnly int `json:"downlinkOnly"`
 	}
 
-	Proxy chrome.ProxyOptions `yaml:"over"`
+	Proxy chrome.Proxy `yaml:"over"`
 
 	ForwardServer HostportOptions `yaml:"-"`
 

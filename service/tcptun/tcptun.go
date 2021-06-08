@@ -11,7 +11,7 @@ type Options struct {
 	ListenAddr  string `yaml:"on"`
 	ForwardAddr string `yaml:"for"`
 
-	Proxy chrome.ProxyOptions `yaml:"over"`
+	Proxy chrome.Proxy `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration

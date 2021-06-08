@@ -32,7 +32,7 @@ type Options struct {
 		Timeout time.Duration
 	}
 
-	Proxy chrome.ProxyOptions `yaml:"over"`
+	Proxy chrome.Proxy `yaml:"over"`
 }
 
 type DNServer struct {

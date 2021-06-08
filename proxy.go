@@ -1,7 +1,7 @@
 package chrome
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/b97tsk/proxy"
 	"github.com/b97tsk/proxy/loadbalance"
@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type ProxyOptions struct {
+type Proxy struct {
 	x struct {
 		Strategy string
 		Dialers  []ProxyChain
@@ -21,25 +21,25 @@ type ProxyOptions struct {
 	d proxy.Dialer
 }
 
-func (opts ProxyOptions) IsZero() bool {
-	return opts.x.Strategy == "" && len(opts.x.Dialers) == 0
+func (p Proxy) IsZero() bool {
+	return p.x.Strategy == "" && len(p.x.Dialers) == 0
 }
 
-func (opts ProxyOptions) Equals(other ProxyOptions) bool {
-	return opts.x.Strategy == other.x.Strategy &&
-		isTwoProxyChainsIdentical(opts.x.Dialers, other.x.Dialers)
+func (p Proxy) Equals(other Proxy) bool {
+	return p.x.Strategy == other.x.Strategy &&
+		isTwoProxyChainsIdentical(p.x.Dialers, other.x.Dialers)
 }
 
-func (opts ProxyOptions) Dialer() proxy.Dialer {
-	if opts.d != nil {
-		return opts.d
+func (p Proxy) Dialer() proxy.Dialer {
+	if p.d != nil {
+		return p.d
 	}
 
 	return proxy.Direct
 }
 
-func (opts *ProxyOptions) UnmarshalYAML(v *yaml.Node) error {
-	var tmp ProxyOptions
+func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
+	var tmp Proxy
 
 	var pc ProxyChain
 	if err := pc.UnmarshalYAML(v); err == nil {
@@ -47,8 +47,8 @@ func (opts *ProxyOptions) UnmarshalYAML(v *yaml.Node) error {
 			tmp.x.Dialers = []ProxyChain{pc}
 		}
 
-		opts.x = tmp.x
-		opts.d = pc.Dialer()
+		p.x = tmp.x
+		p.d = pc.Dialer()
 
 		return nil
 	}
@@ -57,9 +57,13 @@ func (opts *ProxyOptions) UnmarshalYAML(v *yaml.Node) error {
 		return err
 	}
 
+	if tmp.x.Strategy == "" {
+		return errors.New("strategy not specified")
+	}
+
 	s := loadbalance.Get(tmp.x.Strategy)
 	if s == nil {
-		return fmt.Errorf("unknown loadbalance strategy: %v", tmp.x.Strategy)
+		return errors.New("unknown strategy: " + tmp.x.Strategy)
 	}
 
 	dialers := make([]proxy.Dialer, len(tmp.x.Dialers))
@@ -68,8 +72,8 @@ func (opts *ProxyOptions) UnmarshalYAML(v *yaml.Node) error {
 		dialers[i] = tmp.x.Dialers[i].Dialer()
 	}
 
-	opts.x = tmp.x
-	opts.d = s(dialers...)
+	p.x = tmp.x
+	p.d = s(dialers...)
 
 	return nil
 }
