@@ -4,10 +4,8 @@ import (
 	"context"
 	"net"
 	"net/http"
+	_ "net/http/pprof" // Imported for side-effect.
 	"time"
-
-	// Import for side-effects.
-	_ "net/http/pprof"
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/log"
