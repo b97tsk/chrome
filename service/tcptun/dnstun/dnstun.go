@@ -33,7 +33,7 @@ type Options struct {
 		Timeout time.Duration
 	}
 
-	Proxy chrome.ProxyChain `yaml:"over"`
+	Proxy chrome.ProxyOptions `yaml:"over"`
 
 	dialer proxy.Dialer
 }

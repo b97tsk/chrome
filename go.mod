@@ -4,7 +4,7 @@ go 1.16
 
 require (
 	github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1
-	github.com/b97tsk/proxy v0.0.0-20210605155610-83df57f3887c
+	github.com/b97tsk/proxy v0.0.0-20210608051712-ad195490cc1e
 	github.com/fsnotify/fsnotify v1.4.9
 	github.com/miekg/dns v1.1.42
 	github.com/shadowsocks/go-shadowsocks2 v0.1.5

@@ -51,7 +51,7 @@ type Options struct {
 		DownlinkOnly int `json:"downlinkOnly"`
 	}
 
-	Proxy chrome.ProxyChain `yaml:"over"`
+	Proxy chrome.ProxyOptions `yaml:"over"`
 
 	ForwardServer HostportOptions `yaml:"-"`
 
@@ -336,7 +336,7 @@ func (Service) Run(ctx chrome.Context) {
 					stopServer()
 				}
 
-				if new.Proxy.Len() != 0 {
+				if !new.Proxy.IsZero() {
 					if forwardListener == nil {
 						ln, err := net.Listen("tcp", "localhost:")
 						if err != nil {
@@ -425,7 +425,7 @@ func (Service) Run(ctx chrome.Context) {
 }
 
 func shouldRestart(x, y Options) bool {
-	if (x.Proxy.Len() != 0) != (y.Proxy.Len() != 0) {
+	if x.Proxy.IsZero() != y.Proxy.IsZero() {
 		return true
 	}
 
