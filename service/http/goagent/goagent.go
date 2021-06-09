@@ -422,9 +422,8 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		defer conn.Close()
-
 		local, ctx := chrome.NewConnChecker(conn)
+		defer local.Close()
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {

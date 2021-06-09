@@ -136,6 +136,7 @@ func (Service) Run(ctx chrome.Context) {
 			}
 
 			local, localCtx := chrome.NewConnChecker(c)
+			defer local.Close()
 
 			hostport := addr.String()
 

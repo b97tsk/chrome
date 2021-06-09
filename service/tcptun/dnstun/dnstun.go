@@ -104,6 +104,7 @@ func (Service) Run(ctx chrome.Context) {
 			}
 
 			local, localCtx := chrome.NewConnChecker(c)
+			defer local.Close()
 
 			dnsConn := &dns.Conn{Conn: local}
 

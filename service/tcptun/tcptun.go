@@ -77,6 +77,7 @@ func (Service) Run(ctx chrome.Context) {
 			}
 
 			local, localCtx := chrome.NewConnChecker(c)
+			defer local.Close()
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
 			if err != nil {

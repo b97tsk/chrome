@@ -451,9 +451,8 @@ func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 
 func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
-		defer conn.Close()
-
 		local, ctx := chrome.NewConnChecker(conn)
+		defer local.Close()
 
 		remoteHost := h.rewriteHost(req.RequestURI)
 
@@ -478,9 +477,8 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
-		defer conn.Close()
-
 		local, ctx := chrome.NewConnChecker(conn)
+		defer local.Close()
 
 		remoteHost := h.rewriteHost(req.Host)
 
