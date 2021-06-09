@@ -21,8 +21,53 @@ type Proxy struct {
 	d proxy.Dialer
 }
 
+func MakeProxy(urls ...string) (Proxy, error) {
+	pc, err := MakeProxyChain(urls...)
+	if err != nil {
+		return Proxy{}, err
+	}
+
+	return ProxyFromProxyChain(pc), nil
+}
+
+func MakeProxyUsing(strategy string, dialers []ProxyChain) (Proxy, error) {
+	if len(dialers) == 0 {
+		return Proxy{}, errNoDialers
+	}
+
+	s := loadbalance.Get(strategy)
+	if s == nil {
+		return Proxy{}, errors.New("unknown strategy: " + strategy)
+	}
+
+	dialers1 := make([]proxy.Dialer, len(dialers))
+
+	for i := range dialers1 {
+		dialers1[i] = dialers[i].Dialer()
+	}
+
+	var p Proxy
+
+	p.x.Strategy = strategy
+	p.x.Dialers = dialers
+	p.d = s(dialers1...)
+
+	return p, nil
+}
+
+func ProxyFromProxyChain(pc ProxyChain) Proxy {
+	var p Proxy
+
+	if !pc.IsZero() {
+		p.x.Dialers = []ProxyChain{pc}
+		p.d = pc.Dialer()
+	}
+
+	return p
+}
+
 func (p Proxy) IsZero() bool {
-	return p.x.Strategy == "" && len(p.x.Dialers) == 0
+	return len(p.x.Dialers) == 0
 }
 
 func (p Proxy) Equals(other Proxy) bool {
@@ -39,41 +84,27 @@ func (p Proxy) Dialer() proxy.Dialer {
 }
 
 func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
-	var tmp Proxy
-
 	var pc ProxyChain
 	if err := pc.UnmarshalYAML(v); err == nil {
-		if !pc.IsZero() {
-			tmp.x.Dialers = []ProxyChain{pc}
-		}
-
-		p.x = tmp.x
-		p.d = pc.Dialer()
-
+		*p = ProxyFromProxyChain(pc)
 		return nil
 	}
 
+	var tmp Proxy
 	if err := v.Decode(&tmp.x); err != nil {
-		return err
+		return errInvalidProxy
 	}
 
 	if tmp.x.Strategy == "" {
-		return errors.New("strategy not specified")
+		return errStrategyNotSpecified
 	}
 
-	s := loadbalance.Get(tmp.x.Strategy)
-	if s == nil {
-		return errors.New("unknown strategy: " + tmp.x.Strategy)
+	tmp, err := MakeProxyUsing(tmp.x.Strategy, tmp.x.Dialers)
+	if err != nil {
+		return err
 	}
 
-	dialers := make([]proxy.Dialer, len(tmp.x.Dialers))
-
-	for i := range dialers {
-		dialers[i] = tmp.x.Dialers[i].Dialer()
-	}
-
-	p.x = tmp.x
-	p.d = s(dialers...)
+	*p = tmp
 
 	return nil
 }
@@ -91,3 +122,9 @@ func isTwoProxyChainsIdentical(a, b []ProxyChain) bool {
 
 	return true
 }
+
+var (
+	errNoDialers            = errors.New("no dialers")
+	errInvalidProxy         = errors.New("invalid proxy")
+	errStrategyNotSpecified = errors.New("strategy not specified")
+)
