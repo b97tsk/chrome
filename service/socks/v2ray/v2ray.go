@@ -20,7 +20,6 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
-	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -59,14 +58,7 @@ type Options struct {
 	}
 	Relay chrome.RelayOptions
 
-	stats statsINFO
-}
-
-type statsINFO struct {
-	ins        *instance
-	ctx        context.Context
-	cancel     context.CancelFunc
-	readevents chan struct{}
+	ins *instance
 }
 
 type ProtocolOptions struct {
@@ -175,7 +167,7 @@ func (Service) Run(ctx chrome.Context) {
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
 			opts := <-optsOut
-			if opts.stats.ins == nil {
+			if opts.ins == nil {
 				return
 			}
 
@@ -195,7 +187,7 @@ func (Service) Run(ctx chrome.Context) {
 			local, localCtx := chrome.NewConnChecker(c)
 			defer local.Close()
 
-			remote, err := ctx.Manager.Dial(localCtx, opts.stats.ins, "tcp", addr.String(), opts.Dial.Timeout)
+			remote, err := ctx.Manager.Dial(localCtx, opts.ins, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
 				logger.Trace(err)
 				return
@@ -206,14 +198,6 @@ func (Service) Run(ctx chrome.Context) {
 				logger.Trace(err)
 				return
 			}
-
-			readevents := opts.stats.readevents
-			remote = netutil.DoR(remote, func(int) {
-				select {
-				case readevents <- struct{}{}:
-				default:
-				}
-			})
 
 			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
@@ -235,7 +219,7 @@ func (Service) Run(ctx chrome.Context) {
 	defer stopServer()
 
 	var (
-		stats      statsINFO
+		ins        *instance
 		restart    chan struct{}
 		cancelPing context.CancelFunc
 	)
@@ -246,55 +230,29 @@ func (Service) Run(ctx chrome.Context) {
 			cancelPing = nil
 		}
 
-		if stats.ins != nil {
-			go func(stats statsINFO) {
-				defer func() {
-					if err := stats.ins.Close(); err != nil {
-						logger.Debugf("close instance: %v", err)
-					}
+		if ins != nil {
+			if err := ins.Close(); err != nil {
+				logger.Debugf("close instance: %v", err)
+			}
 
-					stats.cancel()
-				}()
-
-				var recentReadTime time.Time
-
-				t := time.NewTimer(remoteIdleTime)
-
-				for {
-					select {
-					case <-t.C:
-						d := time.Until(recentReadTime.Add(remoteIdleTime))
-						if d <= 0 {
-							return
-						}
-
-						t.Reset(d)
-					case <-stats.readevents:
-						recentReadTime = time.Now()
-					}
-				}
-			}(stats)
-
-			stats = statsINFO{}
+			ins = nil
 		}
 	}
 	defer stopInstance()
 
 	startInstance := func(opts Options) {
-		ins, err := createInstance(opts)
+		ins1, err := createInstance(opts)
 		if err != nil {
 			logger.Errorf("create instance: %v", err)
 			return
 		}
 
-		if err := ins.Start(); err != nil {
+		if err := ins1.Start(); err != nil {
 			logger.Errorf("start instance: %v", err)
 			return
 		}
 
-		stats.ins = ins
-		stats.ctx, stats.cancel = context.WithCancel(context.Background())
-		stats.readevents = make(chan struct{})
+		ins = ins1
 
 		if opts.Mux.Enabled && opts.Mux.Ping.Enabled {
 			var ctxPing context.Context
@@ -328,7 +286,7 @@ func (Service) Run(ctx chrome.Context) {
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
-				new.stats = old.stats
+				new.ins = old.ins
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
@@ -396,7 +354,7 @@ func (Service) Run(ctx chrome.Context) {
 				if shouldRestart(old, new) {
 					stopInstance()
 					startInstance(new)
-					new.stats = stats
+					new.ins = ins
 				}
 
 				optsIn <- new
@@ -411,7 +369,7 @@ func (Service) Run(ctx chrome.Context) {
 			stopInstance()
 			startInstance(opts)
 
-			opts.stats = stats
+			opts.ins = ins
 			optsIn <- opts
 		}
 	}
@@ -426,7 +384,7 @@ func shouldRestart(x, y Options) bool {
 	x.Proxy, y.Proxy = z.Proxy, z.Proxy
 	x.Dial, y.Dial = z.Dial, z.Dial
 	x.Relay, y.Relay = z.Relay, z.Relay
-	x.stats, y.stats = z.stats, z.stats
+	x.ins, y.ins = z.ins, z.ins
 
 	return !reflect.DeepEqual(x, y)
 }
@@ -744,8 +702,6 @@ func unquote(s string) string {
 
 	return s
 }
-
-const remoteIdleTime = 60 * time.Second
 
 const (
 	defaultPingURL           = "http://www.google.com/gen_204"
