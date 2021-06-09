@@ -25,11 +25,7 @@ type ConnChecker struct {
 }
 
 func NewConnChecker(conn net.Conn) (*ConnChecker, context.Context) {
-	return NewConnCheckerContext(context.Background(), conn)
-}
-
-func NewConnCheckerContext(ctx context.Context, conn net.Conn) (*ConnChecker, context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(context.Background())
 	cbr := make(chan *bufio.Reader, 1)
 	cbr <- bufio.NewReaderSize(conn, checkBufferSize)
 
@@ -47,7 +43,7 @@ func NewConnCheckerContext(ctx context.Context, conn net.Conn) (*ConnChecker, co
 }
 
 func (c *ConnChecker) start(ctx context.Context) {
-	defer c.Close()
+	defer c.cancel()
 
 	var skipNextCheck bool
 

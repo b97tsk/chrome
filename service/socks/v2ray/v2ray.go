@@ -192,7 +192,7 @@ func (Service) Run(ctx chrome.Context) {
 				return
 			}
 
-			local, localCtx := chrome.NewConnCheckerContext(opts.stats.ctx, c)
+			local, localCtx := chrome.NewConnChecker(c)
 
 			remote, err := ctx.Manager.Dial(localCtx, opts.stats.ins, "tcp", addr.String(), opts.Dial.Timeout)
 			if err != nil {
