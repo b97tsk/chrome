@@ -2,6 +2,7 @@ package chrome
 
 import (
 	"errors"
+	"math/rand"
 
 	"github.com/b97tsk/proxy"
 	"github.com/b97tsk/proxy/loadbalance"
@@ -9,28 +10,29 @@ import (
 	// Import load balancing strategies.
 	_ "github.com/b97tsk/proxy/loadbalance/strategy/failover"
 	_ "github.com/b97tsk/proxy/loadbalance/strategy/random"
+	_ "github.com/b97tsk/proxy/loadbalance/strategy/roundrobin"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Proxy struct {
-	x struct {
+	pc proxyChain
+	b  struct {
 		Strategy string
-		Dialers  []ProxyChain
+		Dialers  []Proxy
 	}
-	d proxy.Dialer
 }
 
 func MakeProxy(urls ...string) (Proxy, error) {
-	pc, err := MakeProxyChain(urls...)
+	pc, err := makeProxyChain(urls...)
 	if err != nil {
 		return Proxy{}, err
 	}
 
-	return ProxyFromProxyChain(pc), nil
+	return Proxy{pc: pc}, nil
 }
 
-func MakeProxyUsing(strategy string, dialers []ProxyChain) (Proxy, error) {
+func MakeProxyUsing(strategy string, dialers []Proxy) (Proxy, error) {
 	if len(dialers) == 0 {
 		return Proxy{}, errNoDialers
 	}
@@ -48,58 +50,55 @@ func MakeProxyUsing(strategy string, dialers []ProxyChain) (Proxy, error) {
 
 	var p Proxy
 
-	p.x.Strategy = strategy
-	p.x.Dialers = dialers
-	p.d = s(dialers1...)
+	p.pc.d = s(dialers1)
+	p.b.Strategy = strategy
+	p.b.Dialers = dialers
 
 	return p, nil
 }
 
-func ProxyFromProxyChain(pc ProxyChain) Proxy {
-	var p Proxy
-
-	if !pc.IsZero() {
-		p.x.Dialers = []ProxyChain{pc}
-		p.d = pc.Dialer()
-	}
-
-	return p
-}
-
 func (p Proxy) IsZero() bool {
-	return len(p.x.Dialers) == 0
+	return p.pc.IsZero()
 }
 
 func (p Proxy) Equals(other Proxy) bool {
-	return p.x.Strategy == other.x.Strategy &&
-		isTwoProxyChainsIdentical(p.x.Dialers, other.x.Dialers)
+	return p.pc.Equals(other.pc) &&
+		p.b.Strategy == other.b.Strategy &&
+		proxySliceEqual(p.b.Dialers, other.b.Dialers)
 }
 
 func (p Proxy) Dialer() proxy.Dialer {
-	if p.d != nil {
-		return p.d
-	}
-
-	return proxy.Direct
+	return p.pc.Dialer()
 }
 
 func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
-	var pc ProxyChain
+	var pc proxyChain
 	if err := pc.UnmarshalYAML(v); err == nil {
-		*p = ProxyFromProxyChain(pc)
+		*p = Proxy{pc: pc}
 		return nil
 	}
 
-	var tmp Proxy
-	if err := v.Decode(&tmp.x); err != nil {
+	var b struct {
+		Strategy string
+		Dialers  []Proxy
+		Shuffle  bool
+	}
+
+	if err := v.Decode(&b); err != nil {
 		return errInvalidProxy
 	}
 
-	if tmp.x.Strategy == "" {
+	if b.Strategy == "" {
 		return errStrategyNotSpecified
 	}
 
-	tmp, err := MakeProxyUsing(tmp.x.Strategy, tmp.x.Dialers)
+	if b.Shuffle {
+		rand.Shuffle(len(b.Dialers), func(i, j int) {
+			b.Dialers[i], b.Dialers[j] = b.Dialers[j], b.Dialers[i]
+		})
+	}
+
+	tmp, err := MakeProxyUsing(b.Strategy, b.Dialers)
 	if err != nil {
 		return err
 	}
@@ -109,7 +108,7 @@ func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
 	return nil
 }
 
-func isTwoProxyChainsIdentical(a, b []ProxyChain) bool {
+func proxySliceEqual(a, b []Proxy) bool {
 	if len(a) != len(b) {
 		return false
 	}

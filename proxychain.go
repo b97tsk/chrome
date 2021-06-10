@@ -14,12 +14,12 @@ type proxyData struct {
 	Raw string
 }
 
-type ProxyChain struct {
-	s []proxyData
+type proxyChain struct {
 	d proxy.Dialer
+	s []proxyData
 }
 
-func MakeProxyChain(urls ...string) (pc ProxyChain, err error) {
+func makeProxyChain(urls ...string) (pc proxyChain, err error) {
 	for _, s := range urls {
 		if s == "" || strings.EqualFold(s, "Direct") {
 			continue
@@ -27,7 +27,7 @@ func MakeProxyChain(urls ...string) (pc ProxyChain, err error) {
 
 		u, err := url.Parse(s)
 		if err != nil {
-			return ProxyChain{}, err
+			return proxyChain{}, err
 		}
 
 		pc.s = append(pc.s, proxyData{u, s})
@@ -35,17 +35,22 @@ func MakeProxyChain(urls ...string) (pc ProxyChain, err error) {
 
 	pc.d, err = pc.newDialer()
 	if err != nil {
-		return ProxyChain{}, err
+		return proxyChain{}, err
 	}
 
 	return pc, nil
 }
 
-func (pc ProxyChain) IsZero() bool {
-	return len(pc.s) == 0
+func (pc proxyChain) IsZero() bool {
+	switch pc.d {
+	case nil, proxy.Direct:
+		return true
+	default:
+		return false
+	}
 }
 
-func (pc ProxyChain) Equals(other ProxyChain) bool {
+func (pc proxyChain) Equals(other proxyChain) bool {
 	if len(pc.s) != len(other.s) {
 		return false
 	}
@@ -59,7 +64,7 @@ func (pc ProxyChain) Equals(other ProxyChain) bool {
 	return true
 }
 
-func (pc ProxyChain) Dialer() proxy.Dialer {
+func (pc proxyChain) Dialer() proxy.Dialer {
 	if pc.d != nil {
 		return pc.d
 	}
@@ -67,7 +72,7 @@ func (pc ProxyChain) Dialer() proxy.Dialer {
 	return proxy.Direct
 }
 
-func (pc ProxyChain) newDialer() (proxy.Dialer, error) {
+func (pc proxyChain) newDialer() (proxy.Dialer, error) {
 	var forward proxy.Dialer = proxy.Direct
 
 	for i := len(pc.s) - 1; i > -1; i-- {
@@ -82,7 +87,7 @@ func (pc ProxyChain) newDialer() (proxy.Dialer, error) {
 	return forward, nil
 }
 
-func (pc *ProxyChain) UnmarshalYAML(v *yaml.Node) error {
+func (pc *proxyChain) UnmarshalYAML(v *yaml.Node) error {
 	var urls []string
 	if err := v.Decode(&urls); err != nil {
 		var s string
@@ -93,7 +98,7 @@ func (pc *ProxyChain) UnmarshalYAML(v *yaml.Node) error {
 		urls = []string{s}
 	}
 
-	tmp, err := MakeProxyChain(urls...)
+	tmp, err := makeProxyChain(urls...)
 	if err == nil {
 		*pc = tmp
 	}
