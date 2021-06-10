@@ -116,10 +116,10 @@ type PingOptions struct {
 
 type Service struct{}
 
-const _ServiceName = "v2ray"
+const ServiceName = "v2ray"
 
 func (Service) Name() string {
-	return _ServiceName
+	return ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -127,7 +127,7 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(_ServiceName)
+	logger := ctx.Manager.Logger(ServiceName)
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)

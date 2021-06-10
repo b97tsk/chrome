@@ -41,10 +41,10 @@ type Options struct {
 
 type Service struct{}
 
-const _ServiceName = "goagent"
+const ServiceName = "goagent"
 
 func (Service) Name() string {
-	return _ServiceName
+	return ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -52,7 +52,7 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(_ServiceName)
+	logger := ctx.Manager.Logger(ServiceName)
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -370,7 +370,7 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	h.autoRange(outreq, resp)
 
 	appID := appIDFromRequest(resp.Request)
-	h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, outreq.Method, outreq.URL, resp.Status)
+	h.ctx.Manager.Logger(ServiceName).Debugf("(%v) %v %v: %v", appID, outreq.Method, outreq.URL, resp.Status)
 
 	httputil.RemoveHopbyhopHeaders(resp.Header)
 
@@ -389,13 +389,13 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 	if _, ok := rw.(http.Hijacker); !ok {
-		h.ctx.Manager.Logger(_ServiceName).Debug("hijack: impossible")
+		h.ctx.Manager.Logger(ServiceName).Debug("hijack: impossible")
 		panic(http.ErrAbortHandler)
 	}
 
 	conn, _, err := rw.(http.Hijacker).Hijack()
 	if err != nil {
-		h.ctx.Manager.Logger(_ServiceName).Debugf("hijack: %v", err)
+		h.ctx.Manager.Logger(ServiceName).Debugf("hijack: %v", err)
 		panic(http.ErrAbortHandler)
 	}
 
@@ -411,7 +411,7 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 		_, port, err := net.SplitHostPort(remoteHost)
 		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
 			if _, err := conn.Write([]byte(response)); err != nil {
-				h.ctx.Manager.Logger(_ServiceName).Tracef("connect: write response to local: %v", err)
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
 				conn.Close()
 
 				return
@@ -427,13 +427,13 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: dial to remote: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		if _, err := local.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: write response to local: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
 			return
 		}
 
@@ -454,7 +454,7 @@ func (h *handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		request, err := h.encodeRequest(req)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Debug(err)
+			h.ctx.Manager.Logger(ServiceName).Debug(err)
 			return nil, fmt.Errorf("round trip: %w", err)
 		}
 
@@ -462,12 +462,12 @@ func (h *handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		resp, err := h.tr.RoundTrip(request)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
+			h.ctx.Manager.Logger(ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
 			return nil, fmt.Errorf("round trip: %w", err)
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
+			h.ctx.Manager.Logger(ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, resp.Status)
 
 			resp.Body.Close()
 
@@ -485,7 +485,7 @@ func (h *handler) roundTrip(req *http.Request) (*http.Response, error) {
 
 		response, err := h.decodeResponse(resp)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
+			h.ctx.Manager.Logger(ServiceName).Debugf("(%v) %v %v: %v", appID, req.Method, req.URL, err)
 
 			resp.Body.Close()
 
@@ -850,7 +850,7 @@ func (r *autoRangeRequest) init() {
 				}
 
 				if err != nil {
-					r.h.ctx.Manager.Logger(_ServiceName).Tracef("read response: %v", err)
+					r.h.ctx.Manager.Logger(ServiceName).Tracef("read response: %v", err)
 					return nil // Retry.
 				}
 			}
@@ -883,7 +883,7 @@ func (r *autoRangeRequest) init() {
 			}
 
 			if resp.StatusCode != http.StatusPartialContent {
-				r.h.ctx.Manager.Logger(_ServiceName).Debugf(
+				r.h.ctx.Manager.Logger(ServiceName).Debugf(
 					"(%v) %v %v %v: %v",
 					appIDFromRequest(resp.Request),
 					req.Method, req.URL,

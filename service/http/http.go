@@ -167,10 +167,10 @@ func (r *route) Match(hostport string) bool {
 
 type Service struct{}
 
-const _ServiceName = "http"
+const ServiceName = "http"
 
 func (Service) Name() string {
-	return _ServiceName
+	return ServiceName
 }
 
 func (Service) Options() interface{} {
@@ -178,7 +178,7 @@ func (Service) Options() interface{} {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(_ServiceName)
+	logger := ctx.Manager.Logger(ServiceName)
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -344,7 +344,7 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 			} else {
 				for _, r := range opts.routes {
 					if r.Match(addr) {
-						h.ctx.Manager.Logger(_ServiceName).Infof("%v matches %v", r.File, addr)
+						h.ctx.Manager.Logger(ServiceName).Infof("%v matches %v", r.File, addr)
 
 						d = r.Proxy.Dialer()
 						opts.matches.Store(addr, r)
@@ -414,7 +414,7 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	resp, err := h.tr.RoundTrip(outreq)
 	if err != nil {
-		h.ctx.Manager.Logger(_ServiceName).Trace(err)
+		h.ctx.Manager.Logger(ServiceName).Trace(err)
 		panic(http.ErrAbortHandler)
 	}
 	defer resp.Body.Close()
@@ -436,13 +436,13 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 	if _, ok := rw.(http.Hijacker); !ok {
-		h.ctx.Manager.Logger(_ServiceName).Debug("hijack: impossible")
+		h.ctx.Manager.Logger(ServiceName).Debug("hijack: impossible")
 		panic(http.ErrAbortHandler)
 	}
 
 	conn, _, err := rw.(http.Hijacker).Hijack()
 	if err != nil {
-		h.ctx.Manager.Logger(_ServiceName).Debugf("hijack: %v", err)
+		h.ctx.Manager.Logger(ServiceName).Debugf("hijack: %v", err)
 		panic(http.ErrAbortHandler)
 	}
 
@@ -458,14 +458,14 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: dial to remote: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		const response = "HTTP/1.1 200 OK\r\n\r\n"
 		if _, err := local.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("connect: write response to local: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
 			return
 		}
 
@@ -484,25 +484,25 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 
 		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: dial to remote: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial to remote: %v", err)
 			return
 		}
 		defer remote.Close()
 
 		if err := req.Write(remote); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: write request to remote: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write request to remote: %v", err)
 			return
 		}
 
 		resp, err := http.ReadResponse(bufio.NewReader(remote), req)
 		if err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: read response from remote: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: read response from remote: %v", err)
 			return
 		}
 		defer resp.Body.Close()
 
 		if err := resp.Write(local); err != nil {
-			h.ctx.Manager.Logger(_ServiceName).Tracef("upgrade: write response to local: %v", err)
+			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write response to local: %v", err)
 			return
 		}
 
