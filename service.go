@@ -40,26 +40,41 @@ type Job struct {
 	Loaded chan<- struct{}
 }
 
-func (job *Job) sendOpts(opts interface{}) {
-	for _, v := range []interface{}{opts, nil} {
-		select {
-		case <-job.Done():
-			return
-		case job.Load <- v:
-		}
+func (job Job) SendOptions(opts interface{}) {
+	if job.Context == nil {
+		return
+	}
+
+	select {
+	case <-job.Done():
+		return
+	case job.Load <- opts:
 	}
 }
 
-func (job *Job) sendLoaded() {
-	select {
-	case job.Loaded <- struct{}{}:
-	default:
+func (job Job) SendLoaded() {
+	if job.Context == nil {
+		return
 	}
+
+	select {
+	case <-job.Done():
+	case job.Loaded <- struct{}{}:
+	}
+}
+
+func (job Job) Stop() {
+	if job.Context == nil {
+		return
+	}
+
+	job.Cancel()
+	<-job.Done()
 }
 
 type Manager struct {
 	mu       sync.Mutex
-	services map[string]Service
+	services sync.Map
 	jobs     map[string]Job
 	fsys     atomic.Value
 
@@ -69,29 +84,73 @@ type Manager struct {
 	relayService
 }
 
-type fsysValue struct {
-	fs.FS
+var Dummy Service = new(struct{ Service })
+
+func isDummyService(name string) bool {
+	return name == "" || name == "alias" || name == "dummy"
+}
+
+func findServiceName(s string) string {
+	i := strings.IndexFunc(s, func(r rune) bool {
+		return r != '-' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	if i > 0 {
+		return s[:i]
+	}
+
+	return s
+}
+
+func (m *Manager) Service(name string) Service {
+	name = findServiceName(name)
+	if isDummyService(name) {
+		return Dummy
+	}
+
+	if s, ok := m.services.Load(name); ok {
+		return s.(Service)
+	}
+
+	return nil
 }
 
 func (m *Manager) AddService(service Service) {
-	m.mu.Lock()
+	m.services.Store(service.Name(), service)
+}
 
-	if m.services == nil {
-		m.services = make(map[string]Service)
+func (m *Manager) StartService(ctx context.Context, service Service) (Job, error) {
+	if service == nil || service == Dummy {
+		return Job{}, os.ErrInvalid
 	}
 
-	m.services[service.Name()] = service
+	ctx, cancel := context.WithCancel(ctx)
+	ctx1, done := context.WithCancel(context.Background())
+	load, loaded := make(chan interface{}), make(chan struct{})
 
-	m.mu.Unlock()
+	go func() {
+		defer func() {
+			if err := recover(); err != nil {
+				logger := m.Logger("manager")
+				logger.Errorf("panic: %v\n%v", err, string(debug.Stack()))
+			}
+
+			cancel()
+			done()
+		}()
+
+		service.Run(Context{ctx, m, load, loaded})
+	}()
+
+	return Job{ctx1, cancel, load, loaded}, nil
 }
 
 func (m *Manager) Open(name string) (fs.File, error) {
-	fsys, _ := m.fsys.Load().(fsysValue)
-	if fsys.FS == nil {
+	fsys, _ := m.fsys.Load().(*fs.FS)
+	if fsys == nil {
 		return nil, fs.ErrInvalid
 	}
 
-	return fsys.Open(name)
+	return (*fsys).Open(name)
 }
 
 type osfs struct{}
@@ -144,9 +203,9 @@ func (m *Manager) LoadFS(fsys fs.FS, name string) error {
 }
 
 func (m *Manager) load(fsys fs.FS, file io.Reader) error {
-	m.fsys.Store(fsysValue{fsys})
+	m.fsys.Store(&fsys)
 	err := m.loadConfig(file)
-	m.fsys.Store(fsysValue{})
+	m.fsys.Store((*fs.FS)(nil))
 
 	return err
 }
@@ -199,21 +258,19 @@ func (m *Manager) loadConfig(r io.Reader) error {
 	}
 
 	for _, job := range m.jobs {
-		job.sendLoaded()
+		job.SendLoaded()
 	}
 
 	return nil
 }
 
 func (m *Manager) setOptions(name string, data interface{}) error {
-	serviceName := findServiceName(name)
-	if serviceName == "" || serviceName == "alias" {
-		return nil
-	}
-
-	service, ok := m.services[serviceName]
-	if !ok {
-		return fmt.Errorf("%v: service not found", name)
+	service := m.Service(name)
+	switch service {
+	case nil:
+		return fmt.Errorf("service not found: %v", name)
+	case Dummy:
+		return nil // Ignore dummy services.
 	}
 
 	opts := service.Options()
@@ -230,41 +287,27 @@ func (m *Manager) setOptions(name string, data interface{}) error {
 
 	job, ok := m.jobs[name]
 	if !ok || job.Err() != nil {
-		ctx1, done := context.WithCancel(context.Background())
-		ctx2, cancel := context.WithCancel(ctx1)
-		loadChan, loadedChan := make(chan interface{}), make(chan struct{}, 1)
-		job = Job{ctx1, cancel, loadChan, loadedChan}
+		job, _ = m.StartService(context.Background(), service)
 
 		if m.jobs == nil {
 			m.jobs = make(map[string]Job)
 		}
 
 		m.jobs[name] = job
-
-		go func() {
-			defer func() {
-				if err := recover(); err != nil {
-					logger := m.Logger("manager")
-					logger.Errorf("job %q: panic: %v\n%v", name, err, string(debug.Stack()))
-				}
-
-				done()
-			}()
-
-			service.Run(Context{ctx2, m, loadChan, loadedChan})
-		}()
 	}
 
 	if opts != nil {
-		job.sendOpts(opts)
+		job.SendOptions(opts)
+		// m.fsys is not always available for jobs.
+		// Jobs can only access m.fsys (via m.Open) while handling opts.
+		job.SendOptions(nil) // Make sure opts is handled.
 	}
 
 	return nil
 }
 
-func (m *Manager) Shutdown() {
+func (m *Manager) StopJobs() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	for _, job := range m.jobs {
 		job.Cancel()
@@ -274,6 +317,11 @@ func (m *Manager) Shutdown() {
 		<-job.Done()
 	}
 
+	m.mu.Unlock()
+}
+
+func (m *Manager) Shutdown() {
+	m.StopJobs()
 	_ = m.SetLogFile("")
 	m.SetLogOutput(nil)
 	m.CloseConnections()
@@ -308,15 +356,4 @@ func (lv *logLevel) UnmarshalYAML(v *yaml.Node) error {
 	}
 
 	return nil
-}
-
-func findServiceName(s string) string {
-	i := strings.IndexFunc(s, func(r rune) bool {
-		return r != '-' && !unicode.IsLetter(r) && !unicode.IsDigit(r)
-	})
-	if i > 0 {
-		return s[:i]
-	}
-
-	return s
 }
