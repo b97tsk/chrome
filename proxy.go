@@ -1,8 +1,12 @@
 package chrome
 
 import (
+	"bytes"
+	"crypto/sha1"
 	"errors"
 	"math/rand"
+	"net/url"
+	"strings"
 
 	"github.com/b97tsk/proxy"
 	"github.com/b97tsk/proxy/loadbalance"
@@ -16,25 +20,59 @@ import (
 )
 
 type Proxy struct {
-	pc proxyChain
-	b  struct {
+	d   proxy.Dialer
+	sum []byte
+
+	b struct {
 		Strategy string
-		Dialers  []Proxy
+		Proxies  []Proxy
 	}
 }
 
-func MakeProxy(urls ...string) (Proxy, error) {
-	pc, err := makeProxyChain(urls...)
-	if err != nil {
-		return Proxy{}, err
+func MakeProxy(fwd proxy.Dialer, urls ...string) (Proxy, error) {
+	if fwd == nil {
+		fwd = proxy.Direct
 	}
 
-	return Proxy{pc: pc}, nil
+	h := sha1.New()
+	sep := []byte{'\n'}
+
+	for _, s := range urls {
+		if s == "" || strings.EqualFold(s, "Direct") {
+			continue
+		}
+
+		u, err := url.Parse(s)
+		if err != nil {
+			return Proxy{}, err
+		}
+
+		d, err := proxy.FromURL(u, fwd)
+		if err != nil {
+			return Proxy{}, err
+		}
+
+		fwd = d
+
+		_, _ = h.Write([]byte(s))
+		_, _ = h.Write(sep)
+	}
+
+	var sum []byte
+	if fwd != proxy.Direct {
+		sum = h.Sum(make([]byte, 0, h.Size()))
+	}
+
+	return Proxy{d: fwd, sum: sum}, nil
 }
 
-func MakeProxyUsing(strategy string, dialers []Proxy) (Proxy, error) {
-	if len(dialers) == 0 {
-		return Proxy{}, errNoDialers
+func MakeProxyUsing(strategy string, proxies []Proxy) (Proxy, error) {
+	return makeProxyUsing(strategy, proxies, false)
+}
+
+func makeProxyUsing(strategy string, proxies []Proxy, shuffle bool) (Proxy, error) {
+	if len(proxies) == 0 {
+		return Proxy{}, errNoProxies
 	}
 
 	s := loadbalance.Get(strategy)
@@ -42,45 +80,77 @@ func MakeProxyUsing(strategy string, dialers []Proxy) (Proxy, error) {
 		return Proxy{}, errors.New("unknown strategy: " + strategy)
 	}
 
-	dialers1 := make([]proxy.Dialer, len(dialers))
+	dialers := make([]proxy.Dialer, len(proxies))
 
-	for i := range dialers1 {
-		dialers1[i] = dialers[i].Dialer()
+	for i := range dialers {
+		dialers[i] = proxies[i].Dialer()
+	}
+
+	if shuffle {
+		rand.Shuffle(len(dialers), func(i, j int) {
+			dialers[i], dialers[j] = dialers[j], dialers[i]
+		})
 	}
 
 	var p Proxy
 
-	p.pc.d = s(dialers1)
+	p.d = s(dialers)
 	p.b.Strategy = strategy
-	p.b.Dialers = dialers
+	p.b.Proxies = proxies
 
 	return p, nil
 }
 
 func (p Proxy) IsZero() bool {
-	return p.pc.IsZero()
+	switch p.d {
+	case nil, proxy.Direct:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p Proxy) Equals(other Proxy) bool {
-	return p.pc.Equals(other.pc) &&
+	return bytes.Equal(p.sum, other.sum) &&
 		p.b.Strategy == other.b.Strategy &&
-		proxySliceEqual(p.b.Dialers, other.b.Dialers)
+		proxySliceEqual(p.b.Proxies, other.b.Proxies)
 }
 
 func (p Proxy) Dialer() proxy.Dialer {
-	return p.pc.Dialer()
+	if p.d != nil {
+		return p.d
+	}
+
+	return proxy.Direct
 }
 
 func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
-	var pc proxyChain
-	if err := pc.UnmarshalYAML(v); err == nil {
-		*p = Proxy{pc: pc}
-		return nil
+	var urls []string
+	if err := v.Decode(&urls); err != nil {
+		var s string
+		if err := v.Decode(&s); err != nil {
+			return p.unmarshalYAML(v)
+		}
+
+		urls = []string{s}
 	}
 
+	for i, j := 0, len(urls)-1; i < j; i, j = i+1, j-1 {
+		urls[i], urls[j] = urls[j], urls[i]
+	}
+
+	tmp, err := MakeProxy(nil, urls...)
+	if err == nil {
+		*p = tmp
+	}
+
+	return err
+}
+
+func (p *Proxy) unmarshalYAML(v *yaml.Node) error {
 	var b struct {
 		Strategy string
-		Dialers  []Proxy
+		Proxies  []Proxy
 		Shuffle  bool
 	}
 
@@ -92,13 +162,7 @@ func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
 		return errStrategyNotSpecified
 	}
 
-	if b.Shuffle {
-		rand.Shuffle(len(b.Dialers), func(i, j int) {
-			b.Dialers[i], b.Dialers[j] = b.Dialers[j], b.Dialers[i]
-		})
-	}
-
-	tmp, err := MakeProxyUsing(b.Strategy, b.Dialers)
+	tmp, err := makeProxyUsing(b.Strategy, b.Proxies, b.Shuffle)
 	if err != nil {
 		return err
 	}
@@ -113,8 +177,8 @@ func proxySliceEqual(a, b []Proxy) bool {
 		return false
 	}
 
-	for i, pc := range a {
-		if !pc.Equals(b[i]) {
+	for i, p := range a {
+		if !p.Equals(b[i]) {
 			return false
 		}
 	}
@@ -123,7 +187,7 @@ func proxySliceEqual(a, b []Proxy) bool {
 }
 
 var (
-	errNoDialers            = errors.New("no dialers")
+	errNoProxies            = errors.New("no proxies")
 	errInvalidProxy         = errors.New("invalid proxy")
 	errStrategyNotSpecified = errors.New("strategy not specified")
 )
