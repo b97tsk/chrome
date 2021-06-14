@@ -48,10 +48,10 @@ type RouteInfo struct {
 	hashCode uint32
 }
 
-func (r *RouteInfo) Equals(other *RouteInfo) bool {
+func (r *RouteInfo) Equal(other *RouteInfo) bool {
 	return r.File == other.File &&
 		r.hashCode == other.hashCode &&
-		r.Proxy.Equals(other.Proxy)
+		r.Proxy.Equal(other.Proxy)
 }
 
 func (r *RouteInfo) Init(fsys fs.FS) error {
@@ -563,7 +563,7 @@ func routesEquals(a, b []RouteInfo) bool {
 	}
 
 	for i := range a {
-		if !a[i].Equals(&b[i]) {
+		if !a[i].Equal(&b[i]) {
 			return false
 		}
 	}

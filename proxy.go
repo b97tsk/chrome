@@ -110,7 +110,7 @@ func (p Proxy) IsZero() bool {
 	}
 }
 
-func (p Proxy) Equals(other Proxy) bool {
+func (p Proxy) Equal(other Proxy) bool {
 	return bytes.Equal(p.sum, other.sum) &&
 		p.b.Strategy == other.b.Strategy &&
 		proxySliceEqual(p.b.Proxies, other.b.Proxies)
@@ -178,7 +178,7 @@ func proxySliceEqual(a, b []Proxy) bool {
 	}
 
 	for i, p := range a {
-		if !p.Equals(b[i]) {
+		if !p.Equal(b[i]) {
 			return false
 		}
 	}
