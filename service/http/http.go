@@ -2,10 +2,10 @@ package http
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
-	"errors"
-	"hash/crc32"
 	"io"
 	"io/fs"
 	"net"
@@ -28,7 +28,7 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
-	Routes    []RouteInfo
+	Routes    []RouteOptions
 	Redirects map[string]string
 
 	Proxy chrome.Proxy `yaml:"over"`
@@ -42,30 +42,24 @@ type Options struct {
 	matches *sync.Map
 }
 
-type RouteInfo struct {
-	File     chrome.EnvString
-	Proxy    chrome.Proxy `yaml:"over"`
-	hashCode uint32
+type RouteOptions struct {
+	File  chrome.EnvString
+	Proxy chrome.Proxy `yaml:"over"`
+
+	checksum []byte
 }
 
-func (r *RouteInfo) Equal(other *RouteInfo) bool {
-	return r.File == other.File &&
-		r.hashCode == other.hashCode &&
-		r.Proxy.Equal(other.Proxy)
+func (r *RouteOptions) equal(other *RouteOptions) bool {
+	return r.File == other.File && r.Proxy.Equal(other.Proxy) && bytes.Equal(r.checksum, other.checksum)
 }
 
-func (r *RouteInfo) Init(fsys fs.FS) error {
-	hashCode, err := getHashCode(fsys, r.File.String())
-	if err == nil {
-		r.hashCode = hashCode
-	}
-
-	return err
+func (r *RouteOptions) init(fsys fs.FS) (err error) {
+	r.checksum, err = checksum(fsys, r.File.String())
+	return
 }
 
 type route struct {
-	RouteInfo
-	hash     uint32
+	RouteOptions
 	matchset atomic.Value
 }
 
@@ -78,19 +72,25 @@ type patternConfig struct {
 	ports []string
 }
 
-func (r *route) Recycle(r2 *route) {
-	r.hash = r2.hash
-	r.matchset.Store(r2.matchset.Load())
+func (r *route) Recycle(routes []*route) bool {
+	if r.checksum == nil {
+		return false
+	}
+
+	for _, r2 := range routes {
+		if bytes.Equal(r.checksum, r2.checksum) {
+			r.matchset.Store(r2.matchset.Load())
+			return true
+		}
+	}
+
+	return false
 }
 
 func (r *route) Init(fsys fs.FS) error {
-	hashCode, err := getHashCode(fsys, r.File.String())
+	checksum1, err := checksum(fsys, r.File.String())
 	if err != nil {
 		return err
-	}
-
-	if r.hash == hashCode {
-		return errNotModified
 	}
 
 	file, err := fsys.Open(r.File.String())
@@ -115,7 +115,7 @@ func (r *route) Init(fsys fs.FS) error {
 			line = line[1:]
 		}
 
-		portSuffix := regxPortSuffix.FindString(line)
+		portSuffix := rePortSuffix.FindString(line)
 		pattern := line[:len(line)-len(portSuffix)]
 		config := configMap[pattern]
 
@@ -135,7 +135,7 @@ func (r *route) Init(fsys fs.FS) error {
 		}
 	}
 
-	r.hash = hashCode
+	r.checksum = checksum1
 	r.matchset.Store(&routeMatchSet{includes, excludes})
 
 	return nil
@@ -275,42 +275,29 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				for i := range new.Routes {
-					_ = new.Routes[i].Init(ctx.Manager)
+					_ = new.Routes[i].init(ctx.Manager)
 				}
 
-				if !routesEquals(new.Routes, old.Routes) {
+				if !routesEqual(new.Routes, old.Routes) {
 					new.routes = make([]*route, len(new.Routes))
 					new.matches = &sync.Map{}
 
 					for i, r := range new.Routes {
-						new.routes[i] = &route{RouteInfo: r}
-
-						didRecycle := false
-
-						for _, r2 := range old.routes {
-							if r.hashCode == r2.hashCode {
-								new.routes[i].Recycle(r2)
-
-								didRecycle = true
-
-								break
-							}
+						new.routes[i] = &route{RouteOptions: r}
+						if new.routes[i].Recycle(old.routes) {
+							continue
 						}
 
-						if !didRecycle {
-							switch err := new.routes[i].Init(ctx.Manager); err {
-							case nil:
-								logger.Infof("loaded %v", r.File)
-							case errNotModified:
-							default:
-								logger.Errorf("fatal: %v", err)
-								return // Consider fatal here.
-							}
+						if err := new.routes[i].Init(ctx.Manager); err != nil {
+							logger.Errorf("fatal: %v", err)
+							return // Consider fatal here.
 						}
+
+						logger.Infof("loaded %v", r.File)
 					}
 				}
 
-				if !redirectsEquals(new.Redirects, old.Redirects) {
+				if !redirectsEqual(new.Redirects, old.Redirects) {
 					handler.setRedirects(new.Redirects)
 				}
 
@@ -540,30 +527,28 @@ func (h *handler) rewriteHost(host string) string {
 	return host
 }
 
-func getHashCode(fsys fs.FS, name string) (hashCode uint32, err error) {
+func checksum(fsys fs.FS, name string) ([]byte, error) {
 	file, err := fsys.Open(name)
 	if err != nil {
-		return
+		return nil, err
 	}
 	defer file.Close()
 
-	digest := crc32.NewIEEE()
-
-	_, err = io.Copy(digest, file)
-	if err == nil {
-		hashCode = digest.Sum32()
+	h := sha1.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return nil, err
 	}
 
-	return
+	return h.Sum(make([]byte, 0, h.Size())), nil
 }
 
-func routesEquals(a, b []RouteInfo) bool {
+func routesEqual(a, b []RouteOptions) bool {
 	if len(a) != len(b) {
 		return false
 	}
 
 	for i := range a {
-		if !a[i].Equal(&b[i]) {
+		if !a[i].equal(&b[i]) {
 			return false
 		}
 	}
@@ -571,7 +556,7 @@ func routesEquals(a, b []RouteInfo) bool {
 	return true
 }
 
-func redirectsEquals(a, b map[string]string) bool {
+func redirectsEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -585,8 +570,4 @@ func redirectsEquals(a, b map[string]string) bool {
 	return true
 }
 
-var (
-	errNotModified = errors.New("not modified")
-
-	regxPortSuffix = regexp.MustCompile(`:\d+$`)
-)
+var rePortSuffix = regexp.MustCompile(`:\d+$`)
