@@ -1,3 +1,5 @@
+// Package chrome is a library that can manage and start various services
+// implemented in Go (currently, very TCP centric).
 package chrome
 
 import (
@@ -20,26 +22,51 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// A Service is something that does certain jobs.
 type Service interface {
+	// Name gets the name of the Service.
+	// Successive calls must return the same value.
 	Name() string
+	// Options returns a new options for unmarshaling.
+	// Options may return nil to indicate no options.
+	// If non-nil, the returned value must be a pointer to a struct.
+	// The returned value is sent to Context.Load later after unmarshaling.
 	Options() interface{}
+	// Run starts a job.
 	Run(Context)
 }
 
+// A Context provides contextual values for a job.
 type Context struct {
+	// Context is for cancellation. It is canceled when the job cancels.
 	context.Context
+	// Manager is the Manager that starts the job.
 	Manager *Manager
-	Load    <-chan interface{}
-	Loaded  <-chan struct{}
+	// Load is for receiving options. The job should only parse the options
+	// but not start doing the work, not until the job receives a value from
+	// Loaded.
+	//
+	// If the job has acquired some system resources (for example, listening to
+	// a port), this is the good chance to release the resources, so other jobs
+	// can acquire the resources.
+	Load <-chan interface{}
+	// Loaded means that the job now can start doing the work.
+	Loaded <-chan struct{}
 }
 
+// A Job provides mechanism to control the job started by a Service.
 type Job struct {
+	// Context is for cancellation. It is canceled when the job stops.
 	context.Context
+	// Cancel cancels the job and later cancels Context after Service.Run returns.
 	Cancel context.CancelFunc
-	Load   chan<- interface{}
+	// Load is for sending options to the job.
+	Load chan<- interface{}
+	// Loaded is for signaling that the job now can start doing the work.
 	Loaded chan<- struct{}
 }
 
+// SendOptions sends opts to Load.
 func (job Job) SendOptions(opts interface{}) {
 	if job.Context == nil {
 		return
@@ -52,6 +79,7 @@ func (job Job) SendOptions(opts interface{}) {
 	}
 }
 
+// SendLoaded sends a value to Loaded.
 func (job Job) SendLoaded() {
 	if job.Context == nil {
 		return
@@ -63,6 +91,7 @@ func (job Job) SendLoaded() {
 	}
 }
 
+// Stop stops the job.
 func (job Job) Stop() {
 	if job.Context == nil {
 		return
@@ -72,6 +101,7 @@ func (job Job) Stop() {
 	<-job.Done()
 }
 
+// A Manager manages services and jobs started by services.
 type Manager struct {
 	mu       sync.Mutex
 	services sync.Map
@@ -84,6 +114,7 @@ type Manager struct {
 	relayService
 }
 
+// Dummy is a dummy Service.
 var Dummy Service = new(struct{ Service })
 
 func isDummyService(name string) bool {
@@ -101,6 +132,9 @@ func findServiceName(s string) string {
 	return s
 }
 
+// Service gets the Service that was registered by AddService.
+// Service returns nil if there is no registered Service with this name.
+// Service returns Dummy if name is not considered a real Service name.
 func (m *Manager) Service(name string) Service {
 	name = findServiceName(name)
 	if isDummyService(name) {
@@ -114,10 +148,16 @@ func (m *Manager) Service(name string) Service {
 	return nil
 }
 
+// AddService registers a Service. Registering services are important for
+// Load(File|FS) methods. Unregistered services cannot be started by
+// Load(File|FS) methods.
 func (m *Manager) AddService(service Service) {
 	m.services.Store(service.Name(), service)
 }
 
+// StartService starts a Service. Jobs started by StartService are not managed
+// but they should be stopped manually before you Shutdown the Manager since
+// somehow they are connected to the Manager.
 func (m *Manager) StartService(ctx context.Context, service Service) (Job, error) {
 	if service == nil || service == Dummy {
 		return Job{}, os.ErrInvalid
@@ -144,6 +184,8 @@ func (m *Manager) StartService(ctx context.Context, service Service) (Job, error
 	return Job{ctx1, cancel, load, loaded}, nil
 }
 
+// Open implements fs.FS. Open is available for jobs started by Load(File|FS)
+// methods when they are handling options.
 func (m *Manager) Open(name string) (fs.File, error) {
 	fsys, _ := m.fsys.Load().(*fs.FS)
 	if fsys == nil {
@@ -157,10 +199,13 @@ type osfs struct{}
 
 func (osfs) Open(name string) (fs.File, error) { return os.Open(name) }
 
+// Load loads a YAML document from r.
 func (m *Manager) Load(r io.Reader) error { return m.load(osfs{}, r) }
 
+// LoadFile loads a YAML document from a file.
 func (m *Manager) LoadFile(name string) error { return m.LoadFS(osfs{}, name) }
 
+// LoadFS loads a YAML document from a file in a file system.
 func (m *Manager) LoadFS(fsys fs.FS, name string) error {
 	file, err := fsys.Open(name)
 	if err != nil {
@@ -306,6 +351,7 @@ func (m *Manager) setOptions(name string, data interface{}) error {
 	return nil
 }
 
+// StopJobs stops managed jobs that were started by Load(File|FS) methods.
 func (m *Manager) StopJobs() {
 	m.mu.Lock()
 
@@ -320,6 +366,7 @@ func (m *Manager) StopJobs() {
 	m.mu.Unlock()
 }
 
+// Shutdown shutdowns and cleanups the Manager.
 func (m *Manager) Shutdown() {
 	m.StopJobs()
 	_ = m.SetLogFile("")

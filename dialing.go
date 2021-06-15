@@ -15,16 +15,22 @@ type dialingService struct {
 	dialTimeout [3]uint32
 }
 
+// DialTimeout gets the dial timeout.
 func (m *dialingService) DialTimeout() time.Duration {
 	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.dialTimeout[1])) &^ 4))
 	return time.Duration(atomic.LoadInt64(ptr))
 }
 
+// SetDialTimeout sets the dial timeout, which may be overrided when Dial.
 func (m *dialingService) SetDialTimeout(timeout time.Duration) {
 	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.dialTimeout[1])) &^ 4))
 	atomic.StoreInt64(ptr, int64(timeout))
 }
 
+// Dial dials specified address with dialer repeatedly until success or
+// ctx is canceled or dialer returns a non-timeout error.
+// Each dial has a timeout that can be specified with timeout parameter or
+// by SetDialTimeout method.
 func (m *dialingService) Dial(
 	ctx context.Context,
 	dialer proxy.Dialer,

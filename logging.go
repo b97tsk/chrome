@@ -18,6 +18,7 @@ type loggingService struct {
 	loggers sync.Map
 }
 
+// Logger gets a Logger with name quoted with square brackets as the prefix.
 func (m *loggingService) Logger(name string) *log.Logger {
 	logger, ok := m.loggers.Load(name)
 	if !ok {
@@ -28,14 +29,17 @@ func (m *loggingService) Logger(name string) *log.Logger {
 	return logger.(*log.Logger)
 }
 
+// LogLevel gets the logging level.
 func (m *loggingService) LogLevel() log.Level {
 	return log.Level(atomic.LoadInt32(&m.level))
 }
 
+// SetLogLevel sets the logging level.
 func (m *loggingService) SetLogLevel(level log.Level) {
 	atomic.StoreInt32(&m.level, int32(level))
 }
 
+// SetLogFile sets the file that each logging message would write to.
 func (m *loggingService) SetLogFile(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -57,6 +61,7 @@ func (m *loggingService) SetLogFile(name string) error {
 	return nil
 }
 
+// SetLogOutput sets a io.Writer that each logging message would write to.
 func (m *loggingService) SetLogOutput(w io.Writer) {
 	m.mu.Lock()
 	m.output = w

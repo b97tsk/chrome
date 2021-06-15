@@ -19,6 +19,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Proxy is a helper type for unmarshaling a proxy from YAML.
+// A Proxy is basically a proxy.Dialer.
 type Proxy struct {
 	d   proxy.Dialer
 	sum []byte
@@ -29,6 +31,12 @@ type Proxy struct {
 	}
 }
 
+// MakeProxy chains one or more proxies (parsed from urls) together, using
+// fwd as a forwarder. The dial order would be: fwd -> proxies[0] ->
+// proxies[1] -> ... -> proxies[n-1], where n is the number of proxies.
+//
+// Note that proxies specified in YAML use reverse ordering to go with
+// the idiom "one over another".
 func MakeProxy(fwd proxy.Dialer, urls ...string) (Proxy, error) {
 	if fwd == nil {
 		fwd = proxy.Direct
@@ -66,6 +74,8 @@ func MakeProxy(fwd proxy.Dialer, urls ...string) (Proxy, error) {
 	return Proxy{d: fwd, sum: sum}, nil
 }
 
+// MakeProxyUsing creates a load balancing Proxy from multiple proxies with
+// specified strategy.
 func MakeProxyUsing(strategy string, proxies []Proxy) (Proxy, error) {
 	return makeProxyUsing(strategy, proxies, false)
 }
@@ -101,6 +111,7 @@ func makeProxyUsing(strategy string, proxies []Proxy, shuffle bool) (Proxy, erro
 	return p, nil
 }
 
+// IsZero reports whether p is proxy.Direct.
 func (p Proxy) IsZero() bool {
 	switch p.d {
 	case nil, proxy.Direct:
@@ -110,12 +121,14 @@ func (p Proxy) IsZero() bool {
 	}
 }
 
+// Equal reports whether p and other are the same proxy.
 func (p Proxy) Equal(other Proxy) bool {
 	return bytes.Equal(p.sum, other.sum) &&
 		p.b.Strategy == other.b.Strategy &&
 		proxySliceEqual(p.b.Proxies, other.b.Proxies)
 }
 
+// Dialer gets the proxy.Dialer.
 func (p Proxy) Dialer() proxy.Dialer {
 	if p.d != nil {
 		return p.d

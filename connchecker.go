@@ -24,6 +24,13 @@ type connChecker struct {
 	deadline time.Time
 }
 
+// NewConnChecker returns a new net.Conn based on conn, and a context.Context
+// whose cancellation indicates that conn is no longer readable (closed or
+// lost).
+//
+// Internally, NewConnChecker starts a goroutine that periodically checks
+// if conn is no longer readable (closed or lost); if yes, it cancels the
+// associated context.Context.
 func NewConnChecker(conn net.Conn) (net.Conn, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cbr := make(chan *bufio.Reader, 1)

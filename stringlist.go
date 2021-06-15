@@ -6,6 +6,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// StringList is a helper type for unmarshaling a slice of string from YAML.
+// When unmarshaling, it treats a string as a one-length slice of string.
 type StringList []string
 
 func (s *StringList) UnmarshalYAML(v *yaml.Node) error {

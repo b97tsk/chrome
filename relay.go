@@ -11,9 +11,19 @@ import (
 	"github.com/b97tsk/chrome/internal/netutil"
 )
 
+// RelayOptions provides options for relay.
 type RelayOptions struct {
-	ConnIdle     time.Duration
-	UplinkIdle   time.Duration
+	// ConnIdle is the idle timeout when relay starts.
+	// If both connections (local-side and remote-side) remains idle (no reads)
+	// for the duration of ConnIdle, both are closed and relay ends.
+	ConnIdle time.Duration
+	// UplinkIdle is the idle timeout when the remote-side connection (downlink)
+	// closes. If the local-side connection (uplink) remains idle (no reads)
+	// for the duration of UplinkIdle, it is closed and relay ends.
+	UplinkIdle time.Duration
+	// DownlinkIdle is the idle timeout when the local-side connection (uplink)
+	// closes. If the remote-side connection (downlink) remains idle (no reads)
+	// for the duration of DownlinkIdle, it is closed and relay ends.
 	DownlinkIdle time.Duration
 }
 
@@ -51,12 +61,16 @@ func (m *relayService) setDownlinkIdle(idle time.Duration) {
 	atomic.StoreInt64(ptr, int64(idle))
 }
 
+// SetRelayOptions sets the relay options, which may be overrided when Relay.
 func (m *relayService) SetRelayOptions(opts RelayOptions) {
 	m.setConnIdle(opts.ConnIdle)
 	m.setUplinkIdle(opts.UplinkIdle)
 	m.setDownlinkIdle(opts.DownlinkIdle)
 }
 
+// Relay relays two (TCP) connections, that is, read from one and write to
+// the other, in both directions. In addition, Relay accepts a RelayOptions
+// that can be specified with opts parameter or by SetRelayOptions method.
 func (m *relayService) Relay(l, r net.Conn, opts RelayOptions) {
 	if opts.ConnIdle <= 0 {
 		opts.ConnIdle = m.connIdle()
