@@ -20,6 +20,7 @@ import (
 	"github.com/b97tsk/chrome/service/socks/v2socks"
 	"github.com/b97tsk/chrome/service/tcptun"
 	"github.com/b97tsk/chrome/service/tcptun/dnstun"
+	"github.com/b97tsk/chrome/service/v2ray"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -133,6 +134,7 @@ func newManager() *chrome.Manager {
 	m.AddService(shadowsocks.Service{})
 	m.AddService(socks.Service{})
 	m.AddService(tcptun.Service{})
+	m.AddService(v2ray.Service{})
 	m.AddService(v2socks.Service{})
 
 	return &m
