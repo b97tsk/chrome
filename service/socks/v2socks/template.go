@@ -1,4 +1,4 @@
-package v2ray
+package v2socks
 
 import (
 	"encoding/json"
@@ -12,13 +12,13 @@ func init() {
 			return string(bytes), err
 		},
 	}
-	v2rayTemplate = template.New("v2ray").Funcs(funcs)
-	template.Must(v2rayTemplate.Parse(v2rayTemplateBody))
+	v2socksTemplate = template.New("v2socks").Funcs(funcs)
+	template.Must(v2socksTemplate.Parse(v2socksTemplateBody))
 }
 
-var v2rayTemplate *template.Template
+var v2socksTemplate *template.Template
 
-const v2rayTemplateBody = `
+const v2socksTemplateBody = `
 {{- $protocol := .Protocol -}}
 {{- $transport := .Transport -}}
 {
@@ -27,14 +27,7 @@ const v2rayTemplateBody = `
   },
   "outbounds": [
     {
-{{- if eq $protocol "FREEDOM" }}
-
-{{- with .FREEDOM }}
-      "protocol": "freedom",
-      "settings": {{ json . }},
-{{- end }}{{/* with .FREEDOM */}}
-
-{{- else if eq $protocol "TROJAN" }}
+{{- if eq $protocol "TROJAN" }}
 
 {{- with .TROJAN }}
       "protocol": "trojan",

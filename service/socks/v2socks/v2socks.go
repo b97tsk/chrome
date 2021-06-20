@@ -1,4 +1,4 @@
-package v2ray
+package v2socks
 
 import (
 	"bytes"
@@ -63,10 +63,6 @@ type Options struct {
 }
 
 type ProtocolOptions struct {
-	FREEDOM struct {
-		DomainStrategy string `json:"domainStrategy,omitempty"`
-		Redirect       string `json:"redirect,omitempty"`
-	}
 	TROJAN struct {
 		HostportOptions `yaml:",inline"`
 		Password        string
@@ -117,7 +113,7 @@ type PingOptions struct {
 
 type Service struct{}
 
-const ServiceName = "v2ray"
+const ServiceName = "v2socks"
 
 func (Service) Name() string {
 	return ServiceName
@@ -395,18 +391,19 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		return nil, err
 	}
 
-	opts.Protocol = "FREEDOM"
+	opts.Protocol = "VMESS"
 	opts.Transport = "TCP"
 
 	for _, t := range strings.SplitN(opts.Type, "+", 3) {
 		t = strings.ToUpper(t)
 		switch t {
-		case "FREEDOM", "TROJAN", "VMESS":
+		case "TROJAN", "VMESS":
 			opts.Protocol = t
 		case "HTTP", "KCP", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
 			opts.TLS.Enabled = true
+		case "":
 		default:
 			return nil, errors.New("unknown type: " + opts.Type)
 		}
@@ -451,8 +448,7 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 	}
 
 	var buf bytes.Buffer
-
-	if err := v2rayTemplate.Execute(&buf, &opts); err != nil {
+	if err := v2socksTemplate.Execute(&buf, &opts); err != nil {
 		return nil, err
 	}
 
