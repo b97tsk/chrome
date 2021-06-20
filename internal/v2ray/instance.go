@@ -13,11 +13,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type instance struct {
+type Instance struct {
 	ins *core.Instance
 }
 
-func newInstanceFromJSON(data []byte) (*instance, error) {
+func NewInstanceFromJSON(data []byte) (*Instance, error) {
 	var config conf.Config
 
 	if err := json.Unmarshal(data, &config); err != nil {
@@ -46,22 +46,22 @@ func newInstanceFromJSON(data []byte) (*instance, error) {
 		return nil, err
 	}
 
-	return &instance{ins}, nil
+	return &Instance{ins}, nil
 }
 
-func (v *instance) Start() error {
+func (v *Instance) Start() error {
 	return v.ins.Start()
 }
 
-func (v *instance) Close() error {
+func (v *Instance) Close() error {
 	return v.ins.Close()
 }
 
-func (v *instance) Dial(network, addr string) (net.Conn, error) {
+func (v *Instance) Dial(network, addr string) (net.Conn, error) {
 	return v.DialContext(context.Background(), network, addr)
 }
 
-func (v *instance) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+func (v *Instance) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	switch network {
 	case "tcp", "tcp4", "tcp6":
 	default:

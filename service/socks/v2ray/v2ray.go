@@ -20,6 +20,7 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
+	"github.com/b97tsk/chrome/internal/v2ray"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -58,7 +59,7 @@ type Options struct {
 	}
 	Relay chrome.RelayOptions
 
-	ins *instance
+	ins *v2ray.Instance
 }
 
 type ProtocolOptions struct {
@@ -219,7 +220,7 @@ func (Service) Run(ctx chrome.Context) {
 	defer stopServer()
 
 	var (
-		ins        *instance
+		ins        *v2ray.Instance
 		restart    chan struct{}
 		cancelPing context.CancelFunc
 	)
@@ -389,7 +390,7 @@ func shouldRestart(x, y Options) bool {
 	return !reflect.DeepEqual(x, y)
 }
 
-func createInstance(opts Options) (*instance, error) {
+func createInstance(opts Options) (*v2ray.Instance, error) {
 	if err := parseURL(&opts); err != nil {
 		return nil, err
 	}
@@ -455,7 +456,7 @@ func createInstance(opts Options) (*instance, error) {
 		return nil, err
 	}
 
-	return newInstanceFromJSON(buf.Bytes())
+	return v2ray.NewInstanceFromJSON(buf.Bytes())
 }
 
 func parseURL(opts *Options) error {
