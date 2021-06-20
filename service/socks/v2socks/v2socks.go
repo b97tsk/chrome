@@ -1,6 +1,7 @@
 package v2socks
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/rand"
 	"net"
 	"net/http"
@@ -81,13 +83,21 @@ type TransportOptions struct {
 	}
 	TCP struct{}
 	TLS struct {
-		Enabled    bool   `json:"-" yaml:"-"`
-		ServerName string `json:"serverName"`
+		Enabled       bool                 `json:"-" yaml:"-"`
+		ServerName    string               `json:"serverName,omitempty"`
+		AllowInsecure bool                 `json:"allowInsecure,omitempty"`
+		Certificates  []CertificateOptions `json:"certificates,omitempty" yaml:"-"`
+		CertFile      chrome.EnvString     `json:"-"`
 	}
 	WS struct {
 		Path   string
 		Header map[string]string
 	}
+}
+
+type CertificateOptions struct {
+	Usage       string   `json:"usage"`
+	Certificate []string `json:"certificate"`
 }
 
 type HostportOptions struct {
@@ -218,22 +228,6 @@ func (Service) Run(ctx chrome.Context) {
 		cancelPing context.CancelFunc
 	)
 
-	stopInstance := func() {
-		if cancelPing != nil {
-			cancelPing()
-			cancelPing = nil
-		}
-
-		if ins != nil {
-			if err := ins.Close(); err != nil {
-				logger.Debugf("close instance: %v", err)
-			}
-
-			ins = nil
-		}
-	}
-	defer stopInstance()
-
 	startInstance := func(opts Options) {
 		ins1, err := createInstance(opts)
 		if err != nil {
@@ -265,6 +259,22 @@ func (Service) Run(ctx chrome.Context) {
 		}
 	}
 
+	stopInstance := func() {
+		if cancelPing != nil {
+			cancelPing()
+			cancelPing = nil
+		}
+
+		if ins != nil {
+			if err := ins.Close(); err != nil {
+				logger.Debugf("close instance: %v", err)
+			}
+
+			ins = nil
+		}
+	}
+	defer stopInstance()
+
 	var forwardListener net.Listener
 	defer func() {
 		if forwardListener != nil {
@@ -284,6 +294,18 @@ func (Service) Run(ctx chrome.Context) {
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
+				}
+
+				if new.TLS.CertFile != "" {
+					certLines, err := readLines(ctx.Manager, new.TLS.CertFile.String())
+					if err != nil {
+						logger.Errorf("read cert file: %v", err)
+						return
+					}
+
+					if len(certLines) > 0 {
+						new.TLS.Certificates = []CertificateOptions{{"verify", certLines}}
+					}
 				}
 
 				if !new.Proxy.IsZero() {
@@ -686,6 +708,30 @@ func unquote(s string) string {
 	}
 
 	return s
+}
+
+func readLines(fsys fs.FS, name string) ([]string, error) {
+	file, err := fsys.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var lines []string
+
+	s := bufio.NewScanner(file)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+
+	if err := s.Err(); err != nil {
+		return nil, err
+	}
+
+	return lines, nil
 }
 
 const (

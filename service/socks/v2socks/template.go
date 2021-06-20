@@ -54,8 +54,7 @@ const v2socksTemplateBody = `
             "users": [
               {
                 "id": {{ .ID | json }},
-                "alterId": {{ .AlterID }},
-                "security": "auto"
+                "alterId": {{ .AlterID }}
               }
             ]
           }
@@ -101,9 +100,7 @@ const v2socksTemplateBody = `
 {{- end }}{{/* with .WS */}}
 
 {{- end }}
-{{- if ne .TLS.ServerName "" }}
         "tlsSettings": {{ .TLS | json }},
-{{- end }}
         "sockopt": {
           "tcpFastOpen": true
         }
