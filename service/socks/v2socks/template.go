@@ -76,24 +76,6 @@ const v2socksTemplateBody = `
         },
 {{- end }}{{/* with .HTTP */}}
 
-{{- else if eq $transport "KCP" }}
-
-{{- with .KCP }}
-        "network": "kcp",
-        "kcpSettings": {
-          "mtu": 1350,
-          "tti": 50,
-          "uplinkCapacity": 2,
-          "downlinkCapacity": 100,
-          "congestion": false,
-          "readBufferSize": 2,
-          "writeBufferSize": 2,
-          "header": {
-            "type": {{ .Header | json }}
-          }
-        },
-{{- end }}{{/* with .KCP */}}
-
 {{- else if eq $transport "TCP" }}
 
 {{- $tlsEnabled := .TLS.Enabled }}

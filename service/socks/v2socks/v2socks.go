@@ -79,9 +79,6 @@ type TransportOptions struct {
 		Host []string
 		Path string
 	}
-	KCP struct {
-		Header string
-	}
 	TCP struct{}
 	TLS struct {
 		Enabled    bool   `json:"-" yaml:"-"`
@@ -399,7 +396,7 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		switch t {
 		case "TROJAN", "VMESS":
 			opts.Protocol = t
-		case "HTTP", "KCP", "TCP", "WS":
+		case "HTTP", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
 			opts.TLS.Enabled = true
@@ -429,12 +426,6 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		hostport.Port, err = strconv.Atoi(port)
 		if err != nil {
 			return nil, errors.New("invalid port in address: " + hostport.Address)
-		}
-	}
-
-	if opts.Transport == "KCP" {
-		if opts.KCP.Header == "" {
-			opts.KCP.Header = "none"
 		}
 	}
 
@@ -544,9 +535,6 @@ func parseVMessURL(opts *Options) error {
 		}
 
 		opts.HTTP.Path = config.Path
-	case "KCP":
-		transport = "KCP"
-		opts.KCP.Header = config.Type
 	case "TCP":
 		transport = "TCP"
 
