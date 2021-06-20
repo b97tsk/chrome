@@ -102,7 +102,6 @@ func (Service) Run(ctx chrome.Context) {
 		_ = server.Close()
 		server = nil
 	}
-
 	defer stopServer()
 
 	for {
@@ -113,6 +112,11 @@ func (Service) Run(ctx chrome.Context) {
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
+
+				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
+					logger.Error(err)
+					return
+				}
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()

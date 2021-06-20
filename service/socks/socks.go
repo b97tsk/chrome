@@ -211,10 +211,8 @@ func (Service) Run(ctx chrome.Context) {
 		_ = server.Close()
 		server = nil
 	}
-
 	defer stopServer()
 
-MainLoop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -224,6 +222,11 @@ MainLoop:
 				old := <-optsOut
 				new := *new
 				new.dnsCache = old.dnsCache
+
+				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
+					logger.Error(err)
+					return
+				}
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
@@ -243,14 +246,14 @@ MainLoop:
 						server := &new.DNS.Servers[i]
 						if server.Name == "" && len(server.IP) == 0 {
 							logger.Errorf("[dns] server #%v: invalid", i+1)
-							continue MainLoop
+							return
 						}
 
 						server.Over = strings.ToUpper(server.Over)
 
 						if server.Over == "TLS" && server.Name == "" {
 							logger.Errorf("[dns] server #%v: DNS-over-TLS requires a server name", i+1)
-							continue MainLoop
+							return
 						}
 					}
 

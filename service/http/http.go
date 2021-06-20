@@ -254,7 +254,6 @@ func (Service) Run(ctx chrome.Context) {
 		serverDown = nil
 		serverListener = nil
 	}
-
 	defer stopServer()
 
 	for {
@@ -269,6 +268,11 @@ func (Service) Run(ctx chrome.Context) {
 				new := *new
 				new.routes = old.routes
 				new.matches = old.matches
+
+				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
+					logger.Error(err)
+					return
+				}
 
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
@@ -289,8 +293,8 @@ func (Service) Run(ctx chrome.Context) {
 						}
 
 						if err := new.routes[i].Init(ctx.Manager); err != nil {
-							logger.Errorf("fatal: %v", err)
-							return // Consider fatal here.
+							logger.Error(err)
+							return
 						}
 
 						logger.Infof("loaded %v", r.File)

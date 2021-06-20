@@ -115,7 +115,6 @@ func (Service) Run(ctx chrome.Context) {
 		_ = server.Close()
 		server = nil
 	}
-
 	defer stopServer()
 
 	for {
@@ -128,6 +127,11 @@ func (Service) Run(ctx chrome.Context) {
 				new := *new
 				new.cipher = old.cipher
 
+				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
+					logger.Error(err)
+					return
+				}
+
 				if new.ListenAddr != old.ListenAddr {
 					stopServer()
 				}
@@ -135,7 +139,7 @@ func (Service) Run(ctx chrome.Context) {
 				if new.Method != old.Method || new.Password != old.Password {
 					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
-						logger.Errorf("fatal: pick cipher: %v", err)
+						logger.Errorf("pick cipher: %v", err)
 						return
 					}
 
