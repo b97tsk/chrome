@@ -117,6 +117,16 @@ func (r *route) Init(fsys fs.FS) error {
 
 		portSuffix := rePortSuffix.FindString(line)
 		pattern := line[:len(line)-len(portSuffix)]
+
+		switch {
+		case strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]"):
+			pattern = pattern[1 : len(pattern)-1]
+		case portSuffix != "" && strings.Contains(pattern, ":"):
+			// Assume the whole line is an IPv6 address.
+			portSuffix = ""
+			pattern = line
+		}
+
 		config := configMap[pattern]
 
 		if portSuffix != "" {
