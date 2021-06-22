@@ -93,10 +93,6 @@ func TestMatchSet(t *testing.T) {
 		{"co.uk", "co.[^0-9][^0-9]", true},
 		{"co.uk", "co.[^0-9][^0-9]*", true},
 
-		// missing final ']'
-		{"co.uk", "co.[uk][uk", true},
-		{"co.uk", "co.[^0-9][^0-9", true},
-
 		{"a", "a", true},
 		{"a", "b", false},
 		{"a", "*", true},
@@ -116,7 +112,13 @@ func TestMatchSet(t *testing.T) {
 		{"a", "*a.", true},
 		{"a", "a*.", true},
 		{"a", "[a]", true},
+		{"a", "[a-]", true},
+		{"-", "[a-]", true},
+		{"a", "[a-z]", true},
 		{"a", "[^a]", false},
+		{"a", "[^-]", true},
+		{"-", "[^-]", false},
+		{"a", "[^-z]", true},
 		{"a", "", true},
 		{"", "a", false},
 	}
@@ -126,12 +128,7 @@ func TestMatchSet(t *testing.T) {
 
 		set.Add(tc.Pattern, struct{}{})
 
-		matched := set.Test(tc.Source)
-		if matched != (set.MatchAll(tc.Source) != nil) {
-			t.Fatal("inconsistent")
-		}
-
-		if matched != tc.Matched {
+		if matched := set.MatchAll(tc.Source) != nil; matched != tc.Matched {
 			if tc.Matched {
 				t.Error(tc.Source, "SHOULD match", tc.Pattern)
 			} else {

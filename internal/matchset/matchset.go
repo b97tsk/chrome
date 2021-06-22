@@ -25,21 +25,19 @@ func (set charset) Contains(by byte) bool {
 	return set[idx]&bit != 0
 }
 
-type atom = rune
-
-type pattern struct {
-	atoms []byte
-	data  interface{}
-}
-
 const magicDot = 0
 
 type MatchSet struct {
 	patterns      []pattern
-	nextAtom      atom
-	charSetToAtom map[charset]atom
-	atomToCharSet map[atom]charset
-	atomsBuffer   []atom
+	nextAtom      rune
+	charSetToAtom map[charset]rune
+	atomToCharSet map[rune]charset
+	atomsBuffer   []rune
+}
+
+type pattern struct {
+	atoms []byte
+	data  interface{}
 }
 
 func charSetFromGroup(bytes []byte) (charset, []byte) {
@@ -52,36 +50,27 @@ func charSetFromGroup(bytes []byte) (charset, []byte) {
 		charSetMayBeInverted bool
 	)
 
+	var bytesLeft []byte
+
 	for i, by := range bytes {
-		switch by {
-		case ']':
-			if !charRange && i > 0 {
-				if charRead {
-					charSet.Add(char)
-				}
+		if by == ']' && i > 0 {
+			bytesLeft = bytes[i+1:]
+			break
+		}
 
-				if charSetInverted {
-					charSet.Invert()
-				}
-
-				return charSet, bytes[i+1:]
-			}
-		case '-':
-			if charRead && !charRange {
-				charRange = true
-				continue
-			}
+		if by == '-' && charRead && !charRange {
+			charRange = true
+			continue
 		}
 
 		if charSetMayBeInverted {
-			// Skip first '^' character.
-			charRead = false
-			charSetInverted = true
-			charSetMayBeInverted = false
-		}
+			if !charRange {
+				// Skip first '^' character.
+				charRead = false
+				charSetInverted = true
+			}
 
-		if i == 0 && by == '^' {
-			charSetMayBeInverted = true
+			charSetMayBeInverted = false
 		}
 
 		if charRange {
@@ -91,27 +80,38 @@ func charSetFromGroup(bytes []byte) (charset, []byte) {
 
 			charRead = false
 			charRange = false
-		} else {
-			if charRead {
-				charSet.Add(char)
-			}
-			char = by
-			charRead = true
+
+			continue
+		}
+
+		if charRead {
+			charSet.Add(char)
+		}
+
+		char = by
+		charRead = true
+
+		if i == 0 && by == '^' {
+			charSetMayBeInverted = true
 		}
 	}
 
-	if charRead {
+	if charRead && !charSetMayBeInverted {
 		charSet.Add(char)
 	}
 
-	if charSetInverted {
+	if charRange {
+		charSet.Add('-')
+	}
+
+	if charSetInverted || charSetMayBeInverted {
 		charSet.Invert()
 	}
 
-	return charSet, nil
+	return charSet, bytesLeft
 }
 
-func (set *MatchSet) readAtom(bytes []byte) (atom, []byte) {
+func (set *MatchSet) readAtom(bytes []byte) (rune, []byte) {
 	if bytes[0] == '[' {
 		charSet, bytesLeft := charSetFromGroup(bytes[1:])
 		if atom, ok := set.charSetToAtom[charSet]; ok {
@@ -120,8 +120,8 @@ func (set *MatchSet) readAtom(bytes []byte) (atom, []byte) {
 
 		if set.nextAtom == 0 {
 			set.nextAtom = 256
-			set.charSetToAtom = make(map[charset]atom)
-			set.atomToCharSet = make(map[atom]charset)
+			set.charSetToAtom = make(map[charset]rune)
+			set.atomToCharSet = make(map[rune]charset)
 		}
 
 		atom := set.nextAtom
@@ -133,14 +133,11 @@ func (set *MatchSet) readAtom(bytes []byte) (atom, []byte) {
 		return atom, bytesLeft
 	}
 
-	return atom(bytes[0]), bytes[1:]
+	return rune(bytes[0]), bytes[1:]
 }
 
-func (set *MatchSet) parse(bytes []byte) []atom {
-	var (
-		currentAtom  atom
-		lastReadAtom atom
-	)
+func (set *MatchSet) parse(bytes []byte) []rune {
+	var currentAtom, lastAtom rune
 
 	atoms := set.atomsBuffer[:0]
 
@@ -148,21 +145,21 @@ func (set *MatchSet) parse(bytes []byte) []atom {
 		currentAtom, bytes = set.readAtom(bytes)
 		switch currentAtom {
 		case '*':
-			if lastReadAtom != '*' {
-				lastReadAtom = '*'
-				atoms = append(atoms, lastReadAtom)
+			if lastAtom != '*' {
+				atoms = append(atoms, '*')
+				lastAtom = '*'
 			}
 		case '?':
-			if lastReadAtom == '*' {
+			if lastAtom == '*' {
 				atoms[len(atoms)-1] = '?'
 				atoms = append(atoms, '*')
 			} else {
-				lastReadAtom = '?'
-				atoms = append(atoms, lastReadAtom)
+				atoms = append(atoms, '?')
+				lastAtom = '?'
 			}
 		default:
-			lastReadAtom = currentAtom
-			atoms = append(atoms, lastReadAtom)
+			atoms = append(atoms, currentAtom)
+			lastAtom = currentAtom
 		}
 	}
 
@@ -170,7 +167,7 @@ func (set *MatchSet) parse(bytes []byte) []atom {
 
 	if len(atoms) == 0 {
 		// Empty pattern matches any characters.
-		return []atom{magicDot}
+		return []rune{magicDot}
 	}
 
 	if atoms[0] == '.' {
@@ -197,7 +194,7 @@ func (set *MatchSet) Add(patt string, data interface{}) {
 			atoms[i], atoms[j] = atoms[j], atoms[i]
 		}
 
-		for i := 0; i < len(atoms)-1; i++ {
+		for i, j := 0, len(atoms)-1; i < j; i++ {
 			if atoms[i] == '*' && atoms[i+1] == '?' {
 				atoms[i], atoms[i+1] = atoms[i+1], atoms[i]
 			}
@@ -212,19 +209,19 @@ func (set *MatchSet) Empty() bool {
 	return len(set.patterns) == 0
 }
 
-func (set *MatchSet) Match(source string, accumulate func(interface{}) bool) {
-	if set.Empty() {
-		return
+func (set *MatchSet) Match(source string, accumulate func(interface{})) {
+	if !set.Empty() {
+		set.match(source, accumulate)
 	}
+}
 
+func (set *MatchSet) match(source string, accumulate func(interface{})) {
 	bytes := []byte(source)
 
 	// Also reverse source bytes, since all patterns are reversed.
 	for i, j := 0, len(bytes)-1; i < j; i, j = i+1, j-1 {
 		bytes[i], bytes[j] = bytes[j], bytes[i]
 	}
-
-	var ok bool
 
 	var patterns, matches []pattern
 
@@ -236,9 +233,7 @@ func (set *MatchSet) Match(source string, accumulate func(interface{}) bool) {
 			matches = matches[:0]
 
 			for _, patt := range patterns {
-				if matches, ok = set.checkPattern(patt, bytes, i, matches, accumulate); !ok {
-					return
-				}
+				matches = set.checkPattern(patt, bytes, i, matches, accumulate)
 			}
 
 			if len(matches) == 0 {
@@ -254,8 +249,8 @@ func (set *MatchSet) checkPattern(
 	patt pattern,
 	bytes []byte, i int,
 	matches []pattern,
-	accumulate func(interface{}) bool,
-) (_ []pattern, ok bool) {
+	accumulate func(interface{}),
+) []pattern {
 	atom, size := utf8.DecodeRune(patt.atoms)
 	nextpatt := pattern{patt.atoms[size:], patt.data}
 
@@ -263,18 +258,14 @@ func (set *MatchSet) checkPattern(
 	case atom == magicDot:
 		if len(nextpatt.atoms) == 0 {
 			if i == 0 || bytes[i] == '.' {
-				if !accumulate(patt.data) {
-					return nil, false
-				}
+				accumulate(patt.data)
 			}
 
-			return matches, true
+			return matches
 		}
 
 		if i == 0 {
-			if matches, ok = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate); !ok {
-				return nil, false
-			}
+			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
 
 		if bytes[i] == '.' {
@@ -284,31 +275,27 @@ func (set *MatchSet) checkPattern(
 		matches = append(matches, patt)
 	case atom == '*':
 		if len(nextpatt.atoms) > 0 {
-			if matches, ok = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate); !ok {
-				return nil, false
-			}
+			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
 
 		switch bytes[i] {
 		case '.', ':':
-			return matches, true // '*' does not match '.' or ':'.
+			return matches // '*' does not match '.' or ':'.
 		}
 
 		if i+1 == len(bytes) {
 			if len(nextpatt.atoms) == 0 {
-				if !accumulate(patt.data) {
-					return nil, false
-				}
+				accumulate(patt.data)
 			}
 
-			return matches, true
+			return matches
 		}
 
 		matches = append(matches, patt)
 	case atom == '?':
 		switch bytes[i] {
 		case '.', ':':
-			return matches, true // '?' does not match '.' or ':'.
+			return matches // '?' does not match '.' or ':'.
 		}
 
 		fallthrough
@@ -316,51 +303,32 @@ func (set *MatchSet) checkPattern(
 		if i+1 == len(bytes) {
 			switch len(nextpatt.atoms) {
 			case 0:
-				if !accumulate(patt.data) {
-					return nil, false
-				}
+				accumulate(patt.data)
 			case 1:
 				switch nextpatt.atoms[0] {
 				case magicDot, '*':
-					if !accumulate(patt.data) {
-						return nil, false
-					}
+					accumulate(patt.data)
 				}
 			case 2:
 				if nextpatt.atoms[0] == '*' && nextpatt.atoms[1] == magicDot {
-					if !accumulate(patt.data) {
-						return nil, false
-					}
+					accumulate(patt.data)
 				}
 			}
 
-			return matches, true
+			return matches
 		}
 
 		if len(nextpatt.atoms) == 0 {
-			return matches, true
+			return matches
 		}
 
 		matches = append(matches, nextpatt)
 	}
 
-	return matches, true
+	return matches
 }
 
 func (set *MatchSet) MatchAll(source string) (matches []interface{}) {
-	set.Match(source, func(data interface{}) bool {
-		matches = append(matches, data)
-		return true
-	})
-
-	return
-}
-
-func (set *MatchSet) Test(source string) (ok bool) {
-	set.Match(source, func(data interface{}) bool {
-		ok = true
-		return false
-	})
-
+	set.Match(source, func(data interface{}) { matches = append(matches, data) })
 	return
 }
