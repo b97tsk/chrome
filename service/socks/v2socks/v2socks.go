@@ -707,8 +707,8 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 }
 
 func unquote(s string) string {
-	if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) {
-		return s[1 : len(s)-1]
+	if s, err := strconv.Unquote(s); err == nil {
+		return s
 	}
 
 	return s
