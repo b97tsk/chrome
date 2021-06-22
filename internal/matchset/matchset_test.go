@@ -71,6 +71,9 @@ func TestMatchSet(t *testing.T) {
 		{"co.uk", "??.??", true},
 		{"co.uk", "?????", false},
 
+		{"co.uk", "co_uk", true},
+		{"co.uk", "_____", true},
+
 		{"co.uk", ".??", true},
 		{"co.uk", ".??.??", true},
 		{"co.uk", "??.", true},
@@ -107,13 +110,16 @@ func TestMatchSet(t *testing.T) {
 		{"co.uk", "****", true}, // same as "**"
 		{"co.uk", "*?", false},  // same as "?*"
 		{"co.uk", "*?**", true}, // same as "?**"
+		{"co.uk", "**_", true},  // same as "_**"
 
 		{"a", ".", true},
 		{"a", "*", true},
 		{"a", "?", true},
+		{"a", "_", true},
 		{"a", "[.]", false},
 		{"a", "[*]", false},
 		{"a", "[?]", false},
+		{"a", "[_]", false},
 		{"a", "[a]", true},
 		{"a", "[a-]", true},
 		{"-", "[a-]", true},
