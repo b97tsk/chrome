@@ -21,8 +21,20 @@ func TestMatchSet(t *testing.T) {
 
 		{"co.uk", "*o.uk", true},
 		{"co.uk", "c*.uk", true},
+		{"co.uk", "co*uk", false},
 		{"co.uk", "co.*k", true},
 		{"co.uk", "co.u*", true},
+
+		{"co.uk", "**", true},
+		{"co.uk", "**uk", true},
+		{"co.uk", "co**", true},
+		{"co.uk", "co**uk", true},
+
+		{"co.uk", "?**uk", true},
+		{"co.uk", "**?uk", false},
+		{"co.uk", "**?**", true},
+		{"co.uk", "co?**", false},
+		{"co.uk", "co**?", true},
 
 		{"co.uk", ".", true},
 		{"co.uk", ".uk", true},
@@ -81,11 +93,9 @@ func TestMatchSet(t *testing.T) {
 		{"co.uk", "co.?*", true},
 		{"co.uk", "co.??*", true},
 		{"co.uk", "co.???*", false},
-		{"co.uk", "co.*???", false},
 		{"co.uk", "?*.uk", true},
 		{"co.uk", "??*.uk", true},
 		{"co.uk", "???*.uk", false},
-		{"co.uk", "*???.uk", false},
 
 		{"co.uk", "co.[uk][uk]", true},
 		{"co.uk", "co.[a-z][a-z]", true},
@@ -93,32 +103,29 @@ func TestMatchSet(t *testing.T) {
 		{"co.uk", "co.[^0-9][^0-9]", true},
 		{"co.uk", "co.[^0-9][^0-9]*", true},
 
-		{"a", "a", true},
-		{"a", "b", false},
-		{"a", "*", true},
+		{"co.uk", "***", true},  // same as "**"
+		{"co.uk", "****", true}, // same as "**"
+		{"co.uk", "*?", false},  // same as "?*"
+		{"co.uk", "*?**", true}, // same as "?**"
+
 		{"a", ".", true},
+		{"a", "*", true},
 		{"a", "?", true},
-		{"a", "*a", true},
-		{"a", "a*", true},
-		{"a", "*a*", true},
-		{"a", ".a", true},
-		{"a", "a.", true},
-		{"a", ".a.", true},
-		{"a", ".?", true},
-		{"a", "?.", true},
-		{"a", ".?.", true},
-		{"a", ".*a", true},
-		{"a", ".a*", true},
-		{"a", "*a.", true},
-		{"a", "a*.", true},
+		{"a", "[.]", false},
+		{"a", "[*]", false},
+		{"a", "[?]", false},
 		{"a", "[a]", true},
 		{"a", "[a-]", true},
 		{"-", "[a-]", true},
 		{"a", "[a-z]", true},
+		{"a", "[^]", true},
+		{"^", "[^]", true},
 		{"a", "[^a]", false},
 		{"a", "[^-]", true},
 		{"-", "[^-]", false},
 		{"a", "[^-z]", true},
+		{"a", ".*a", true},
+		{"a", ".**a", true},
 		{"a", "", true},
 		{"", "a", false},
 	}

@@ -25,7 +25,12 @@ func (set charset) Contains(by byte) bool {
 	return set[idx]&bit != 0
 }
 
-const magicDot = 0
+const (
+	magicDot = iota
+	magicAsterisk
+	magicAsterisk2
+	magicQuestion
+)
 
 type MatchSet struct {
 	patterns      []pattern
@@ -133,7 +138,21 @@ func (set *MatchSet) readAtom(bytes []byte) (rune, []byte) {
 		return atom, bytesLeft
 	}
 
-	return rune(bytes[0]), bytes[1:]
+	atom, bytesLeft := rune(bytes[0]), bytes[1:]
+
+	switch atom {
+	case '*':
+		atom = magicAsterisk
+
+		if len(bytesLeft) > 0 && bytesLeft[0] == '*' {
+			atom = magicAsterisk2
+			bytesLeft = bytesLeft[1:]
+		}
+	case '?':
+		atom = magicQuestion
+	}
+
+	return atom, bytesLeft
 }
 
 func (set *MatchSet) parse(bytes []byte) []rune {
@@ -144,18 +163,27 @@ func (set *MatchSet) parse(bytes []byte) []rune {
 	for len(bytes) > 0 {
 		currentAtom, bytes = set.readAtom(bytes)
 		switch currentAtom {
-		case '*':
-			if lastAtom != '*' {
-				atoms = append(atoms, '*')
-				lastAtom = '*'
+		case magicAsterisk:
+			if lastAtom != magicAsterisk && lastAtom != magicAsterisk2 {
+				atoms = append(atoms, magicAsterisk)
+				lastAtom = magicAsterisk
 			}
-		case '?':
-			if lastAtom == '*' {
-				atoms[len(atoms)-1] = '?'
-				atoms = append(atoms, '*')
+		case magicAsterisk2:
+			switch {
+			case lastAtom == magicAsterisk:
+				atoms[len(atoms)-1] = magicAsterisk2
+				lastAtom = magicAsterisk2
+			case lastAtom != magicAsterisk2:
+				atoms = append(atoms, magicAsterisk2)
+				lastAtom = magicAsterisk2
+			}
+		case magicQuestion:
+			if lastAtom == magicAsterisk {
+				atoms[len(atoms)-1] = magicQuestion
+				atoms = append(atoms, magicAsterisk)
 			} else {
-				atoms = append(atoms, '?')
-				lastAtom = '?'
+				atoms = append(atoms, magicQuestion)
+				lastAtom = magicQuestion
 			}
 		default:
 			atoms = append(atoms, currentAtom)
@@ -195,7 +223,7 @@ func (set *MatchSet) Add(patt string, data interface{}) {
 		}
 
 		for i, j := 0, len(atoms)-1; i < j; i++ {
-			if atoms[i] == '*' && atoms[i+1] == '?' {
+			if atoms[i] == magicAsterisk && atoms[i+1] == magicQuestion {
 				atoms[i], atoms[i+1] = atoms[i+1], atoms[i]
 			}
 		}
@@ -273,14 +301,16 @@ func (set *MatchSet) checkPattern(
 		}
 
 		matches = append(matches, patt)
-	case atom == '*':
+	case atom == magicAsterisk || atom == magicAsterisk2:
 		if len(nextpatt.atoms) > 0 {
 			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
 
-		switch bytes[i] {
-		case '.', ':':
-			return matches // '*' does not match '.' or ':'.
+		if atom == magicAsterisk {
+			switch bytes[i] {
+			case '.', ':':
+				return matches // magicAsterisk does not match '.' or ':'.
+			}
 		}
 
 		if i+1 == len(bytes) {
@@ -292,10 +322,10 @@ func (set *MatchSet) checkPattern(
 		}
 
 		matches = append(matches, patt)
-	case atom == '?':
+	case atom == magicQuestion:
 		switch bytes[i] {
 		case '.', ':':
-			return matches // '?' does not match '.' or ':'.
+			return matches // magicQuestion does not match '.' or ':'.
 		}
 
 		fallthrough
@@ -306,12 +336,15 @@ func (set *MatchSet) checkPattern(
 				accumulate(patt.data)
 			case 1:
 				switch nextpatt.atoms[0] {
-				case magicDot, '*':
+				case magicDot, magicAsterisk, magicAsterisk2:
 					accumulate(patt.data)
 				}
 			case 2:
-				if nextpatt.atoms[0] == '*' && nextpatt.atoms[1] == magicDot {
-					accumulate(patt.data)
+				switch nextpatt.atoms[0] {
+				case magicAsterisk, magicAsterisk2:
+					if nextpatt.atoms[1] == magicDot {
+						accumulate(patt.data)
+					}
 				}
 			}
 
