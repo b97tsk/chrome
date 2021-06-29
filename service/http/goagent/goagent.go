@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -29,7 +28,7 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
-	AppIDList chrome.StringList `yaml:"appids"`
+	AppIDList []string `yaml:"appids"`
 
 	Proxy chrome.Proxy `yaml:"over"`
 
@@ -373,8 +372,21 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	h.autoRange(outreq, resp)
 
-	appID := appIDFromRequest(resp.Request)
-	h.ctx.Manager.Logger(ServiceName).Debugf("(%v) %v %v: %v", appID, outreq.Method, outreq.URL, resp.Status)
+	if r := outreq.Header.Get("Range"); r != "" {
+		h.ctx.Manager.Logger(ServiceName).Debugf(
+			"(%v) %v %v %v: %v",
+			appIDFromRequest(resp.Request),
+			outreq.Method, outreq.URL, r,
+			resp.Status,
+		)
+	} else {
+		h.ctx.Manager.Logger(ServiceName).Debugf(
+			"(%v) %v %v: %v",
+			appIDFromRequest(resp.Request),
+			outreq.Method, outreq.URL,
+			resp.Status,
+		)
+	}
 
 	httputil.RemoveHopbyhopHeaders(resp.Header)
 
@@ -452,10 +464,6 @@ func (h *handler) roundTrip(req *http.Request) (*http.Response, error) {
 	numBadResponse := 0
 
 	for {
-		if isRequestCanceled(req) {
-			return nil, errors.New("round trip: canceled")
-		}
-
 		request, err := h.encodeRequest(req)
 		if err != nil {
 			h.ctx.Manager.Logger(ServiceName).Debug(err)
@@ -771,11 +779,6 @@ func (b *autoRangeBody) Read(p []byte) (n int, err error) {
 				b.reqlist = b.reqlist[i:]
 			}
 
-			if len(b.reqlist) > 1 && req.AboutToComplete() {
-				// Start next range request in advance.
-				b.reqlist[1].Init()
-			}
-
 			return
 		}
 
@@ -822,8 +825,6 @@ type autoRangeRequest struct {
 		*io.PipeReader
 		*io.PipeWriter
 	}
-	startTime time.Time
-	readSize  int64
 }
 
 func (r *autoRangeRequest) Init() {
@@ -832,9 +833,8 @@ func (r *autoRangeRequest) Init() {
 
 func (r *autoRangeRequest) init() {
 	r.pipe.PipeReader, r.pipe.PipeWriter = io.Pipe()
-	r.startTime = time.Now()
 
-	go func() {
+	f := func() error {
 		requestSize := r.rangeLast - r.rangeFirst + 1
 
 		readResponse := func(resp *http.Response) error {
@@ -864,13 +864,11 @@ func (r *autoRangeRequest) init() {
 
 		if r.resp != nil { // Handle first response.
 			if err := readResponse(r.resp); err != nil {
-				_ = r.pipe.PipeWriter.CloseWithError(err)
-				return
+				return err
 			}
 
-			if isRequestCanceled(r.req) {
-				_ = r.pipe.PipeWriter.CloseWithError(context.Canceled)
-				return
+			if err := r.req.Context().Err(); err != nil {
+				return err
 			}
 		}
 
@@ -882,46 +880,39 @@ func (r *autoRangeRequest) init() {
 
 			resp, err := r.h.roundTrip(req)
 			if err != nil {
-				_ = r.pipe.PipeWriter.CloseWithError(err)
-				return
+				return err
 			}
 
-			if resp.StatusCode != http.StatusPartialContent {
-				r.h.ctx.Manager.Logger(ServiceName).Debugf(
-					"(%v) %v %v %v: %v",
-					appIDFromRequest(resp.Request),
-					req.Method, req.URL,
-					req.Header.Get("Range"),
-					resp.Status,
-				)
+			r.h.ctx.Manager.Logger(ServiceName).Tracef(
+				"(%v) %v %v %v: %v",
+				appIDFromRequest(resp.Request),
+				req.Method, req.URL,
+				req.Header.Get("Range"),
+				resp.Status,
+			)
 
+			if resp.StatusCode != http.StatusPartialContent {
 				resp.Body.Close()
 
-				_ = r.pipe.PipeWriter.CloseWithError(errors.New(resp.Status))
-
-				return
+				return errors.New(resp.Status)
 			}
 
 			if err := readResponse(resp); err != nil {
-				_ = r.pipe.PipeWriter.CloseWithError(err)
-				return
+				return err
 			}
 
-			if isRequestCanceled(req) {
-				_ = r.pipe.PipeWriter.CloseWithError(context.Canceled)
-				return
+			if err := req.Context().Err(); err != nil {
+				return err
 			}
 		}
-	}()
+	}
+
+	go func() { _ = r.pipe.PipeWriter.CloseWithError(f()) }()
 }
 
 func (r *autoRangeRequest) Read(p []byte) (n int, err error) {
 	r.Init()
-
-	n, err = r.pipe.Read(p)
-	r.readSize += int64(n)
-
-	return
+	return r.pipe.Read(p)
 }
 
 func (r *autoRangeRequest) Close() error {
@@ -930,26 +921,6 @@ func (r *autoRangeRequest) Close() error {
 	}
 
 	return nil
-}
-
-func (r *autoRangeRequest) Progress() float64 {
-	return float64(r.readSize) / float64(r.rangeLast-r.rangeFirst+1)
-}
-
-func (r *autoRangeRequest) TimeLeft() float64 {
-	readTime := time.Since(r.startTime)
-	if readTime < time.Second {
-		return math.MaxFloat64
-	}
-
-	sizeLeft := (r.rangeLast - r.rangeFirst + 1) - r.readSize
-	timeLeft := readTime.Seconds() * (float64(sizeLeft) / float64(r.readSize))
-
-	return timeLeft // in seconds
-}
-
-func (r *autoRangeRequest) AboutToComplete() bool {
-	return r.Progress() > .5 || r.TimeLeft() < 4
 }
 
 type bytesReadCloser struct {
@@ -970,10 +941,6 @@ func readRequestBody(req *http.Request) ([]byte, error) {
 	req.Body = &bytesReadCloser{body, io.NopCloser(bytes.NewReader(body))}
 
 	return body, nil
-}
-
-func isRequestCanceled(req *http.Request) bool {
-	return req.Context().Err() != nil
 }
 
 func appIDFromRequest(req *http.Request) string {
