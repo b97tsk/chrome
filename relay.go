@@ -115,7 +115,7 @@ func (m *Manager) relayWithoutReplay(
 	sendResponse func(io.Writer) bool,
 	opts RelayOptions,
 ) {
-	local, localCtx := NewConnChecker(local)
+	local, localCtx := netutil.NewConnChecker(local)
 	defer local.Close()
 
 	remote := getRemote(localCtx)
@@ -137,10 +137,10 @@ func (m *Manager) relayWithReplay(
 	sendResponse func(io.Writer) bool,
 	opts RelayOptions,
 ) {
-	local, localCtx := NewConnChecker(local)
+	local, localCtx := netutil.NewConnChecker(local)
 	defer local.Close()
 
-	replayer := newConnReplayer(local)
+	replayer := netutil.NewConnReplayer(local)
 	local = replayer
 
 	try := func() (again bool) {

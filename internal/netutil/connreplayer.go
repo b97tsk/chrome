@@ -1,4 +1,4 @@
-package chrome
+package netutil
 
 import (
 	"errors"
@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 )
 
-type connReplayer struct {
+type ConnReplayer struct {
 	net.Conn
 
 	data    []byte
@@ -15,19 +15,19 @@ type connReplayer struct {
 	stopped uint32
 }
 
-func newConnReplayer(c net.Conn) *connReplayer {
-	return &connReplayer{Conn: c}
+func NewConnReplayer(c net.Conn) *ConnReplayer {
+	return &ConnReplayer{Conn: c}
 }
 
-func (c *connReplayer) Stop() {
+func (c *ConnReplayer) Stop() {
 	atomic.StoreUint32(&c.stopped, 1)
 }
 
-func (c *connReplayer) Stopped() bool {
+func (c *ConnReplayer) Stopped() bool {
 	return atomic.LoadUint32(&c.stopped) != 0
 }
 
-func (c *connReplayer) Replay() bool {
+func (c *ConnReplayer) Replay() bool {
 	if len(c.data) != 0 && !c.Stopped() {
 		c.avail = c.data
 		return true
@@ -36,7 +36,7 @@ func (c *connReplayer) Replay() bool {
 	return false
 }
 
-func (c *connReplayer) Read(b []byte) (n int, err error) {
+func (c *ConnReplayer) Read(b []byte) (n int, err error) {
 	if avail := c.avail; len(avail) != 0 {
 		n = copy(b, avail)
 

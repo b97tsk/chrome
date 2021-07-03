@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome"
+	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/miekg/dns"
 )
 
@@ -103,7 +104,7 @@ func (Service) Run(ctx chrome.Context) {
 				return
 			}
 
-			local, localCtx := chrome.NewConnChecker(c)
+			local, localCtx := netutil.NewConnChecker(c)
 			defer local.Close()
 
 			dnsConn := &dns.Conn{Conn: local}
