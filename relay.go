@@ -1,6 +1,7 @@
 package chrome
 
 import (
+	"context"
 	"io"
 	"net"
 	"sync"
@@ -13,6 +14,25 @@ import (
 
 // RelayOptions provides options for relay.
 type RelayOptions struct {
+	// After the remote-side connection has been established, we send a request
+	// to the remote and normally we can expect the remote sends back a response.
+	// But if the connection was established via a proxy, we cannot be sure that
+	// we have successfully connected to the remote. A proxy certainly can delay
+	// the actual work for a good reason.
+	//
+	// Replay mode detects that if the remote does not send back a response
+	// within a period of time, we kill the connection and resend the request
+	// to a new one.
+	//
+	// Replay mode is on by default. It should work fine even not using proxies.
+	Replay struct {
+		Enabled  bool
+		Disabled bool
+		Response struct {
+			// Timeout fallbacks to global dial timeout if not set.
+			Timeout time.Duration
+		}
+	}
 	// ConnIdle is the idle timeout when relay starts.
 	// If both connections (local-side and remote-side) remains idle (no reads)
 	// for the duration of ConnIdle, both are closed and relay ends.
@@ -28,66 +48,161 @@ type RelayOptions struct {
 }
 
 type relayService struct {
-	opts [7]uint32
+	replay struct {
+		Disabled uint32
+		_        uint32
+		Response struct {
+			Timeout time.Duration
+		}
+	}
+	connIdle     time.Duration
+	uplinkIdle   time.Duration
+	downlinkIdle time.Duration
 }
 
-func (m *relayService) connIdle() time.Duration {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[1])) &^ 4))
+func loadDuration(addr *time.Duration) time.Duration {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
 	return time.Duration(atomic.LoadInt64(ptr))
 }
 
-func (m *relayService) setConnIdle(idle time.Duration) {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[1])) &^ 4))
-	atomic.StoreInt64(ptr, int64(idle))
+func storeDuration(addr *time.Duration, d time.Duration) {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
+	atomic.StoreInt64(ptr, int64(d))
 }
 
-func (m *relayService) uplinkIdle() time.Duration {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[3])) &^ 4))
-	return time.Duration(atomic.LoadInt64(ptr))
+func (m *relayService) getReplayDisabled() bool {
+	return atomic.LoadUint32(&m.replay.Disabled) != 0
 }
 
-func (m *relayService) setUplinkIdle(idle time.Duration) {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[3])) &^ 4))
-	atomic.StoreInt64(ptr, int64(idle))
-}
+func (m *relayService) setReplayDisabled(disabled bool) {
+	var replayDisabled uint32
+	if disabled {
+		replayDisabled = 1
+	}
 
-func (m *relayService) downlinkIdle() time.Duration {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[5])) &^ 4))
-	return time.Duration(atomic.LoadInt64(ptr))
-}
-
-func (m *relayService) setDownlinkIdle(idle time.Duration) {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.opts[5])) &^ 4))
-	atomic.StoreInt64(ptr, int64(idle))
+	atomic.StoreUint32(&m.replay.Disabled, replayDisabled)
 }
 
 // SetRelayOptions sets the relay options, which may be overrided when Relay.
 func (m *relayService) SetRelayOptions(opts RelayOptions) {
-	m.setConnIdle(opts.ConnIdle)
-	m.setUplinkIdle(opts.UplinkIdle)
-	m.setDownlinkIdle(opts.DownlinkIdle)
+	m.setReplayDisabled(opts.Replay.Disabled)
+	storeDuration(&m.replay.Response.Timeout, opts.Replay.Response.Timeout)
+	storeDuration(&m.connIdle, opts.ConnIdle)
+	storeDuration(&m.uplinkIdle, opts.UplinkIdle)
+	storeDuration(&m.downlinkIdle, opts.DownlinkIdle)
 }
 
 // Relay relays two (TCP) connections, that is, read from one and write to
 // the other, in both directions. In addition, Relay accepts a RelayOptions
 // that can be specified with opts parameter or by SetRelayOptions method.
-func (m *relayService) Relay(l, r net.Conn, opts RelayOptions) {
+func (m *Manager) Relay(
+	local net.Conn,
+	getRemote func(context.Context) net.Conn,
+	sendResponse func(io.Writer) bool,
+	opts RelayOptions,
+) {
+	if !opts.Replay.Enabled && (opts.Replay.Disabled || m.getReplayDisabled()) {
+		m.relayWithoutReplay(local, getRemote, sendResponse, opts)
+		return
+	}
+
+	m.relayWithReplay(local, getRemote, sendResponse, opts)
+}
+
+func (m *Manager) relayWithoutReplay(
+	local net.Conn,
+	getRemote func(context.Context) net.Conn,
+	sendResponse func(io.Writer) bool,
+	opts RelayOptions,
+) {
+	local, localCtx := NewConnChecker(local)
+	defer local.Close()
+
+	remote := getRemote(localCtx)
+	if remote == nil {
+		return
+	}
+	defer remote.Close()
+
+	if sendResponse != nil && !sendResponse(local) {
+		return
+	}
+
+	m.relay(local, remote, opts)
+}
+
+func (m *Manager) relayWithReplay(
+	local net.Conn,
+	getRemote func(context.Context) net.Conn,
+	sendResponse func(io.Writer) bool,
+	opts RelayOptions,
+) {
+	local, localCtx := NewConnChecker(local)
+	defer local.Close()
+
+	replayer := newConnReplayer(local)
+	local = replayer
+
+	try := func() (again bool) {
+		remote := getRemote(localCtx)
+		if remote == nil {
+			return
+		}
+		defer remote.Close()
+
+		if sendResponse != nil {
+			if !sendResponse(local) {
+				return
+			}
+
+			sendResponse = nil
+		}
+
+		timeout := opts.Replay.Response.Timeout
+		if timeout <= 0 {
+			timeout = m.actualDialTimeout(loadDuration(&m.replay.Response.Timeout))
+		}
+
+		defer time.AfterFunc(timeout, func() {
+			if !replayer.Stopped() {
+				aLongTimeAgo := time.Unix(1, 0)
+				_ = remote.SetReadDeadline(aLongTimeAgo)
+			}
+		}).Stop()
+
+		do := func(int) {
+			if !replayer.Stopped() {
+				replayer.Stop()
+			}
+		}
+
+		m.relay(local, netutil.DoR(remote, do), opts)
+
+		return replayer.Replay() && localCtx.Err() == nil
+	}
+
+	for try() {
+		continue
+	}
+}
+
+func (m *relayService) relay(l, r net.Conn, opts RelayOptions) {
 	if opts.ConnIdle <= 0 {
-		opts.ConnIdle = m.connIdle()
+		opts.ConnIdle = loadDuration(&m.connIdle)
 		if opts.ConnIdle <= 0 {
 			opts.ConnIdle = defaultConnIdle
 		}
 	}
 
 	if opts.UplinkIdle <= 0 {
-		opts.UplinkIdle = m.uplinkIdle()
+		opts.UplinkIdle = loadDuration(&m.uplinkIdle)
 		if opts.UplinkIdle <= 0 {
 			opts.UplinkIdle = defaultUplinkIdle
 		}
 	}
 
 	if opts.DownlinkIdle <= 0 {
-		opts.DownlinkIdle = m.downlinkIdle()
+		opts.DownlinkIdle = loadDuration(&m.downlinkIdle)
 		if opts.DownlinkIdle <= 0 {
 			opts.DownlinkIdle = defaultDownlinkIdle
 		}
@@ -109,7 +224,9 @@ func (m *relayService) Relay(l, r net.Conn, opts RelayOptions) {
 		defer relayPool.Put(b)
 
 		if _, err := io.CopyBuffer(dst, src, (*b)[:]); err != nil {
-			_ = dst.SetReadDeadline(time.Now())
+			aLongTimeAgo := time.Unix(1, 0)
+			_ = dst.SetReadDeadline(aLongTimeAgo)
+
 			return
 		}
 
@@ -129,19 +246,22 @@ func (m *relayService) Relay(l, r net.Conn, opts RelayOptions) {
 	expired := false
 	td := opts.ConnIdle
 
-	t := time.AfterFunc(td, func() {
-		now := time.Now()
-		_ = l.SetReadDeadline(now)
-		_ = r.SetReadDeadline(now)
-	})
+	t := time.NewTimer(td)
 	defer t.Stop()
 
 	for {
 		select {
 		case <-t.C:
 			expired = true
-		case d := <-reset:
-			if d == 0 {
+			aLongTimeAgo := time.Unix(1, 0)
+			_ = l.SetReadDeadline(aLongTimeAgo)
+			_ = r.SetReadDeadline(aLongTimeAgo)
+		case d, ok := <-reset:
+			if !ok {
+				var noDeadline time.Time
+				_ = l.SetReadDeadline(noDeadline)
+				_ = r.SetReadDeadline(noDeadline)
+
 				return
 			}
 

@@ -27,6 +27,18 @@ func (m *dialingService) SetDialTimeout(timeout time.Duration) {
 	atomic.StoreInt64(ptr, int64(timeout))
 }
 
+// actualDialTimeout returns the dial timeout in effect.
+func (m *dialingService) actualDialTimeout(timeout time.Duration) time.Duration {
+	if timeout <= 0 {
+		timeout = m.DialTimeout()
+		if timeout <= 0 {
+			timeout = defaultDialTimeout
+		}
+	}
+
+	return timeout
+}
+
 // Dial dials specified address with dialer repeatedly until success or
 // ctx is canceled or dialer returns a non-timeout error.
 // Each dial has a timeout that can be specified with timeout parameter or
@@ -41,20 +53,13 @@ func (m *dialingService) Dial(
 		dialer = proxy.Direct
 	}
 
-	if timeout <= 0 {
-		timeout = m.DialTimeout()
-		if timeout <= 0 {
-			timeout = defaultDialTimeout
-		}
-	}
-
 	for {
 		err = ctx.Err()
 		if err != nil {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, timeout)
+		ctx, cancel := context.WithTimeout(ctx, m.actualDialTimeout(timeout))
 
 		conn, err = proxy.Dial(ctx, dialer, network, address)
 
@@ -71,4 +76,4 @@ func isTimeout(err error) bool {
 	return errors.As(err, &t) && t.Timeout()
 }
 
-const defaultDialTimeout = 30 * time.Second
+const defaultDialTimeout = 10 * time.Second

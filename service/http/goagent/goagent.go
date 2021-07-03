@@ -438,24 +438,28 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		local, ctx := chrome.NewConnChecker(conn)
-		defer local.Close()
+		getRemote := func(localCtx context.Context) net.Conn {
+			remote, err := h.tr.DialContext(localCtx, "tcp", remoteHost)
+			if err != nil {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
+				return nil
+			}
 
-		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
-		if err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
-			return
+			return remote
 		}
-		defer remote.Close()
 
-		if _, err := local.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
-			return
+		sendResponse := func(w io.Writer) bool {
+			if _, err := w.Write([]byte(response)); err != nil {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
+				return false
+			}
+
+			return true
 		}
 
 		opts := <-h.opts
 
-		h.ctx.Manager.Relay(local, remote, opts.Relay)
+		h.ctx.Manager.Relay(conn, getRemote, sendResponse, opts.Relay)
 	})
 }
 
