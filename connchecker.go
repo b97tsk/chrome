@@ -21,7 +21,7 @@ type connChecker struct {
 	cbr      chan *bufio.Reader
 	beat     chan struct{}
 	cancel   func()
-	deadline time.Time
+	deadline chan time.Time
 }
 
 // NewConnChecker returns a new net.Conn based on conn, and a context.Context
@@ -33,16 +33,17 @@ type connChecker struct {
 // associated context.Context.
 func NewConnChecker(conn net.Conn) (net.Conn, context.Context) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cbr := make(chan *bufio.Reader, 1)
-	cbr <- bufio.NewReaderSize(conn, checkBufferSize)
 
-	beat := make(chan struct{}, 1)
 	c := &connChecker{
-		Conn:   conn,
-		cbr:    cbr,
-		beat:   beat,
-		cancel: cancel,
+		Conn:     conn,
+		cbr:      make(chan *bufio.Reader, 1),
+		beat:     make(chan struct{}, 1),
+		cancel:   cancel,
+		deadline: make(chan time.Time, 1),
 	}
+
+	c.cbr <- bufio.NewReaderSize(conn, checkBufferSize)
+	c.deadline <- time.Time{}
 
 	go c.start(ctx)
 
@@ -75,9 +76,11 @@ func (c *connChecker) start(ctx context.Context) {
 				var err error
 
 				if br.Buffered() < checkBufferSize {
+					deadline := <-c.deadline
 					_ = c.Conn.SetReadDeadline(time.Now().Add(checkWindow))
 					_, err = br.Peek(checkBufferSize)
-					_ = c.Conn.SetReadDeadline(c.deadline)
+					_ = c.Conn.SetReadDeadline(deadline)
+					c.deadline <- deadline
 				}
 
 				c.cbr <- br
@@ -100,6 +103,11 @@ func (c *connChecker) Read(p []byte) (n int, err error) {
 	n, err = br.Read(p)
 	c.cbr <- br
 
+	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+		c.cancel()
+		return
+	}
+
 	select {
 	case c.beat <- struct{}{}:
 	default:
@@ -115,19 +123,17 @@ func (c *connChecker) Close() error {
 }
 
 func (c *connChecker) SetDeadline(t time.Time) error {
-	br := <-c.cbr
+	<-c.deadline
 	err := c.Conn.SetDeadline(t)
-	c.deadline = t
-	c.cbr <- br
+	c.deadline <- t
 
 	return err
 }
 
 func (c *connChecker) SetReadDeadline(t time.Time) error {
-	br := <-c.cbr
+	<-c.deadline
 	err := c.Conn.SetReadDeadline(t)
-	c.deadline = t
-	c.cbr <- br
+	c.deadline <- t
 
 	return err
 }
