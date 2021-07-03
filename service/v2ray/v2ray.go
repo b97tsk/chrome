@@ -3,6 +3,7 @@ package v2ray
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"io/fs"
@@ -254,28 +255,26 @@ func (Service) Run(ctx chrome.Context) {
 								return
 							}
 
-							local, localCtx := chrome.NewConnChecker(c)
-							defer local.Close()
+							getRemote := func(localCtx context.Context) net.Conn {
+								remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", addr.String(), opts.Dial.Timeout)
+								if err != nil {
+									logger.Trace(err)
+									return nil
+								}
 
-							remote, err := ctx.Manager.Dial(
-								localCtx,
-								opts.Proxy.Dialer(),
-								"tcp",
-								addr.String(),
-								opts.Dial.Timeout,
-							)
-							if err != nil {
-								logger.Trace(err)
-								return
-							}
-							defer remote.Close()
-
-							if _, err := reply.WriteTo(local); err != nil {
-								logger.Trace(err)
-								return
+								return remote
 							}
 
-							ctx.Manager.Relay(local, remote, opts.Relay)
+							sendResponse := func(w io.Writer) bool {
+								if _, err := reply.WriteTo(w); err != nil {
+									logger.Trace(err)
+									return false
+								}
+
+								return true
+							}
+
+							ctx.Manager.Relay(c, getRemote, sendResponse, opts.Relay)
 						})
 					}
 

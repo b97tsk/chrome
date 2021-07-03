@@ -1,6 +1,7 @@
 package tcptun
 
 import (
+	"context"
 	"net"
 	"time"
 
@@ -76,17 +77,17 @@ func (Service) Run(ctx chrome.Context) {
 				return
 			}
 
-			local, localCtx := chrome.NewConnChecker(c)
-			defer local.Close()
+			getRemote := func(localCtx context.Context) net.Conn {
+				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
+				if err != nil {
+					logger.Trace(err)
+					return nil
+				}
 
-			remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
-			if err != nil {
-				logger.Trace(err)
-				return
+				return remote
 			}
-			defer remote.Close()
 
-			ctx.Manager.Relay(local, remote, opts.Relay)
+			ctx.Manager.Relay(c, getRemote, nil, opts.Relay)
 		})
 
 		return nil

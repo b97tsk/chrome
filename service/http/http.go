@@ -21,6 +21,7 @@ import (
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/matchset"
+	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/b97tsk/log"
 	"golang.org/x/net/http/httpguts"
 )
@@ -452,64 +453,57 @@ func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 
 func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
-		local, ctx := chrome.NewConnChecker(conn)
-		defer local.Close()
-
 		remoteHost := h.rewriteHost(req.RequestURI)
 
-		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
-		if err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
-			return
-		}
-		defer remote.Close()
+		getRemote := func(localCtx context.Context) net.Conn {
+			remote, err := h.tr.DialContext(localCtx, "tcp", remoteHost)
+			if err != nil {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
+				return nil
+			}
 
-		const response = "HTTP/1.1 200 OK\r\n\r\n"
-		if _, err := local.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
-			return
+			return remote
+		}
+
+		sendResponse := func(w io.Writer) bool {
+			const response = "HTTP/1.1 200 OK\r\n\r\n"
+			if _, err := w.Write([]byte(response)); err != nil {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
+				return false
+			}
+
+			return true
 		}
 
 		opts := <-h.opts
 
-		h.ctx.Manager.Relay(local, remote, opts.Relay)
+		h.ctx.Manager.Relay(conn, getRemote, sendResponse, opts.Relay)
 	})
 }
 
 func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
-		local, ctx := chrome.NewConnChecker(conn)
-		defer local.Close()
+		var b bytes.Buffer
+		if err := req.Write(&b); err != nil {
+			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write request to buffer: %v", err)
+			return
+		}
 
 		remoteHost := h.rewriteHost(req.Host)
 
-		remote, err := h.tr.DialContext(ctx, "tcp", remoteHost)
-		if err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial to remote: %v", err)
-			return
-		}
-		defer remote.Close()
+		getRemote := func(localCtx context.Context) net.Conn {
+			remote, err := h.tr.DialContext(localCtx, "tcp", remoteHost)
+			if err != nil {
+				h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial to remote: %v", err)
+				return nil
+			}
 
-		if err := req.Write(remote); err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write request to remote: %v", err)
-			return
-		}
-
-		resp, err := http.ReadResponse(bufio.NewReader(remote), req)
-		if err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: read response from remote: %v", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if err := resp.Write(local); err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write response to local: %v", err)
-			return
+			return remote
 		}
 
 		opts := <-h.opts
 
-		h.ctx.Manager.Relay(local, remote, opts.Relay)
+		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getRemote, nil, opts.Relay)
 	})
 }
 

@@ -135,67 +135,71 @@ func (Service) Run(ctx chrome.Context) {
 				return
 			}
 
-			local, localCtx := chrome.NewConnChecker(c)
-			defer local.Close()
-
 			hostport := addr.String()
 
-			if len(opts.DNS.Servers) > 0 {
-				if host, port, _ := net.SplitHostPort(hostport); net.ParseIP(host) == nil {
-					var result *dnsQueryResult
+			getRemote := func(localCtx context.Context) net.Conn {
+				if len(opts.DNS.Servers) > 0 {
+					if host, port, _ := net.SplitHostPort(hostport); net.ParseIP(host) == nil {
+						var result *dnsQueryResult
 
-					if cache, ok := opts.dnsCache.Load(host); ok {
-						r := cache.(*dnsQueryResult)
-						if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
-							result = r
-							logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL())
-						}
-					}
-
-					if result == nil {
-						r := make(chan *dnsQueryResult, 1)
-
-						select {
-						case <-ctx.Done():
-							return
-						case <-localCtx.Done():
-							return
-						case dnsQueryIn <- dnsQuery{host, r, localCtx, opts}:
-						}
-
-						select {
-						case <-ctx.Done():
-							return
-						case <-localCtx.Done():
-							return
-						case result = <-r:
+						if cache, ok := opts.dnsCache.Load(host); ok {
+							r := cache.(*dnsQueryResult)
+							if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+								result = r
+								logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL())
+							}
 						}
 
 						if result == nil {
-							return
+							r := make(chan *dnsQueryResult, 1)
+
+							select {
+							case <-ctx.Done():
+								return nil
+							case <-localCtx.Done():
+								return nil
+							case dnsQueryIn <- dnsQuery{host, r, localCtx, opts}:
+							}
+
+							select {
+							case <-ctx.Done():
+								return nil
+							case <-localCtx.Done():
+								return nil
+							case result = <-r:
+							}
+
+							if result == nil {
+								return nil
+							}
+						}
+
+						if result != nil {
+							ip := result.IPList[rand.Intn(len(result.IPList))]
+							hostport = net.JoinHostPort(ip.String(), port)
 						}
 					}
-
-					if result != nil {
-						ip := result.IPList[rand.Intn(len(result.IPList))]
-						hostport = net.JoinHostPort(ip.String(), port)
-					}
 				}
+
+				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
+				if err != nil {
+					logger.Trace(err)
+					return nil
+				}
+
+				return remote
 			}
 
-			remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
-			if err != nil {
-				logger.Trace(err)
-				return
-			}
-			defer remote.Close()
+			sendResponse := func(w io.Writer) bool {
+				if _, err := reply.WriteTo(w); err != nil {
+					logger.Trace(err)
+					return false
+				}
 
-			if _, err := reply.WriteTo(local); err != nil {
-				logger.Trace(err)
-				return
+				return true
 			}
 
-			ctx.Manager.Relay(local, remote, opts.Relay)
+			ctx.Manager.Relay(c, getRemote, sendResponse, opts.Relay)
 		})
 
 		return nil
