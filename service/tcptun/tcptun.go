@@ -59,9 +59,7 @@ func (Service) Run(ctx chrome.Context) {
 			return nil
 		}
 
-		opts := <-optsOut
-
-		ln, err := net.Listen("tcp", opts.ListenAddr)
+		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
 			logger.Error(err)
 			return err
@@ -72,12 +70,12 @@ func (Service) Run(ctx chrome.Context) {
 		server = ln
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
-			opts := <-optsOut
-			if opts.ForwardAddr == "" {
-				return
-			}
-
 			getRemote := func(localCtx context.Context) net.Conn {
+				opts := <-optsOut
+				if opts.ForwardAddr == "" {
+					return nil
+				}
+
 				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
 				if err != nil {
 					logger.Trace(err)
@@ -87,7 +85,7 @@ func (Service) Run(ctx chrome.Context) {
 				return remote
 			}
 
-			ctx.Manager.Relay(c, getRemote, nil, opts.Relay)
+			ctx.Manager.Relay(c, getRemote, nil, (<-optsOut).Relay)
 		})
 
 		return nil

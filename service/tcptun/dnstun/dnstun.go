@@ -82,9 +82,7 @@ func (Service) Run(ctx chrome.Context) {
 			return nil
 		}
 
-		opts := <-optsOut
-
-		ln, err := net.Listen("tcp", opts.ListenAddr)
+		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
 			logger.Error(err)
 			return err
@@ -99,11 +97,6 @@ func (Service) Run(ctx chrome.Context) {
 		go startWorker(ctx, dnsQueryIn)
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
-			opts, ok := <-optsOut
-			if !ok {
-				return
-			}
-
 			local, localCtx := netutil.NewConnChecker(c)
 			defer local.Close()
 
@@ -125,7 +118,7 @@ func (Service) Run(ctx chrome.Context) {
 					return
 				case <-localCtx.Done():
 					return
-				case dnsQueryIn <- dnsQuery{in, r, localCtx, opts}:
+				case dnsQueryIn <- dnsQuery{in, r, localCtx, optsOut}:
 				}
 
 				select {
@@ -218,7 +211,7 @@ type dnsQuery struct {
 	Message *dns.Msg
 	Result  chan<- *dns.Msg
 	Context context.Context
-	Options Options
+	Options <-chan Options
 }
 
 func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
@@ -275,8 +268,6 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConn.Close()
 			dnsConn = nil
 		case q := <-incoming:
-			opts := &q.Options
-
 			var result *dns.Msg
 
 			for {
@@ -289,6 +280,11 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 				}
 
 				if dnsConn == nil {
+					opts, ok := <-q.Options
+					if !ok {
+						return
+					}
+
 					server := opts.Servers[rand.Intn(len(opts.Servers))]
 
 					host := server.Name

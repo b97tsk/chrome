@@ -222,9 +222,7 @@ func (Service) Run(ctx chrome.Context) {
 			return nil
 		}
 
-		opts := <-optsOut
-
-		ln, err := net.Listen("tcp", opts.ListenAddr)
+		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
 			logger.Error(err)
 			return err
@@ -475,9 +473,7 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return true
 		}
 
-		opts := <-h.opts
-
-		h.ctx.Manager.Relay(conn, getRemote, sendResponse, opts.Relay)
+		h.ctx.Manager.Relay(conn, getRemote, sendResponse, (<-h.opts).Relay)
 	})
 }
 
@@ -501,9 +497,7 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 			return remote
 		}
 
-		opts := <-h.opts
-
-		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getRemote, nil, opts.Relay)
+		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getRemote, nil, (<-h.opts).Relay)
 	})
 }
 
