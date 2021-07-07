@@ -58,9 +58,7 @@ func (Service) Run(ctx chrome.Context) {
 			return nil
 		}
 
-		opts := <-optsOut
-
-		ln, err := net.Listen("tcp", opts.ListenAddr)
+		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
 			logger.Error(err)
 			return err

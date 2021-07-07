@@ -237,11 +237,6 @@ func (Service) Run(ctx chrome.Context) {
 						forwardListener = ln
 
 						go ctx.Manager.Serve(ln, func(c net.Conn) {
-							opts, ok := <-optsOut
-							if !ok {
-								return
-							}
-
 							var reply bytes.Buffer
 
 							rw := &struct {
@@ -256,6 +251,11 @@ func (Service) Run(ctx chrome.Context) {
 							}
 
 							getRemote := func(localCtx context.Context) net.Conn {
+								opts, ok := <-optsOut
+								if !ok {
+									return nil
+								}
+
 								remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", addr.String(), opts.Dial.Timeout)
 								if err != nil {
 									logger.Trace(err)
@@ -274,7 +274,7 @@ func (Service) Run(ctx chrome.Context) {
 								return true
 							}
 
-							ctx.Manager.Relay(c, getRemote, sendResponse, opts.Relay)
+							ctx.Manager.Relay(c, getRemote, sendResponse, (<-optsOut).Relay)
 						})
 					}
 

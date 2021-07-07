@@ -52,12 +52,12 @@ func (Service) Run(ctx chrome.Context) {
 
 	handler := http.HandlerFunc(
 		func(rw http.ResponseWriter, req *http.Request) {
-			opts := <-optsOut
-			if opts.handler == nil {
-				http.NotFound(rw, req)
+			if h := (<-optsOut).handler; h != nil {
+				h.ServeHTTP(rw, req)
 				return
 			}
-			opts.handler.ServeHTTP(rw, req)
+
+			http.NotFound(rw, req)
 		},
 	)
 
@@ -72,9 +72,7 @@ func (Service) Run(ctx chrome.Context) {
 			return nil
 		}
 
-		opts := <-optsOut
-
-		ln, err := net.Listen("tcp", opts.ListenAddr)
+		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
 			logger.Error(err)
 			return err

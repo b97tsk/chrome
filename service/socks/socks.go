@@ -104,9 +104,7 @@ func (Service) Run(ctx chrome.Context) {
 			return nil
 		}
 
-		opts := <-optsOut
-
-		ln, err := net.Listen("tcp", opts.ListenAddr)
+		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
 			logger.Error(err)
 			return err
@@ -117,11 +115,6 @@ func (Service) Run(ctx chrome.Context) {
 		server = ln
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
-			opts, ok := <-optsOut
-			if !ok {
-				return
-			}
-
 			var reply bytes.Buffer
 
 			rw := &struct {
@@ -138,6 +131,11 @@ func (Service) Run(ctx chrome.Context) {
 			hostport := addr.String()
 
 			getRemote := func(localCtx context.Context) net.Conn {
+				opts, ok := <-optsOut
+				if !ok {
+					return nil
+				}
+
 				if len(opts.DNS.Servers) > 0 {
 					if host, port, _ := net.SplitHostPort(hostport); net.ParseIP(host) == nil {
 						var result *dnsQueryResult
@@ -158,7 +156,7 @@ func (Service) Run(ctx chrome.Context) {
 								return nil
 							case <-localCtx.Done():
 								return nil
-							case dnsQueryIn <- dnsQuery{host, r, localCtx, opts}:
+							case dnsQueryIn <- dnsQuery{host, r, localCtx, optsOut}:
 							}
 
 							select {
@@ -199,7 +197,7 @@ func (Service) Run(ctx chrome.Context) {
 				return true
 			}
 
-			ctx.Manager.Relay(c, getRemote, sendResponse, opts.Relay)
+			ctx.Manager.Relay(c, getRemote, sendResponse, (<-optsOut).Relay)
 		})
 
 		return nil
@@ -286,7 +284,7 @@ type dnsQuery struct {
 	Domain  string
 	Result  chan<- *dnsQueryResult
 	Context context.Context
-	Options Options
+	Options <-chan Options
 }
 
 type dnsQueryResult struct {
@@ -350,7 +348,10 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConn.Close()
 			dnsConn = nil
 		case q := <-incoming:
-			opts := &q.Options
+			opts, ok := <-q.Options
+			if !ok {
+				return
+			}
 
 			var result *dnsQueryResult
 
@@ -378,6 +379,11 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 					}
 
 					if dnsConn == nil {
+						opts, ok = <-q.Options
+						if !ok {
+							return
+						}
+
 						server := opts.DNS.Servers[rand.Intn(len(opts.DNS.Servers))]
 
 						host := server.Name
