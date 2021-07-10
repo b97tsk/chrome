@@ -34,7 +34,7 @@ func (l *limitedWriter) Write(p []byte) (n int, err error) {
 		return
 	}
 
-	if len(rest) > 0 && l.rest != nil {
+	if len(rest) != 0 && l.rest != nil {
 		if n2, err2 := l.rest.Write(rest); err2 != nil {
 			return n + n2, err2
 		}

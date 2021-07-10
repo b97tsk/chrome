@@ -309,7 +309,7 @@ func (Service) Run(ctx chrome.Context) {
 						return
 					}
 
-					if len(certLines) > 0 {
+					if len(certLines) != 0 {
 						new.TLS.Certificates = []CertificateOptions{{"verify", certLines}}
 					}
 				}

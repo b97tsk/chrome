@@ -136,7 +136,7 @@ func (Service) Run(ctx chrome.Context) {
 					return nil
 				}
 
-				if len(opts.DNS.Servers) > 0 {
+				if len(opts.DNS.Servers) != 0 {
 					if host, port, _ := net.SplitHostPort(hostport); net.ParseIP(host) == nil {
 						var result *dnsQueryResult
 
@@ -234,11 +234,11 @@ func (Service) Run(ctx chrome.Context) {
 					stopServer()
 				}
 
-				if len(new.DNS.Servers) == 0 && (new.DNS.Server.Name != "" || len(new.DNS.Server.IP) > 0) {
+				if len(new.DNS.Servers) == 0 && (new.DNS.Server.Name != "" || len(new.DNS.Server.IP) != 0) {
 					new.DNS.Servers = append(new.DNS.Servers, new.DNS.Server)
 				}
 
-				if len(new.DNS.Servers) > 0 {
+				if len(new.DNS.Servers) != 0 {
 					new.DNS.Query.Type = normalizeQueryTypes(new.DNS.Query.Type)
 					if len(new.DNS.Query.Type) == 0 {
 						new.DNS.Query.Type = chrome.StringList{"A"}
@@ -369,7 +369,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 				fqDomain := dns.Fqdn(q.Domain)
 
 				qtypes := opts.DNS.Query.Type
-				for len(qtypes) > 0 {
+				for len(qtypes) != 0 {
 					if ctx.Err() != nil {
 						return
 					}
@@ -388,7 +388,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 						host := server.Name
 
-						if len(server.IP) > 0 {
+						if len(server.IP) != 0 {
 							host = server.IP[rand.Intn(len(server.IP))]
 						}
 
@@ -502,7 +502,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 							qtypes = qtypes[1:]
 
-							if !opts.DNS.Query.All && len(r.IPList) > 0 {
+							if !opts.DNS.Query.All && len(r.IPList) != 0 {
 								break
 							}
 						} else {
@@ -524,7 +524,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 					}
 				}
 
-				if len(r.IPList) > 0 {
+				if len(r.IPList) != 0 {
 					result = &r
 					opts.dnsCache.Store(q.Domain, &r)
 					logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
