@@ -153,7 +153,7 @@ func (set *MatchSet) readAtom(bytes []byte) (rune, []byte) {
 	case '*':
 		atom = magicAsterisk
 
-		if len(bytesLeft) > 0 && bytesLeft[0] == '*' {
+		if len(bytesLeft) != 0 && bytesLeft[0] == '*' {
 			atom = magicAsterisk2
 			bytesLeft = bytesLeft[1:]
 		}
@@ -171,7 +171,7 @@ func (set *MatchSet) parse(bytes []byte) []rune {
 
 	atoms := set.atomsBuffer[:0]
 
-	for len(bytes) > 0 {
+	for len(bytes) != 0 {
 		currentAtom, bytes = set.readAtom(bytes)
 		switch currentAtom {
 		case magicAsterisk:
@@ -322,7 +322,7 @@ func (set *MatchSet) checkPattern(
 
 		matches = append(matches, patt)
 	case atom == magicAsterisk || atom == magicAsterisk2:
-		if len(nextpatt.atoms) > 0 {
+		if len(nextpatt.atoms) != 0 {
 			matches = set.checkPattern(nextpatt, bytes[i:], 0, matches, accumulate)
 		}
 

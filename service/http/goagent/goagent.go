@@ -318,7 +318,7 @@ func (h *handler) SetAppIDList(appIDList []string) {
 	defer h.appIDMutex.Unlock()
 
 	var appIDInUsed string
-	if len(h.appIDList) > 0 {
+	if len(h.appIDList) != 0 {
 		appIDInUsed = h.appIDList[0]
 	}
 
@@ -654,7 +654,7 @@ func (h *handler) decodeResponse(resp *http.Response) (*http.Response, error) {
 	response.Body.Close()
 
 	response.Body = resp.Body
-	if len(body) > 0 {
+	if len(body) != 0 {
 		response.Body = struct {
 			io.Reader
 			io.Closer

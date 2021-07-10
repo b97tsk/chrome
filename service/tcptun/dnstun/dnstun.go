@@ -289,7 +289,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 					host := server.Name
 
-					if len(server.IP) > 0 {
+					if len(server.IP) != 0 {
 						host = server.IP[rand.Intn(len(server.IP))]
 					}
 
@@ -359,7 +359,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 					result, err = dnsConn.ReadMsg()
 					if err == nil {
-						if len(result.Question) > 0 && logger.TraceWritable() {
+						if len(result.Question) != 0 && logger.TraceWritable() {
 							switch q0 := result.Question[0]; q0.Qtype {
 							case dns.TypeA, dns.TypeAAAA:
 								iplist := iplistBuffer[:0]
@@ -373,7 +373,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 									}
 								}
 
-								if len(iplist) > 0 {
+								if len(iplist) != 0 {
 									domain := strings.TrimSuffix(q0.Name, ".")
 									logger.Tracef("(remote) %v: %v", domain, iplist)
 								}
