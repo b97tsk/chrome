@@ -843,13 +843,17 @@ func (r *autoRangeRequest) init() {
 			const bufferSize = 4096
 			buf := make([]byte, bufferSize)
 
-			for requestSize > 0 {
+			for {
 				n, err := resp.Body.Read(buf)
 				if n > 0 {
 					requestSize -= int64(n)
 
 					if _, err := r.pipe.Write(buf[:n]); err != nil {
 						return err
+					}
+
+					if requestSize == 0 {
+						return io.EOF
 					}
 				}
 
@@ -858,8 +862,6 @@ func (r *autoRangeRequest) init() {
 					return nil // Retry.
 				}
 			}
-
-			return io.EOF
 		}
 
 		if r.resp != nil { // Handle first response.
