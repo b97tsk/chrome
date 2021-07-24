@@ -3,6 +3,7 @@ package dnstun
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"math/rand"
 	"net"
 	"strconv"
@@ -105,7 +106,10 @@ func (Service) Run(ctx chrome.Context) {
 			for {
 				in, err := dnsConn.ReadMsg()
 				if err != nil {
-					logger.Tracef("(local) read msg: %v", err)
+					if err != io.EOF {
+						logger.Tracef("(local) read msg: %v", err)
+					}
+
 					return
 				}
 
@@ -263,8 +267,6 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConnIdle.Timer = nil
 			dnsConnIdle.TimerC = nil
 
-			logger.Trace("closing DNS connection due to idle timeout")
-
 			dnsConn.Close()
 			dnsConn = nil
 		case q := <-incoming:
@@ -304,11 +306,13 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 					}
 
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
-					logger.Tracef("dialing to %v", hostport)
 
 					conn, err := ctx.Manager.Dial(q.Context, opts.Proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
 					if err != nil {
-						logger.Trace(err)
+						if err != context.Canceled {
+							logger.Tracef("dial %v: %v", hostport, err)
+						}
+
 						break
 					}
 

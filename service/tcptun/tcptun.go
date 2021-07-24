@@ -77,9 +77,8 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
-				if err != nil {
-					logger.Trace(err)
-					return nil
+				if err != nil && err != context.Canceled {
+					logger.Tracef("dial %v: %v", opts.ForwardAddr, err)
 				}
 
 				return remote

@@ -128,7 +128,7 @@ func (Service) Run(ctx chrome.Context) {
 				return
 			}
 
-			hostport := addr.String()
+			remoteAddr := addr.String()
 
 			getRemote := func(localCtx context.Context) net.Conn {
 				opts, ok := <-optsOut
@@ -137,7 +137,7 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if len(opts.DNS.Servers) != 0 {
-					if host, port, _ := net.SplitHostPort(hostport); net.ParseIP(host) == nil {
+					if host, port, _ := net.SplitHostPort(remoteAddr); net.ParseIP(host) == nil {
 						var result *dnsQueryResult
 
 						if cache, ok := opts.dnsCache.Load(host); ok {
@@ -174,15 +174,14 @@ func (Service) Run(ctx chrome.Context) {
 
 						if result != nil {
 							ip := result.IPList[rand.Intn(len(result.IPList))]
-							hostport = net.JoinHostPort(ip.String(), port)
+							remoteAddr = net.JoinHostPort(ip.String(), port)
 						}
 					}
 				}
 
-				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
-				if err != nil {
-					logger.Trace(err)
-					return nil
+				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
+				if err != nil && err != context.Canceled {
+					logger.Tracef("dial %v: %v", remoteAddr, err)
 				}
 
 				return remote
@@ -190,7 +189,7 @@ func (Service) Run(ctx chrome.Context) {
 
 			sendResponse := func(w io.Writer) bool {
 				if _, err := reply.WriteTo(w); err != nil {
-					logger.Trace(err)
+					logger.Tracef("write response to local: %v", err)
 					return false
 				}
 
@@ -343,8 +342,6 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConnIdle.Timer = nil
 			dnsConnIdle.TimerC = nil
 
-			logger.Trace("[dns] closing DNS connection due to idle timeout")
-
 			dnsConn.Close()
 			dnsConn = nil
 		case q := <-incoming:
@@ -403,7 +400,6 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 						}
 
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
-						logger.Tracef("[dns] dialing to %v", hostport)
 
 						d := opts.Proxy.Dialer()
 						if opts.DNS.Proxy != nil {
@@ -412,7 +408,10 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 						conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial.Timeout)
 						if err != nil {
-							logger.Tracef("[dns] %v", err)
+							if err != context.Canceled {
+								logger.Tracef("[dns] dial %v: %v", hostport, err)
+							}
+
 							break
 						}
 

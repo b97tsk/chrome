@@ -250,16 +250,17 @@ func (Service) Run(ctx chrome.Context) {
 								return
 							}
 
+							remoteAddr := addr.String()
+
 							getRemote := func(localCtx context.Context) net.Conn {
 								opts, ok := <-optsOut
 								if !ok {
 									return nil
 								}
 
-								remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", addr.String(), opts.Dial.Timeout)
-								if err != nil {
-									logger.Trace(err)
-									return nil
+								remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
+								if err != nil && err != context.Canceled {
+									logger.Tracef("dial %v: %v", remoteAddr, err)
 								}
 
 								return remote
@@ -267,7 +268,7 @@ func (Service) Run(ctx chrome.Context) {
 
 							sendResponse := func(w io.Writer) bool {
 								if _, err := reply.WriteTo(w); err != nil {
-									logger.Trace(err)
+									logger.Tracef("write response to local: %v", err)
 									return false
 								}
 

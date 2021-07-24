@@ -414,7 +414,10 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	resp, err := h.tr.RoundTrip(outreq)
 	if err != nil {
-		h.ctx.Manager.Logger(ServiceName).Trace(err)
+		if err != context.Canceled {
+			h.ctx.Manager.Logger(ServiceName).Tracef("round trip: %v", err)
+		}
+
 		panic(http.ErrAbortHandler)
 	}
 	defer resp.Body.Close()
@@ -451,13 +454,12 @@ func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
 
 func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
-		remoteHost := h.rewriteHost(req.RequestURI)
+		remoteAddr := h.rewriteHost(req.RequestURI)
 
 		getRemote := func(localCtx context.Context) net.Conn {
-			remote, err := h.tr.DialContext(localCtx, "tcp", remoteHost)
-			if err != nil {
-				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
-				return nil
+			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
+			if err != nil && err != context.Canceled {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial %v: %v", remoteAddr, err)
 			}
 
 			return remote
@@ -485,13 +487,12 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		remoteHost := h.rewriteHost(req.Host)
+		remoteAddr := h.rewriteHost(req.Host)
 
 		getRemote := func(localCtx context.Context) net.Conn {
-			remote, err := h.tr.DialContext(localCtx, "tcp", remoteHost)
-			if err != nil {
-				h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial to remote: %v", err)
-				return nil
+			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
+			if err != nil && err != context.Canceled {
+				h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial %v: %v", remoteAddr, err)
 			}
 
 			return remote

@@ -432,9 +432,9 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
 		const response = "HTTP/1.1 200 OK\r\n\r\n"
 
-		remoteHost := req.RequestURI
+		remoteAddr := req.RequestURI
 
-		_, port, err := net.SplitHostPort(remoteHost)
+		_, port, err := net.SplitHostPort(remoteAddr)
 		if err == nil && port == "80" { // Transparent proxy only for port 80 right now.
 			if _, err := conn.Write([]byte(response)); err != nil {
 				h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
@@ -449,10 +449,9 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		getRemote := func(localCtx context.Context) net.Conn {
-			remote, err := h.tr.DialContext(localCtx, "tcp", remoteHost)
-			if err != nil {
-				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial to remote: %v", err)
-				return nil
+			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
+			if err != nil && err != context.Canceled {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial %v: %v", remoteAddr, err)
 			}
 
 			return remote
