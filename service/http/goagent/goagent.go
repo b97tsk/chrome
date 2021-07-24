@@ -18,7 +18,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/httputil"
@@ -29,6 +31,10 @@ type Options struct {
 	ListenAddr string `yaml:"on"`
 
 	AppIDList []string `yaml:"appids"`
+
+	URLFetch struct {
+		MaxSize chrome.Bytes // Default: 4M
+	}
 
 	Proxy chrome.Proxy `yaml:"over"`
 
@@ -182,13 +188,11 @@ func (Service) Run(ctx chrome.Context) {
 					stopServer()
 				}
 
-				if len(new.AppIDList) == 0 {
-					new.AppIDList = defaultAppIDList
-				}
-
 				if !isTwoAppIDListsIdentical(new.AppIDList, old.AppIDList) {
 					handler.SetAppIDList(new.AppIDList)
 				}
+
+				handler.SetURLFetchMaxSize(int64(new.URLFetch.MaxSize))
 
 				optsIn <- new
 			}
@@ -286,6 +290,10 @@ type handler struct {
 	appIDMutex   sync.Mutex
 	appIDList    []string
 	badAppIDList []string
+	urlfetch     struct {
+		_       int32
+		MaxSize int64
+	}
 }
 
 func newHandler(ctx chrome.Context, ln *listener, opts <-chan Options) *handler {
@@ -340,6 +348,10 @@ func (h *handler) SetAppIDList(appIDList []string) {
 			break
 		}
 	}
+}
+
+func (h *handler) SetURLFetchMaxSize(size int64) {
+	storeInt64(&h.urlfetch.MaxSize, size)
 }
 
 func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -563,7 +575,11 @@ func (h *handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 
 	snapshot := *resp
 	bodySize := contentRangeLast - contentRangeFirst + 1
-	resp.Body = newAutoRangeBody(h, req, &snapshot, bodySize, requestRangeFirst, requestRangeLast)
+	resp.Body = newAutoRangeBody(
+		h, req, &snapshot, bodySize,
+		requestRangeFirst, requestRangeLast,
+		loadInt64(&h.urlfetch.MaxSize),
+	)
 	resp.ContentLength = requestRangeLast - requestRangeFirst + 1
 	resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 
@@ -731,8 +747,15 @@ type autoRangeBody struct {
 
 func newAutoRangeBody(
 	h *handler, req *http.Request, resp *http.Response,
-	bodySize, rangeFirst, rangeLast int64,
+	bodySize, rangeFirst, rangeLast, perRequestSize int64,
 ) *autoRangeBody {
+	switch {
+	case perRequestSize < 1:
+		perRequestSize = defaultPerRequestSize
+	case perRequestSize < minimalPerRequestSize:
+		perRequestSize = minimalPerRequestSize
+	}
+
 	reqlist := []*autoRangeRequest{{
 		h:          h,
 		req:        req,
@@ -969,6 +992,16 @@ func isTwoAppIDListsIdentical(a, b []string) bool {
 	return true
 }
 
+func loadInt64(addr *int64) int64 {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
+	return atomic.LoadInt64(ptr)
+}
+
+func storeInt64(addr *int64, val int64) {
+	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
+	atomic.StoreInt64(ptr, val)
+}
+
 var (
 	reRange        = regexp.MustCompile(`^bytes=(\d+)-(\d*)$`)
 	reContentRange = regexp.MustCompile(`^bytes (\d+)-(\d+)/(\d+)$`)
@@ -984,15 +1017,11 @@ var (
 		"X-Chrome-Variations": true,
 		"X-Forwarded-For":     true,
 	}
-
-	defaultAppIDList = []string{
-		"eeffefef", "profound-saga-402", "otod3r", "teefede", "teefet",
-		"teeffffe", "teefmeef", "teefmeefwd", "tjl379678792", "wzyabcd",
-	}
 )
 
 const (
-	perRequestSize             = 4 << 20
+	defaultPerRequestSize      = 4 << 20
+	minimalPerRequestSize      = 1 << 20
 	perRequestBadAppIDLimit    = 3
 	perRequestBadResponseLimit = 2
 )
