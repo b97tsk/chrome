@@ -11,8 +11,8 @@ github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03
 github.com/anmitsu/go-shlex v0.0.0-20161002113705-648efa622239/go.mod h1:2FmKhYUyUczH0OGQWaF5ceTx0UBShxjsH6f8oGKYe2c=
 github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1 h1:rLk3BFYzpX2uIw9ek0f42yqO2k1LTYDJ6VCiHt/hgVA=
 github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1/go.mod h1:WYjdsAU8i5C+dJ/OGm5gjb0y6Gk8k3jrQoKCEpaM6eg=
-github.com/b97tsk/proxy v0.0.0-20210703023141-0a8d197ab6c6 h1:579jXvc1pyd0vmVkkTan2cEucmdgYILYa3a3aMVuydk=
-github.com/b97tsk/proxy v0.0.0-20210703023141-0a8d197ab6c6/go.mod h1:irs6pPO27+Au5tAQAqsGV461DvYE+YpvkOk5Ch1dC8g=
+github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d h1:vLz8JeNJvZL1iN6OT1U59uaV848yqVIGnUWt6wMk/YU=
+github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d/go.mod h1:irs6pPO27+Au5tAQAqsGV461DvYE+YpvkOk5Ch1dC8g=
 github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=
 github.com/bradfitz/go-smtpd v0.0.0-20170404230938-deb6d6237625/go.mod h1:HYsPBTaaSFSlLx/70C2HPIMNZpVV8+vt/A+FMnYP11g=
 github.com/buger/jsonparser v0.0.0-20181115193947-bf1c66bbce23/go.mod h1:bbYlZJ7hK1yFx9hf58LP0zeX7UjIGs20ufpu3evjr+s=
