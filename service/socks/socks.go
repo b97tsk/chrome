@@ -114,6 +114,12 @@ func (Service) Run(ctx chrome.Context) {
 
 		server = ln
 
+		if dnsQueryIn == nil {
+			dnsQueryIn = make(chan dnsQuery)
+
+			go startWorker(ctx, optsOut, dnsQueryIn)
+		}
+
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
 			var reply bytes.Buffer
 
@@ -156,7 +162,7 @@ func (Service) Run(ctx chrome.Context) {
 								return nil
 							case <-localCtx.Done():
 								return nil
-							case dnsQueryIn <- dnsQuery{host, r, localCtx, optsOut}:
+							case dnsQueryIn <- dnsQuery{host, r, localCtx}:
 							}
 
 							select {
@@ -261,12 +267,6 @@ func (Service) Run(ctx chrome.Context) {
 					if new.dnsCache == nil || shouldResetDNSCache(old, new) {
 						new.dnsCache = &sync.Map{}
 					}
-
-					if dnsQueryIn == nil {
-						dnsQueryIn = make(chan dnsQuery)
-
-						go startWorker(ctx, dnsQueryIn)
-					}
 				}
 
 				optsIn <- new
@@ -283,7 +283,6 @@ type dnsQuery struct {
 	Domain  string
 	Result  chan<- *dnsQueryResult
 	Context context.Context
-	Options <-chan Options
 }
 
 type dnsQueryResult struct {
@@ -295,7 +294,7 @@ func (r *dnsQueryResult) TTL() time.Duration {
 	return time.Until(r.Deadline).Truncate(time.Second)
 }
 
-func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
+func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dnsQuery) {
 	var dnsConn *dns.Conn
 
 	var dnsConnIdle struct {
@@ -345,7 +344,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConn.Close()
 			dnsConn = nil
 		case q := <-incoming:
-			opts, ok := <-q.Options
+			opts, ok := <-options
 			if !ok {
 				return
 			}
@@ -376,7 +375,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 					}
 
 					if dnsConn == nil {
-						opts, ok = <-q.Options
+						opts, ok = <-options
 						if !ok {
 							return
 						}
@@ -467,13 +466,13 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 					err := dnsConn.WriteMsg(&m)
 					if err == nil {
-						var in *dns.Msg
+						var msg *dns.Msg
 
 						_ = dnsConn.SetDeadline(time.Now().Add(dnsConnReadTimeout))
 
-						in, err = dnsConn.ReadMsg()
+						msg, err = dnsConn.ReadMsg()
 						if err == nil {
-							for _, ans := range in.Answer {
+							for _, ans := range msg.Answer {
 								if r.Deadline.IsZero() {
 									if h := ans.Header(); h != nil {
 										ttl := time.Duration(h.Ttl) * time.Second
