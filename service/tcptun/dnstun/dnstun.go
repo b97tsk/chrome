@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
+	"math"
 	"math/rand"
 	"net"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/b97tsk/chrome"
@@ -21,8 +24,13 @@ type Options struct {
 	Server  DNServer
 	Servers []DNServer
 
+	Cache bool
+
 	Dial struct {
 		Timeout time.Duration
+	}
+	TTL struct {
+		Min, Max time.Duration
 	}
 	Idle struct {
 		Timeout time.Duration
@@ -35,6 +43,8 @@ type Options struct {
 	}
 
 	Proxy chrome.Proxy `yaml:"over"`
+
+	dnsCache *sync.Map
 }
 
 type DNServer struct {
@@ -76,6 +86,8 @@ func (Service) Run(ctx chrome.Context) {
 		close(optsOut)
 	}()
 
+	var dnsQueryIn chan dnsQuery
+
 	var server net.Listener
 
 	startServer := func() error {
@@ -93,18 +105,25 @@ func (Service) Run(ctx chrome.Context) {
 
 		server = ln
 
-		dnsQueryIn := make(chan dnsQuery)
+		if dnsQueryIn == nil {
+			dnsQueryIn = make(chan dnsQuery)
 
-		go startWorker(ctx, dnsQueryIn)
+			go startWorker(ctx, optsOut, dnsQueryIn)
+		}
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
+			opts, ok := <-optsOut
+			if !ok {
+				return
+			}
+
 			local, localCtx := netutil.NewConnChecker(c)
 			defer local.Close()
 
 			dnsConn := &dns.Conn{Conn: local}
 
 			for {
-				in, err := dnsConn.ReadMsg()
+				msg, err := dnsConn.ReadMsg()
 				if err != nil {
 					if err != io.EOF {
 						logger.Tracef("(local) read msg: %v", err)
@@ -115,26 +134,47 @@ func (Service) Run(ctx chrome.Context) {
 
 				var result *dns.Msg
 
-				r := make(chan *dns.Msg, 1)
+				if opts.dnsCache != nil {
+					var qtype uint16
 
-				select {
-				case <-ctx.Done():
-					return
-				case <-localCtx.Done():
-					return
-				case dnsQueryIn <- dnsQuery{in, r, localCtx, optsOut}:
-				}
+					if len(msg.Question) != 0 {
+						qtype = msg.Question[0].Qtype
+					}
 
-				select {
-				case <-ctx.Done():
-					return
-				case <-localCtx.Done():
-					return
-				case result = <-r:
+					if qtype == dns.TypeA || qtype == dns.TypeAAAA {
+						domain := strings.TrimSuffix(msg.Question[0].Name, ".")
+						if cache, ok := opts.dnsCache.Load(domain); ok {
+							r := cache.(*dnsQueryResult)
+							if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+								result = r.Message
+								logger.Tracef("(from cache) %v: %v TTL=%v", domain, r.IPList, r.TTL())
+							}
+						}
+					}
 				}
 
 				if result == nil {
-					return
+					r := make(chan *dns.Msg, 1)
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-localCtx.Done():
+						return
+					case dnsQueryIn <- dnsQuery{msg, r, localCtx}:
+					}
+
+					select {
+					case <-ctx.Done():
+						return
+					case <-localCtx.Done():
+						return
+					case result = <-r:
+					}
+
+					if result == nil {
+						return
+					}
 				}
 
 				if err := dnsConn.WriteMsg(result); err != nil {
@@ -167,6 +207,7 @@ func (Service) Run(ctx chrome.Context) {
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
+				new.dnsCache = old.dnsCache
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
 					logger.Error(err)
@@ -201,6 +242,16 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
+				if new.Cache != old.Cache {
+					if new.Cache {
+						if new.dnsCache == nil || shouldResetDNSCache(old, new) {
+							new.dnsCache = &sync.Map{}
+						}
+					} else {
+						new.dnsCache = nil
+					}
+				}
+
 				optsIn <- new
 			}
 		case <-ctx.Loaded:
@@ -215,10 +266,19 @@ type dnsQuery struct {
 	Message *dns.Msg
 	Result  chan<- *dns.Msg
 	Context context.Context
-	Options <-chan Options
 }
 
-func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
+type dnsQueryResult struct {
+	Message  *dns.Msg
+	IPList   []net.IP
+	Deadline time.Time
+}
+
+func (r *dnsQueryResult) TTL() time.Duration {
+	return time.Until(r.Deadline).Truncate(time.Second)
+}
+
+func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dnsQuery) {
 	var dnsConn *dns.Conn
 
 	var dnsConnIdle struct {
@@ -239,8 +299,6 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 	var tlsConfig *tls.Config
 
 	var tlsConfigCache map[string]*tls.Config
-
-	var iplistBuffer []net.IP
 
 	dnsConnIdleTimeout := defaultIdleTimeout
 	dnsConnReadTimeout := defaultReadTimeout
@@ -270,9 +328,33 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			dnsConn.Close()
 			dnsConn = nil
 		case q := <-incoming:
-			var result *dns.Msg
+			opts, ok := <-options
+			if !ok {
+				return
+			}
 
-			for {
+			var result *dnsQueryResult
+
+			var qtype uint16
+
+			var domain string
+
+			if len(q.Message.Question) != 0 {
+				qtype = q.Message.Question[0].Qtype
+				domain = strings.TrimSuffix(q.Message.Question[0].Name, ".")
+			}
+
+			if opts.dnsCache != nil && (qtype == dns.TypeA || qtype == dns.TypeAAAA) {
+				if cache, ok := opts.dnsCache.Load(domain); ok {
+					r := cache.(*dnsQueryResult)
+					if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+						result = r
+						logger.Tracef("(from cache) %v: %v TTL=%v", domain, r.IPList, r.TTL())
+					}
+				}
+			}
+
+			for result == nil {
 				if ctx.Err() != nil {
 					return
 				}
@@ -282,7 +364,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 				}
 
 				if dnsConn == nil {
-					opts, ok := <-q.Options
+					opts, ok = <-options
 					if !ok {
 						return
 					}
@@ -359,31 +441,54 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 
 				err := dnsConn.WriteMsg(q.Message)
 				if err == nil {
+					var msg *dns.Msg
+
 					_ = dnsConn.SetDeadline(time.Now().Add(dnsConnReadTimeout))
 
-					result, err = dnsConn.ReadMsg()
+					msg, err = dnsConn.ReadMsg()
 					if err == nil {
-						if len(result.Question) != 0 && logger.TraceWritable() {
-							switch q0 := result.Question[0]; q0.Qtype {
-							case dns.TypeA, dns.TypeAAAA:
-								iplist := iplistBuffer[:0]
+						r := dnsQueryResult{Message: msg}
 
-								for _, ans := range result.Answer {
-									switch ans := ans.(type) {
-									case *dns.A:
-										iplist = append(iplist, ans.A)
-									case *dns.AAAA:
-										iplist = append(iplist, ans.AAAA)
+						for _, ans := range msg.Answer {
+							if h := ans.Header(); h != nil {
+								ttl := time.Duration(h.Ttl) * time.Second
+								if opts.TTL.Min > 0 || opts.TTL.Max > 0 {
+									origin := ttl
+
+									if opts.TTL.Min > 0 && ttl < opts.TTL.Min {
+										ttl = opts.TTL.Min
+									}
+
+									if opts.TTL.Max > 0 && ttl > opts.TTL.Max {
+										ttl = opts.TTL.Max
+									}
+
+									if ttl != origin {
+										h.Ttl = uint32(math.Ceil(ttl.Seconds()))
 									}
 								}
 
-								if len(iplist) != 0 {
-									domain := strings.TrimSuffix(q0.Name, ".")
-									logger.Tracef("(remote) %v: %v", domain, iplist)
+								if ttl > 0 && r.Deadline.IsZero() {
+									r.Deadline = time.Now().Add(ttl)
 								}
-
-								iplistBuffer = iplist
 							}
+
+							switch ans := ans.(type) {
+							case *dns.A:
+								r.IPList = append(r.IPList, ans.A)
+							case *dns.AAAA:
+								r.IPList = append(r.IPList, ans.AAAA)
+							}
+						}
+
+						result = &r
+
+						if len(r.IPList) != 0 {
+							if opts.dnsCache != nil {
+								opts.dnsCache.Store(domain, &r)
+							}
+
+							logger.Debugf("(remote) %v: %v TTL=%v", domain, r.IPList, r.TTL())
 						}
 
 						break
@@ -411,7 +516,7 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 				case <-ctx.Done():
 					return
 				case <-q.Context.Done():
-				case q.Result <- result:
+				case q.Result <- result.Message:
 				default:
 				}
 			}
@@ -419,6 +524,10 @@ func startWorker(ctx chrome.Context, incoming <-chan dnsQuery) {
 			close(q.Result)
 		}
 	}
+}
+
+func shouldResetDNSCache(x, y Options) bool {
+	return x.TTL != y.TTL || !reflect.DeepEqual(&x.Servers, &y.Servers)
 }
 
 const (
