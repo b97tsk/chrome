@@ -100,10 +100,7 @@ const v2socksTemplateBody = `
 {{- end }}{{/* with .WS */}}
 
 {{- end }}
-        "tlsSettings": {{ .TLS | json }},
-        "sockopt": {
-          "tcpFastOpen": true
-        }
+        "tlsSettings": {{ .TLS | json }}
       },
 {{- if .ForwardServer.Address }}
       "proxySettings": {
