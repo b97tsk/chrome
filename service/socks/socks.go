@@ -148,7 +148,7 @@ func (Service) Run(ctx chrome.Context) {
 
 						if cache, ok := opts.dnsCache.Load(host); ok {
 							r := cache.(*dnsQueryResult)
-							if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+							if r.Deadline.After(time.Now()) {
 								result = r
 								logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL())
 							}
@@ -353,7 +353,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 			if cache, ok := opts.dnsCache.Load(q.Domain); ok {
 				r := cache.(*dnsQueryResult)
-				if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+				if r.Deadline.After(time.Now()) {
 					result = r
 					logger.Tracef("[dns] (from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 				}
@@ -484,9 +484,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 											ttl = opts.DNS.TTL.Max
 										}
 
-										if ttl > 0 {
-											r.Deadline = time.Now().Add(ttl)
-										}
+										r.Deadline = time.Now().Add(ttl)
 									}
 								}
 
