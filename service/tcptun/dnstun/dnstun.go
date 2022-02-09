@@ -145,7 +145,7 @@ func (Service) Run(ctx chrome.Context) {
 						domain := strings.TrimSuffix(msg.Question[0].Name, ".")
 						if cache, ok := opts.dnsCache.Load(domain); ok {
 							r := cache.(*dnsQueryResult)
-							if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+							if r.Deadline.After(time.Now()) {
 								result = r.Message
 								logger.Tracef("(from cache) %v: %v TTL=%v", domain, r.IPList, r.TTL())
 							}
@@ -243,12 +243,12 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if new.Cache != old.Cache {
-					if new.Cache {
-						if new.dnsCache == nil || shouldResetDNSCache(old, new) {
-							new.dnsCache = &sync.Map{}
-						}
-					} else {
-						new.dnsCache = nil
+					new.dnsCache = nil
+				}
+
+				if new.Cache {
+					if new.dnsCache == nil || shouldResetDNSCache(old, new) {
+						new.dnsCache = &sync.Map{}
 					}
 				}
 
@@ -347,7 +347,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 			if opts.dnsCache != nil && (qtype == dns.TypeA || qtype == dns.TypeAAAA) {
 				if cache, ok := opts.dnsCache.Load(domain); ok {
 					r := cache.(*dnsQueryResult)
-					if r.Deadline.IsZero() || r.Deadline.After(time.Now()) {
+					if r.Deadline.After(time.Now()) {
 						result = r
 						logger.Tracef("(from cache) %v: %v TTL=%v", domain, r.IPList, r.TTL())
 					}
@@ -468,7 +468,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 									}
 								}
 
-								if ttl > 0 && r.Deadline.IsZero() {
+								if r.Deadline.IsZero() {
 									r.Deadline = time.Now().Add(ttl)
 								}
 							}
