@@ -87,10 +87,7 @@ const v2rayTemplateBody = `
 {{- end }}{{/* with .WS */}}
 
 {{- end }}
-        "tlsSettings": {{ .TLS | json }},
-        "sockopt": {
-          "tcpFastOpen": true
-        }
+        "tlsSettings": {{ .TLS | json }}
       }
     }
   ],
