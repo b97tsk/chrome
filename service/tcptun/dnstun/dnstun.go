@@ -1,19 +1,27 @@
 package dnstun
 
 import (
+	"bufio"
 	"context"
+	"crypto/sha1"
 	"crypto/tls"
+	"encoding/hex"
+	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"math/rand"
 	"net"
+	"path"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/b97tsk/chrome"
+	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/miekg/dns"
 )
@@ -23,6 +31,8 @@ type Options struct {
 
 	Server  DNServer
 	Servers []DNServer
+
+	Routes []RouteOptions
 
 	Cache bool
 
@@ -44,6 +54,10 @@ type Options struct {
 
 	Proxy chrome.Proxy `yaml:"over"`
 
+	routes       []route
+	routeCache   *sync.Map
+	allowListMap map[string]*allowList
+
 	dnsCache *sync.Map
 }
 
@@ -52,6 +66,142 @@ type DNServer struct {
 	IP   chrome.StringList
 	Over string
 	Port uint16
+}
+
+type RouteOptions struct {
+	AllowList chrome.EnvString `yaml:"file"`
+	Proxy     chrome.Proxy     `yaml:"over"`
+	Servers   []DNServer
+
+	AllowListChecksum string `yaml:"-"`
+}
+
+func (r *RouteOptions) equal(other *RouteOptions) bool {
+	return r.AllowList == other.AllowList &&
+		r.AllowListChecksum == other.AllowListChecksum &&
+		r.Proxy.Equal(other.Proxy) &&
+		reflect.DeepEqual(r.Servers, other.Servers)
+}
+
+type route struct {
+	AllowList *allowList
+	Proxy     chrome.Proxy
+	Servers   []DNServer
+}
+
+type allowList struct {
+	Path     string
+	Checksum string
+
+	includes matchset.MatchSet
+	excludes matchset.MatchSet
+}
+
+func (l *allowList) Init(fsys fs.FS) error {
+	return l.loadFile(fsys, l.Path)
+}
+
+func (l *allowList) loadFile(fsys fs.FS, name string) error {
+	file, err := fsys.Open(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	s := bufio.NewScanner(file)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || line[0] == '#' {
+			continue
+		}
+
+		if line[0] == '@' {
+			filepath := line[1:]
+			if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
+				filepath = path.Join(path.Dir(name), filepath)
+			}
+
+			if err := l.loadFile(fsys, filepath); err != nil {
+				return fmt.Errorf("load %v: %w", name, err)
+			}
+
+			continue
+		}
+
+		exclude := line[0] == '!'
+		if exclude {
+			line = line[1:]
+		}
+
+		portSuffix := rePortSuffix.FindString(line)
+		pattern := line[:len(line)-len(portSuffix)]
+
+		switch {
+		case strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]"):
+			pattern = pattern[1 : len(pattern)-1]
+		case portSuffix != "" && strings.Contains(pattern, ":"):
+			// Assume the whole line is an IPv6 address.
+			// portSuffix = ""
+			pattern = line
+		}
+
+		if !exclude {
+			l.includes.Add(pattern, struct{}{})
+		} else {
+			l.excludes.Add(pattern, struct{}{})
+		}
+	}
+
+	return s.Err()
+}
+
+func checksum(fsys fs.FS, name string) ([]byte, error) {
+	h := sha1.New()
+	if err := _checksum(fsys, name, h); err != nil {
+		return nil, err
+	}
+
+	return h.Sum(make([]byte, 0, h.Size())), nil
+}
+
+func _checksum(fsys fs.FS, name string, digest io.Writer) error {
+	file, err := fsys.Open(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	sep := []byte{'\n'}
+
+	s := bufio.NewScanner(file)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || line[0] == '#' {
+			continue
+		}
+
+		if line[0] == '@' {
+			filepath := line[1:]
+			if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
+				filepath = path.Join(path.Dir(name), filepath)
+			}
+
+			if err := _checksum(fsys, filepath, digest); err != nil {
+				return fmt.Errorf("load %v: %w", name, err)
+			}
+
+			continue
+		}
+
+		_, _ = digest.Write([]byte(line))
+		_, _ = digest.Write(sep)
+	}
+
+	return s.Err()
+}
+
+func (l *allowList) Allow(domain string) bool {
+	return l.includes.MatchAll(domain) != nil && l.excludes.MatchAll(domain) == nil
 }
 
 type Service struct{}
@@ -154,6 +304,15 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if result == nil {
+					var qtype uint16
+
+					var domain string
+
+					if len(msg.Question) != 0 {
+						qtype = msg.Question[0].Qtype
+						domain = strings.TrimSuffix(msg.Question[0].Name, ".")
+					}
+
 					r := make(chan *dns.Msg, 1)
 
 					select {
@@ -161,7 +320,7 @@ func (Service) Run(ctx chrome.Context) {
 						return
 					case <-localCtx.Done():
 						return
-					case dnsQueryIn <- dnsQuery{msg, r, localCtx}:
+					case dnsQueryIn <- dnsQuery{msg, qtype, domain, r, localCtx}:
 					}
 
 					select {
@@ -207,6 +366,9 @@ func (Service) Run(ctx chrome.Context) {
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
 				new := *new
+				new.routes = old.routes
+				new.routeCache = old.routeCache
+				new.allowListMap = old.allowListMap
 				new.dnsCache = old.dnsCache
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
@@ -218,27 +380,90 @@ func (Service) Run(ctx chrome.Context) {
 					stopServer()
 				}
 
-				if len(new.Servers) == 0 {
-					if new.Server.Name == "" && len(new.Server.IP) == 0 {
-						logger.Error("DNS server is not specified")
-						return
-					}
+				checkServers := func(servers []DNServer, routeIndex int) {
+					for i := range servers {
+						server := &servers[i]
+						if server.Name == "" && len(server.IP) == 0 {
+							if routeIndex >= 0 {
+								logger.Errorf("route #%v: server #%v: invalid", routeIndex+1, i+1)
+								panic(nil)
+							}
 
+							logger.Errorf("server #%v: invalid", i+1)
+							panic(nil)
+						}
+
+						server.Over = strings.ToUpper(server.Over)
+
+						if server.Over == "TLS" && server.Name == "" {
+							if routeIndex >= 0 {
+								logger.Errorf("route #%v: server #%v: DNS-over-TLS requires a server name", routeIndex+1, i+1)
+								panic(nil)
+							}
+
+							logger.Errorf("server #%v: DNS-over-TLS requires a server name", i+1)
+							panic(nil)
+						}
+					}
+				}
+
+				if len(new.Servers) == 0 && (new.Server.Name != "" || len(new.Server.IP) != 0) {
 					new.Servers = append(new.Servers, new.Server)
 				}
 
-				for i := range new.Servers {
-					server := &new.Servers[i]
-					if server.Name == "" && len(server.IP) == 0 {
-						logger.Errorf("server #%v: invalid", i+1)
+				checkServers(new.Servers, -1)
+
+				for i := range new.Routes {
+					r := &new.Routes[i]
+					checksum1, _ := checksum(ctx.Manager, r.AllowList.String())
+					r.AllowListChecksum = hex.EncodeToString(checksum1)
+
+					if len(r.Servers) == 0 {
+						logger.Errorf("route #%v: no servers", i+1)
 						return
 					}
 
-					server.Over = strings.ToUpper(server.Over)
+					checkServers(r.Servers, i)
+				}
 
-					if server.Over == "TLS" && server.Name == "" {
-						logger.Errorf("server #%v: DNS-over-TLS requires a server name", i+1)
-						return
+				if len(new.Servers) == 0 && len(new.Routes) == 0 {
+					logger.Error("no servers")
+					return
+				}
+
+				if !routesEqual(new.Routes, old.Routes) {
+					new.routes = nil
+					new.routeCache = nil
+					new.allowListMap = nil
+
+					for i := range new.Routes {
+						r := &new.Routes[i]
+
+						l := old.allowListMap[r.AllowList.String()]
+						if l == nil || l.Checksum != r.AllowListChecksum {
+							l = &allowList{
+								Path:     r.AllowList.String(),
+								Checksum: r.AllowListChecksum,
+							}
+
+							if err := l.Init(ctx.Manager); err != nil {
+								logger.Error(err)
+								return
+							}
+
+							logger.Infof("loaded %v", r.AllowList)
+						}
+
+						if new.allowListMap == nil {
+							new.allowListMap = make(map[string]*allowList)
+						}
+
+						new.routes = append(new.routes, route{l, r.Proxy, r.Servers})
+						new.allowListMap[r.AllowList.String()] = l
+					}
+
+					if new.routes != nil {
+						new.routeCache = &sync.Map{}
 					}
 				}
 
@@ -264,6 +489,8 @@ func (Service) Run(ctx chrome.Context) {
 
 type dnsQuery struct {
 	Message *dns.Msg
+	Qtype   uint16
+	Domain  string
 	Result  chan<- *dns.Msg
 	Context context.Context
 }
@@ -279,18 +506,115 @@ func (r *dnsQueryResult) TTL() time.Duration {
 }
 
 func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dnsQuery) {
-	var dnsConn *dns.Conn
+	var transactions []*transaction
 
-	var dnsConnIdle struct {
-		Timer  *time.Timer
-		TimerC <-chan time.Time
+	logger := ctx.Manager.Logger(ServiceName)
+Loop:
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case q := <-incoming:
+			opts, ok := <-options
+			if !ok {
+				return
+			}
+
+			if opts.dnsCache != nil && (q.Qtype == dns.TypeA || q.Qtype == dns.TypeAAAA) {
+				if cache, ok := opts.dnsCache.Load(q.Domain); ok {
+					r := cache.(*dnsQueryResult)
+					if r.Deadline.After(time.Now()) {
+						logger.Tracef("(from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+
+						select {
+						case <-ctx.Done():
+							return
+						case <-q.Context.Done():
+						case q.Result <- r.Message:
+						default:
+						}
+
+						close(q.Result)
+
+						continue Loop
+					}
+				}
+			}
+
+			var route1 *route
+
+			if opts.routeCache != nil {
+				if r, ok := opts.routeCache.Load(q.Domain); ok {
+					route1 = r.(*route)
+				} else {
+					for i := range opts.routes {
+						if r := &opts.routes[i]; r.AllowList.Allow(q.Domain) {
+							logger.Infof("%v matches %v", r.AllowList.Path, q.Domain)
+
+							route1 = r
+
+							break
+						}
+					}
+
+					opts.routeCache.Store(q.Domain, route1)
+				}
+			}
+
+			for i, tr := range transactions {
+				if tr.Route == route1 {
+					select {
+					case <-tr.Done():
+					case tr.Chan <- q:
+						continue Loop
+					}
+
+					j := len(transactions) - 1
+					transactions[i] = transactions[j]
+					transactions[j] = nil
+					transactions = transactions[:j]
+
+					break
+				}
+			}
+
+			tr := newTransaction(ctx, options, route1)
+			transactions = append(transactions, tr)
+
+			select {
+			case <-tr.Done():
+			case tr.Chan <- q:
+			}
+		}
+	}
+}
+
+type transaction struct {
+	context.Context
+	Route *route
+	Chan  chan dnsQuery
+}
+
+func newTransaction(ctx chrome.Context, options <-chan Options, route *route) *transaction {
+	ctx1, cancel := context.WithCancel(ctx.Context)
+	tr := &transaction{
+		Context: ctx1,
+		Route:   route,
+		Chan:    make(chan dnsQuery),
 	}
 
-	defer func() {
-		if dnsConnIdle.Timer != nil {
-			dnsConnIdle.Timer.Stop()
-		}
+	go func() {
+		defer cancel()
+		startTransaction(ctx, options, tr)
+	}()
 
+	return tr
+}
+
+func startTransaction(ctx chrome.Context, options <-chan Options, tr *transaction) {
+	var dnsConn *dns.Conn
+
+	defer func() {
 		if dnsConn != nil {
 			dnsConn.Close()
 		}
@@ -300,34 +624,30 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 	var tlsConfigCache map[string]*tls.Config
 
+	logger := ctx.Manager.Logger(ServiceName)
+
 	dnsConnIdleTimeout := defaultIdleTimeout
 	dnsConnReadTimeout := defaultReadTimeout
 	dnsConnWriteTimeout := defaultWriteTimeout
 
-	logger := ctx.Manager.Logger(ServiceName)
+	idleTimer := time.NewTimer(dnsConnIdleTimeout)
+	defer idleTimer.Stop()
+
+	idleTimerC := idleTimer.C
 
 	for {
-		if dnsConn != nil {
-			if dnsConnIdle.Timer == nil {
-				dnsConnIdle.Timer = time.NewTimer(dnsConnIdleTimeout)
-				dnsConnIdle.TimerC = dnsConnIdle.Timer.C
-			} else {
-				if !dnsConnIdle.Timer.Stop() {
-					<-dnsConnIdle.TimerC
-				}
-				dnsConnIdle.Timer.Reset(dnsConnIdleTimeout)
-			}
+		if !idleTimer.Stop() {
+			<-idleTimerC
 		}
+
+		idleTimer.Reset(dnsConnIdleTimeout)
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-dnsConnIdle.TimerC:
-			dnsConnIdle.Timer = nil
-			dnsConnIdle.TimerC = nil
-
-			dnsConn.Close()
-			dnsConn = nil
-		case q := <-incoming:
+		case <-idleTimerC:
+			return
+		case q := <-tr.Chan:
 			opts, ok := <-options
 			if !ok {
 				return
@@ -335,21 +655,12 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 			var result *dnsQueryResult
 
-			var qtype uint16
-
-			var domain string
-
-			if len(q.Message.Question) != 0 {
-				qtype = q.Message.Question[0].Qtype
-				domain = strings.TrimSuffix(q.Message.Question[0].Name, ".")
-			}
-
-			if opts.dnsCache != nil && (qtype == dns.TypeA || qtype == dns.TypeAAAA) {
-				if cache, ok := opts.dnsCache.Load(domain); ok {
+			if opts.dnsCache != nil && (q.Qtype == dns.TypeA || q.Qtype == dns.TypeAAAA) {
+				if cache, ok := opts.dnsCache.Load(q.Domain); ok {
 					r := cache.(*dnsQueryResult)
 					if r.Deadline.After(time.Now()) {
 						result = r
-						logger.Tracef("(from cache) %v: %v TTL=%v", domain, r.IPList, r.TTL())
+						logger.Tracef("(from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 					}
 				}
 			}
@@ -369,7 +680,20 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 						return
 					}
 
-					server := opts.Servers[rand.Intn(len(opts.Servers))]
+					servers := opts.Servers
+					proxy := &opts.Proxy
+
+					if tr.Route != nil {
+						servers = tr.Route.Servers
+						proxy = &tr.Route.Proxy
+					}
+
+					if len(servers) == 0 {
+						logger.Error("no servers")
+						return
+					}
+
+					server := servers[rand.Intn(len(servers))]
 
 					host := server.Name
 
@@ -389,7 +713,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
 
-					conn, err := ctx.Manager.Dial(q.Context, opts.Proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
+					conn, err := ctx.Manager.Dial(q.Context, proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
 					if err != nil {
 						if err != context.Canceled {
 							logger.Tracef("dial %v: %v", hostport, err)
@@ -485,10 +809,10 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 						if len(r.IPList) != 0 {
 							if opts.dnsCache != nil {
-								opts.dnsCache.Store(domain, &r)
+								opts.dnsCache.Store(q.Domain, &r)
 							}
 
-							logger.Debugf("(remote) %v: %v TTL=%v", domain, r.IPList, r.TTL())
+							logger.Debugf("(remote) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 						}
 
 						break
@@ -500,12 +824,6 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 				}
 
 				if err != nil {
-					if dnsConnIdle.Timer != nil {
-						dnsConnIdle.Timer.Stop()
-						dnsConnIdle.Timer = nil
-						dnsConnIdle.TimerC = nil
-					}
-
 					dnsConn.Close()
 					dnsConn = nil
 				}
@@ -527,7 +845,21 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 }
 
 func shouldResetDNSCache(x, y Options) bool {
-	return x.TTL != y.TTL || !reflect.DeepEqual(&x.Servers, &y.Servers)
+	return x.TTL != y.TTL || !reflect.DeepEqual(&x.Servers, &y.Servers) || !routesEqual(x.Routes, y.Routes)
+}
+
+func routesEqual(a, b []RouteOptions) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if !a[i].equal(&b[i]) {
+			return false
+		}
+	}
+
+	return true
 }
 
 const (
@@ -535,3 +867,5 @@ const (
 	defaultReadTimeout  = 2 * time.Second
 	defaultWriteTimeout = 3 * time.Second
 )
+
+var rePortSuffix = regexp.MustCompile(`:\d+$`)
