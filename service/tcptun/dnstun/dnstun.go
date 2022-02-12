@@ -29,6 +29,8 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
+	Proxy chrome.Proxy `yaml:"over"`
+
 	Server  DNServer
 	Servers []DNServer
 
@@ -51,8 +53,6 @@ type Options struct {
 	Write struct {
 		Timeout time.Duration
 	}
-
-	Proxy chrome.Proxy `yaml:"over"`
 
 	routes       []route
 	routeCache   *sync.Map

@@ -29,6 +29,10 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
+	Proxy chrome.Proxy `yaml:"over"`
+
+	ForwardServer HostportOptions `yaml:"-"`
+
 	URL string
 
 	Type      string
@@ -51,10 +55,6 @@ type Options struct {
 		UplinkOnly   int `json:"uplinkOnly"`
 		DownlinkOnly int `json:"downlinkOnly"`
 	}
-
-	Proxy chrome.Proxy `yaml:"over"`
-
-	ForwardServer HostportOptions `yaml:"-"`
 
 	Dial struct {
 		Timeout time.Duration

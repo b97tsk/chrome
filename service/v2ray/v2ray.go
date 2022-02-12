@@ -24,6 +24,13 @@ type Options struct {
 	ListenHost string `yaml:"-"`
 	ListenPort string `yaml:"-"`
 
+	Proxy chrome.Proxy `yaml:"over"`
+
+	ForwardServer struct {
+		Address string
+		Port    int
+	} `yaml:"-"`
+
 	Type      string
 	Protocol  string `yaml:"-"`
 	Transport string `yaml:"-"`
@@ -37,13 +44,6 @@ type Options struct {
 		UplinkOnly   int `json:"uplinkOnly"`
 		DownlinkOnly int `json:"downlinkOnly"`
 	}
-
-	Proxy chrome.Proxy `yaml:"over"`
-
-	ForwardServer struct {
-		Address string
-		Port    int
-	} `yaml:"-"`
 
 	Dial struct {
 		Timeout time.Duration

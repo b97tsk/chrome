@@ -30,13 +30,13 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
+	Proxy chrome.Proxy `yaml:"over"`
+
 	AppIDList []string `yaml:"appids"`
 
 	URLFetch struct {
 		MaxSize chrome.Bytes // Default: 4M
 	}
-
-	Proxy chrome.Proxy `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration

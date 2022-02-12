@@ -32,10 +32,10 @@ import (
 type Options struct {
 	ListenAddr string `yaml:"on"`
 
+	Proxy chrome.Proxy `yaml:"over"`
+
 	Routes    []RouteOptions
 	Redirects map[string]string
-
-	Proxy chrome.Proxy `yaml:"over"`
 
 	Dial struct {
 		Timeout time.Duration
