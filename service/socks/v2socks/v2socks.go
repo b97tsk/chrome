@@ -177,7 +177,6 @@ func (Service) Run(ctx chrome.Context) {
 
 			addr, err := socks.Handshake(rw)
 			if err != nil {
-				logger.Debugf("socks handshake: %v", err)
 				return
 			}
 
@@ -335,7 +334,6 @@ func (Service) Run(ctx chrome.Context) {
 
 							addr, err := socks.Handshake(rw)
 							if err != nil {
-								logger.Debugf("socks handshake: %v", err)
 								return
 							}
 
