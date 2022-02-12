@@ -6,11 +6,14 @@ import (
 	"context"
 	"crypto/sha1"
 	"crypto/tls"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,32 +42,33 @@ type Options struct {
 	}
 	Relay chrome.RelayOptions
 
-	routes  []*route
-	matches *sync.Map
+	routes       []route
+	routeCache   *sync.Map
+	allowListMap map[string]*allowList
 }
 
 type RouteOptions struct {
-	File  chrome.EnvString
-	Proxy chrome.Proxy `yaml:"over"`
+	AllowList chrome.EnvString `yaml:"file"`
+	Proxy     chrome.Proxy     `yaml:"over"`
 
-	checksum []byte
+	AllowListChecksum string `yaml:"-"`
 }
 
 func (r *RouteOptions) equal(other *RouteOptions) bool {
-	return r.File == other.File && r.Proxy.Equal(other.Proxy) && bytes.Equal(r.checksum, other.checksum)
-}
-
-func (r *RouteOptions) init(fsys fs.FS) (err error) {
-	r.checksum, err = checksum(fsys, r.File.String())
-	return
+	return r.AllowList == other.AllowList &&
+		r.AllowListChecksum == other.AllowListChecksum &&
+		r.Proxy.Equal(other.Proxy)
 }
 
 type route struct {
-	RouteOptions
-	matchset atomic.Value
+	AllowList *allowList
+	Proxy     chrome.Proxy
 }
 
-type routeMatchSet struct {
+type allowList struct {
+	Path     string
+	Checksum string
+
 	includes matchset.MatchSet
 	excludes matchset.MatchSet
 }
@@ -73,34 +77,16 @@ type patternConfig struct {
 	ports []string
 }
 
-func (r *route) Recycle(routes []*route) bool {
-	if r.checksum == nil {
-		return false
-	}
-
-	for _, r2 := range routes {
-		if bytes.Equal(r.checksum, r2.checksum) {
-			r.matchset.Store(r2.matchset.Load())
-			return true
-		}
-	}
-
-	return false
+func (l *allowList) Init(fsys fs.FS) error {
+	return l.loadFile(fsys, l.Path)
 }
 
-func (r *route) Init(fsys fs.FS) error {
-	checksum1, err := checksum(fsys, r.File.String())
-	if err != nil {
-		return err
-	}
-
-	file, err := fsys.Open(r.File.String())
+func (l *allowList) loadFile(fsys fs.FS, name string) error {
+	file, err := fsys.Open(name)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-
-	var includes, excludes matchset.MatchSet
 
 	configMap := make(map[string]*patternConfig)
 
@@ -108,6 +94,19 @@ func (r *route) Init(fsys fs.FS) error {
 	for s.Scan() {
 		line := strings.TrimSpace(s.Text())
 		if line == "" || line[0] == '#' {
+			continue
+		}
+
+		if line[0] == '@' {
+			filepath := line[1:]
+			if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
+				filepath = path.Join(path.Dir(name), filepath)
+			}
+
+			if err := l.loadFile(fsys, filepath); err != nil {
+				return fmt.Errorf("load %v: %w", name, err)
+			}
+
 			continue
 		}
 
@@ -140,16 +139,58 @@ func (r *route) Init(fsys fs.FS) error {
 		}
 
 		if !exclude {
-			includes.Add(pattern, config)
+			l.includes.Add(pattern, config)
 		} else {
-			excludes.Add(pattern, config)
+			l.excludes.Add(pattern, config)
 		}
 	}
 
-	r.checksum = checksum1
-	r.matchset.Store(&routeMatchSet{includes, excludes})
+	return s.Err()
+}
 
-	return nil
+func checksum(fsys fs.FS, name string) ([]byte, error) {
+	h := sha1.New()
+	if err := _checksum(fsys, name, h); err != nil {
+		return nil, err
+	}
+
+	return h.Sum(make([]byte, 0, h.Size())), nil
+}
+
+func _checksum(fsys fs.FS, name string, digest io.Writer) error {
+	file, err := fsys.Open(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	sep := []byte{'\n'}
+
+	s := bufio.NewScanner(file)
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		if line == "" || line[0] == '#' {
+			continue
+		}
+
+		if line[0] == '@' {
+			filepath := line[1:]
+			if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
+				filepath = path.Join(path.Dir(name), filepath)
+			}
+
+			if err := _checksum(fsys, filepath, digest); err != nil {
+				return fmt.Errorf("load %v: %w", name, err)
+			}
+
+			continue
+		}
+
+		_, _ = digest.Write([]byte(line))
+		_, _ = digest.Write(sep)
+	}
+
+	return s.Err()
 }
 
 func match(set *matchset.MatchSet, host, port string) bool {
@@ -169,11 +210,9 @@ func match(set *matchset.MatchSet, host, port string) bool {
 	return false
 }
 
-func (r *route) Match(hostport string) bool {
-	set, ok := r.matchset.Load().(*routeMatchSet)
+func (l *allowList) Allow(hostport string) bool {
 	host, port, _ := net.SplitHostPort(hostport)
-
-	return ok && match(&set.includes, host, port) && !match(&set.excludes, host, port)
+	return match(&l.includes, host, port) && !match(&l.excludes, host, port)
 }
 
 type Service struct{}
@@ -276,7 +315,8 @@ func (Service) Run(ctx chrome.Context) {
 				old := <-optsOut
 				new := *new
 				new.routes = old.routes
-				new.matches = old.matches
+				new.routeCache = old.routeCache
+				new.allowListMap = old.allowListMap
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
 					logger.Error(err)
@@ -288,25 +328,44 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				for i := range new.Routes {
-					_ = new.Routes[i].init(ctx.Manager)
+					r := &new.Routes[i]
+					checksum1, _ := checksum(ctx.Manager, r.AllowList.String())
+					r.AllowListChecksum = hex.EncodeToString(checksum1)
 				}
 
 				if !routesEqual(new.Routes, old.Routes) {
-					new.routes = make([]*route, len(new.Routes))
-					new.matches = &sync.Map{}
+					new.routes = nil
+					new.routeCache = nil
+					new.allowListMap = nil
 
-					for i, r := range new.Routes {
-						new.routes[i] = &route{RouteOptions: r}
-						if new.routes[i].Recycle(old.routes) {
-							continue
+					for i := range new.Routes {
+						r := &new.Routes[i]
+
+						l := old.allowListMap[r.AllowList.String()]
+						if l == nil || l.Checksum != r.AllowListChecksum {
+							l = &allowList{
+								Path:     r.AllowList.String(),
+								Checksum: r.AllowListChecksum,
+							}
+
+							if err := l.Init(ctx.Manager); err != nil {
+								logger.Error(err)
+								return
+							}
+
+							logger.Infof("loaded %v", r.AllowList)
 						}
 
-						if err := new.routes[i].Init(ctx.Manager); err != nil {
-							logger.Error(err)
-							return
+						if new.allowListMap == nil {
+							new.allowListMap = make(map[string]*allowList)
 						}
 
-						logger.Infof("loaded %v", r.File)
+						new.routes = append(new.routes, route{l, r.Proxy})
+						new.allowListMap[r.AllowList.String()] = l
+					}
+
+					if new.routes != nil {
+						new.routeCache = &sync.Map{}
 					}
 				}
 
@@ -338,16 +397,16 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 		opts := <-h.opts
 		d := opts.Proxy.Dialer()
 
-		if opts.routes != nil {
-			if r, ok := opts.matches.Load(addr); ok {
+		if opts.routeCache != nil {
+			if r, ok := opts.routeCache.Load(addr); ok {
 				d = r.(*route).Proxy.Dialer()
 			} else {
-				for _, r := range opts.routes {
-					if r.Match(addr) {
-						h.ctx.Manager.Logger(ServiceName).Infof("%v matches %v", r.File, addr)
+				for i := range opts.routes {
+					if r := &opts.routes[i]; r.AllowList.Allow(addr) {
+						h.ctx.Manager.Logger(ServiceName).Infof("%v matches %v", r.AllowList.Path, addr)
 
 						d = r.Proxy.Dialer()
-						opts.matches.Store(addr, r)
+						opts.routeCache.Store(addr, r)
 
 						break
 					}
@@ -528,21 +587,6 @@ func (h *handler) rewriteHost(host string) string {
 	}
 
 	return host
-}
-
-func checksum(fsys fs.FS, name string) ([]byte, error) {
-	file, err := fsys.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	h := sha1.New()
-	if _, err := io.Copy(h, file); err != nil {
-		return nil, err
-	}
-
-	return h.Sum(make([]byte, 0, h.Size())), nil
 }
 
 func routesEqual(a, b []RouteOptions) bool {
