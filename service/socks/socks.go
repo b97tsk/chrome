@@ -186,8 +186,8 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
-				if err != nil && err != context.Canceled {
-					logger.Tracef("dial %v: %v", remoteAddr, err)
+				if es := ""; err != nil && !canceled(err, &es) {
+					logger.Tracef("dial %v: %v", remoteAddr, es)
 				}
 
 				return remote
@@ -407,8 +407,8 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 						conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial.Timeout)
 						if err != nil {
-							if err != context.Canceled {
-								logger.Tracef("[dns] dial %v: %v", hostport, err)
+							if es := ""; !canceled(err, &es) {
+								logger.Tracef("[dns] dial %v: %v", hostport, es)
 							}
 
 							break
@@ -571,6 +571,16 @@ Outer:
 	}
 
 	return result
+}
+
+func canceled(e error, es *string) bool {
+	if e == context.Canceled {
+		return true
+	}
+
+	*es = e.Error()
+
+	return strings.Contains(*es, "operation was canceled")
 }
 
 const (

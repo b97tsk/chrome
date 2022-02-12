@@ -473,8 +473,8 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	resp, err := h.tr.RoundTrip(outreq)
 	if err != nil {
-		if err != context.Canceled {
-			h.ctx.Manager.Logger(ServiceName).Tracef("round trip: %v", err)
+		if es := ""; !canceled(err, &es) {
+			h.ctx.Manager.Logger(ServiceName).Tracef("round trip: %v", es)
 		}
 
 		panic(http.ErrAbortHandler)
@@ -517,8 +517,8 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		getRemote := func(localCtx context.Context) net.Conn {
 			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-			if err != nil && err != context.Canceled {
-				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial %v: %v", remoteAddr, err)
+			if es := ""; err != nil && !canceled(err, &es) {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial %v: %v", remoteAddr, es)
 			}
 
 			return remote
@@ -550,8 +550,8 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 
 		getRemote := func(localCtx context.Context) net.Conn {
 			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-			if err != nil && err != context.Canceled {
-				h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial %v: %v", remoteAddr, err)
+			if es := ""; err != nil && !canceled(err, &es) {
+				h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial %v: %v", remoteAddr, es)
 			}
 
 			return remote
@@ -615,6 +615,16 @@ func redirectsEqual(a, b map[string]string) bool {
 	}
 
 	return true
+}
+
+func canceled(e error, es *string) bool {
+	if e == context.Canceled {
+		return true
+	}
+
+	*es = e.Error()
+
+	return strings.Contains(*es, "operation was canceled")
 }
 
 var rePortSuffix = regexp.MustCompile(`:\d+$`)

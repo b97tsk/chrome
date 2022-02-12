@@ -3,6 +3,7 @@ package shadowsocks
 import (
 	"context"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/b97tsk/chrome"
@@ -97,8 +98,8 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
-				if err != nil && err != context.Canceled {
-					logger.Tracef("dial %v: %v", remoteAddr, err)
+				if es := ""; err != nil && !canceled(err, &es) {
+					logger.Tracef("dial %v: %v", remoteAddr, es)
 				}
 
 				return remote
@@ -159,4 +160,14 @@ func (Service) Run(ctx chrome.Context) {
 			}
 		}
 	}
+}
+
+func canceled(e error, es *string) bool {
+	if e == context.Canceled {
+		return true
+	}
+
+	*es = e.Error()
+
+	return strings.Contains(*es, "operation was canceled")
 }

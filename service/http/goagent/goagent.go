@@ -450,8 +450,8 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 		getRemote := func(localCtx context.Context) net.Conn {
 			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-			if err != nil && err != context.Canceled {
-				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial %v: %v", remoteAddr, err)
+			if es := ""; err != nil && !canceled(err, &es) {
+				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial %v: %v", remoteAddr, es)
 			}
 
 			return remote
@@ -999,6 +999,16 @@ func loadInt64(addr *int64) int64 {
 func storeInt64(addr *int64, val int64) {
 	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
 	atomic.StoreInt64(ptr, val)
+}
+
+func canceled(e error, es *string) bool {
+	if e == context.Canceled {
+		return true
+	}
+
+	*es = e.Error()
+
+	return strings.Contains(*es, "operation was canceled")
 }
 
 var (
