@@ -78,19 +78,36 @@ type patternConfig struct {
 }
 
 func (l *allowList) Init(fsys fs.FS) error {
-	return l.loadFile(fsys, l.Path)
+	includesConfigMap := make(map[string]*patternConfig)
+	excludesConfigMap := make(map[string]*patternConfig)
+
+	if err := l.loadFile(fsys, l.Path, includesConfigMap, excludesConfigMap); err != nil {
+		return err
+	}
+
+	for pattern, config := range includesConfigMap {
+		l.includes.Add(pattern, config)
+	}
+
+	for pattern, config := range excludesConfigMap {
+		l.excludes.Add(pattern, config)
+	}
+
+	return nil
 }
 
-func (l *allowList) loadFile(fsys fs.FS, name string) error {
+func (l *allowList) loadFile(
+	fsys fs.FS, name string,
+	includesConfigMap, excludesConfigMap map[string]*patternConfig,
+) error {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	configMap := make(map[string]*patternConfig)
-
 	s := bufio.NewScanner(file)
+Outer:
 	for s.Scan() {
 		line := strings.TrimSpace(s.Text())
 		if line == "" || line[0] == '#' {
@@ -103,7 +120,7 @@ func (l *allowList) loadFile(fsys fs.FS, name string) error {
 				filepath = path.Join(path.Dir(name), filepath)
 			}
 
-			if err := l.loadFile(fsys, filepath); err != nil {
+			if err := l.loadFile(fsys, filepath, includesConfigMap, excludesConfigMap); err != nil {
 				return fmt.Errorf("load %v: %w", name, err)
 			}
 
@@ -127,22 +144,35 @@ func (l *allowList) loadFile(fsys fs.FS, name string) error {
 			pattern = line
 		}
 
-		config := configMap[pattern]
+		configMap := includesConfigMap
+		if exclude {
+			configMap = excludesConfigMap
+		}
 
-		if portSuffix != "" {
-			if config == nil {
-				config = &patternConfig{}
-				configMap[pattern] = config
+		if portSuffix == "" {
+			configMap[pattern] = nil
+			continue
+		}
+
+		config, configExists := configMap[pattern]
+		if config == nil {
+			if configExists {
+				continue
 			}
 
-			config.ports = append(config.ports, portSuffix[1:])
+			config = &patternConfig{}
+			configMap[pattern] = config
 		}
 
-		if !exclude {
-			l.includes.Add(pattern, config)
-		} else {
-			l.excludes.Add(pattern, config)
+		port := portSuffix[1:]
+
+		for _, p := range config.ports {
+			if p == port {
+				continue Outer
+			}
 		}
+
+		config.ports = append(config.ports, port)
 	}
 
 	return s.Err()
