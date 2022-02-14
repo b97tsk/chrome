@@ -98,10 +98,16 @@ type allowList struct {
 }
 
 func (l *allowList) Init(fsys fs.FS) error {
-	return l.loadFile(fsys, l.Path)
+	includesSeen := make(map[string]struct{})
+	excludesSeen := make(map[string]struct{})
+
+	return l.loadFile(fsys, l.Path, includesSeen, excludesSeen)
 }
 
-func (l *allowList) loadFile(fsys fs.FS, name string) error {
+func (l *allowList) loadFile(
+	fsys fs.FS, name string,
+	includesSeen, excludesSeen map[string]struct{},
+) error {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return err
@@ -121,7 +127,7 @@ func (l *allowList) loadFile(fsys fs.FS, name string) error {
 				filepath = path.Join(path.Dir(name), filepath)
 			}
 
-			if err := l.loadFile(fsys, filepath); err != nil {
+			if err := l.loadFile(fsys, filepath, includesSeen, excludesSeen); err != nil {
 				return fmt.Errorf("load %v: %w", name, err)
 			}
 
@@ -145,11 +151,18 @@ func (l *allowList) loadFile(fsys fs.FS, name string) error {
 			pattern = line
 		}
 
-		if !exclude {
-			l.includes.Add(pattern, struct{}{})
-		} else {
-			l.excludes.Add(pattern, struct{}{})
+		seen, set := includesSeen, &l.includes
+		if exclude {
+			seen, set = excludesSeen, &l.excludes
 		}
+
+		if _, ok := seen[pattern]; ok {
+			continue
+		}
+
+		seen[pattern] = struct{}{}
+
+		set.Add(pattern, struct{}{})
 	}
 
 	return s.Err()
