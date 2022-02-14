@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"crypto/tls"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -687,7 +688,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					break
 				}
 
-				if dnsConn == nil {
+				newConn := dnsConn == nil
+				if newConn {
 					opts, ok = <-options
 					if !ok {
 						return
@@ -836,9 +838,11 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					logger.Tracef("(remote) write msg: %v", err)
 				}
 
-				if err != nil {
-					dnsConn.Close()
-					dnsConn = nil
+				dnsConn.Close()
+				dnsConn = nil
+
+				if newConn && !isTimeout(err) {
+					break
 				}
 			}
 
@@ -883,6 +887,11 @@ func canceled(e error, es *string) bool {
 	*es = e.Error()
 
 	return strings.Contains(*es, "operation was canceled")
+}
+
+func isTimeout(err error) bool {
+	var t interface{ Timeout() bool }
+	return errors.As(err, &t) && t.Timeout()
 }
 
 const (
