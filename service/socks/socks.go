@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"math/rand"
 	"net"
@@ -373,7 +374,8 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 						break
 					}
 
-					if dnsConn == nil {
+					newConn := dnsConn == nil
+					if newConn {
 						opts, ok = <-options
 						if !ok {
 							return
@@ -516,6 +518,10 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 						dnsConn.Close()
 						dnsConn = nil
+
+						if newConn && !isTimeout(err) {
+							break
+						}
 					}
 				}
 
@@ -580,6 +586,11 @@ func canceled(e error, es *string) bool {
 	*es = e.Error()
 
 	return strings.Contains(*es, "operation was canceled")
+}
+
+func isTimeout(err error) bool {
+	var t interface{ Timeout() bool }
+	return errors.As(err, &t) && t.Timeout()
 }
 
 const (
