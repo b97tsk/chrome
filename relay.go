@@ -16,20 +16,19 @@ import (
 type RelayOptions struct {
 	// After the remote-side connection has been established, we send a request
 	// to the remote and normally we can expect the remote sends back a response.
-	// But if the connection was established via a proxy, we cannot be sure that
-	// we have successfully connected to the remote. A proxy certainly can delay
-	// the actual work for a good reason.
+	//
+	// However, if the connection was established via a proxy, we cannot be sure
+	// that we have successfully connected to the remote. A proxy can certainly
+	// delay the actual work and return a connection early for a good reason.
 	//
 	// Replay mode detects that if the remote does not send back a response
 	// within a period of time, we kill the connection and resend the request
 	// to a new one.
 	//
-	// Replay mode is on by default. It should work fine even not using proxies.
+	// Replay mode is always on. If you want it off, you can just set response
+	// timeout to a large value (5 minutes, which is the default, should be enough).
 	Replay struct {
-		Enabled  bool
-		Disabled bool
 		Response struct {
-			// Timeout fallbacks to global dial timeout if not set.
 			Timeout time.Duration
 		}
 	}
@@ -49,7 +48,6 @@ type RelayOptions struct {
 
 type relayService struct {
 	replay struct {
-		Disabled uint32
 		_        uint32
 		Response struct {
 			Timeout time.Duration
@@ -70,22 +68,8 @@ func storeDuration(addr *time.Duration, d time.Duration) {
 	atomic.StoreInt64(ptr, int64(d))
 }
 
-func (m *relayService) getReplayDisabled() bool {
-	return atomic.LoadUint32(&m.replay.Disabled) != 0
-}
-
-func (m *relayService) setReplayDisabled(disabled bool) {
-	var replayDisabled uint32
-	if disabled {
-		replayDisabled = 1
-	}
-
-	atomic.StoreUint32(&m.replay.Disabled, replayDisabled)
-}
-
 // SetRelayOptions sets the relay options, which may be overrided when Relay.
 func (m *relayService) SetRelayOptions(opts RelayOptions) {
-	m.setReplayDisabled(opts.Replay.Disabled)
 	storeDuration(&m.replay.Response.Timeout, opts.Replay.Response.Timeout)
 	storeDuration(&m.connIdle, opts.ConnIdle)
 	storeDuration(&m.uplinkIdle, opts.UplinkIdle)
@@ -96,42 +80,6 @@ func (m *relayService) SetRelayOptions(opts RelayOptions) {
 // the other, in both directions. In addition, Relay accepts a RelayOptions
 // that can be specified with opts parameter or by SetRelayOptions method.
 func (m *Manager) Relay(
-	local net.Conn,
-	getRemote func(context.Context) net.Conn,
-	sendResponse func(io.Writer) bool,
-	opts RelayOptions,
-) {
-	if !opts.Replay.Enabled && (opts.Replay.Disabled || m.getReplayDisabled()) {
-		m.relayWithoutReplay(local, getRemote, sendResponse, opts)
-		return
-	}
-
-	m.relayWithReplay(local, getRemote, sendResponse, opts)
-}
-
-func (m *Manager) relayWithoutReplay(
-	local net.Conn,
-	getRemote func(context.Context) net.Conn,
-	sendResponse func(io.Writer) bool,
-	opts RelayOptions,
-) {
-	local, localCtx := netutil.NewConnChecker(local)
-	defer local.Close()
-
-	remote := getRemote(localCtx)
-	if remote == nil {
-		return
-	}
-	defer remote.Close()
-
-	if sendResponse != nil && !sendResponse(local) {
-		return
-	}
-
-	m.relay(local, remote, opts)
-}
-
-func (m *Manager) relayWithReplay(
 	local net.Conn,
 	getRemote func(context.Context) net.Conn,
 	sendResponse func(io.Writer) bool,
@@ -160,7 +108,10 @@ func (m *Manager) relayWithReplay(
 
 		timeout := opts.Replay.Response.Timeout
 		if timeout <= 0 {
-			timeout = m.actualDialTimeout(loadDuration(&m.replay.Response.Timeout))
+			timeout = loadDuration(&m.replay.Response.Timeout)
+			if timeout <= 0 {
+				timeout = defaultResponseTimeout
+			}
 		}
 
 		defer time.AfterFunc(timeout, func() {
@@ -283,7 +234,9 @@ var relayPool = sync.Pool{
 }
 
 const (
-	defaultConnIdle     = 300 * time.Second
+	defaultResponseTimeout = 5 * time.Minute
+
+	defaultConnIdle     = 5 * time.Minute
 	defaultUplinkIdle   = 2 * time.Second
 	defaultDownlinkIdle = 5 * time.Second
 )
