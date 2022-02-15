@@ -31,6 +31,9 @@ type RelayOptions struct {
 		Response struct {
 			Timeout time.Duration
 		}
+		Retry struct {
+			Always *bool
+		}
 	}
 	// ConnIdle is the idle timeout when relay starts.
 	// If both connections (local-side and remote-side) remains idle (no reads)
@@ -52,7 +55,11 @@ type relayService struct {
 		Response struct {
 			Timeout time.Duration
 		}
+		Retry struct {
+			Always uint32
+		}
 	}
+	_            uint32
 	connIdle     time.Duration
 	uplinkIdle   time.Duration
 	downlinkIdle time.Duration
@@ -68,9 +75,21 @@ func storeDuration(addr *time.Duration, d time.Duration) {
 	atomic.StoreInt64(ptr, int64(d))
 }
 
+func boolPtrToUint32(v *bool, def uint32) uint32 {
+	switch {
+	case v == nil:
+		return def
+	case *v:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // SetRelayOptions sets the relay options, which may be overrided when Relay.
 func (m *relayService) SetRelayOptions(opts RelayOptions) {
 	storeDuration(&m.replay.Response.Timeout, opts.Replay.Response.Timeout)
+	atomic.StoreUint32(&m.replay.Retry.Always, boolPtrToUint32(opts.Replay.Retry.Always, 0))
 	storeDuration(&m.connIdle, opts.ConnIdle)
 	storeDuration(&m.uplinkIdle, opts.UplinkIdle)
 	storeDuration(&m.downlinkIdle, opts.DownlinkIdle)
@@ -127,7 +146,19 @@ func (m *Manager) Relay(
 			}
 		}
 
+		startTime := time.Now()
+
 		m.relay(local, netutil.DoR(remote, do), opts)
+
+		if time.Since(startTime) < timeout {
+			retryAlways := boolPtrToUint32(
+				opts.Replay.Retry.Always,
+				atomic.LoadUint32(&m.replay.Retry.Always),
+			)
+			if retryAlways == 0 {
+				return false
+			}
+		}
 
 		return replayer.Replay() && localCtx.Err() == nil
 	}
