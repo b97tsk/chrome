@@ -109,11 +109,11 @@ func (Service) Run(ctx chrome.Context) {
 		serverDown = make(chan struct{})
 		serverListener = ln
 
-		go func() {
-			_ = server.Serve(listener)
+		go func(srv *http.Server, down chan<- struct{}) {
+			_ = srv.Serve(listener)
 
-			close(serverDown)
-		}()
+			close(down)
+		}(server, serverDown)
 
 		go func() {
 			var tempDelay time.Duration // how long to sleep on accept failure

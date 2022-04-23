@@ -307,11 +307,11 @@ func (Service) Run(ctx chrome.Context) {
 		serverDown = make(chan struct{})
 		serverListener = ln
 
-		go func() {
-			_ = server.Serve(ln)
+		go func(srv *http.Server, down chan<- struct{}) {
+			_ = srv.Serve(ln)
 
-			close(serverDown)
-		}()
+			close(down)
+		}(server, serverDown)
 
 		return nil
 	}
