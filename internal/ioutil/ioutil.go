@@ -18,7 +18,7 @@ func (l *limitedWriter) Write(p []byte) (n int, err error) {
 			return l.rest.Write(p)
 		}
 
-		return len(p), nil
+		return 0, io.ErrShortWrite
 	}
 
 	var rest []byte
@@ -30,15 +30,14 @@ func (l *limitedWriter) Write(p []byte) (n int, err error) {
 	n, err = l.w.Write(p)
 	l.n -= int64(n)
 
-	if err != nil {
+	if err != nil || rest == nil {
 		return
 	}
 
-	if len(rest) != 0 && l.rest != nil {
-		if n2, err2 := l.rest.Write(rest); err2 != nil {
-			return n + n2, err2
-		}
+	if l.rest != nil {
+		n2, err2 := l.rest.Write(rest)
+		return n + n2, err2
 	}
 
-	return len(p), nil
+	return n, io.ErrShortWrite
 }
