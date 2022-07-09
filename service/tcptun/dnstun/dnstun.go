@@ -35,7 +35,8 @@ type Options struct {
 	Server  DNServer
 	Servers []DNServer
 
-	Routes []RouteOptions
+	Routes    []RouteOptions
+	Redirects map[string]string
 
 	Cache bool
 
@@ -561,9 +562,15 @@ Loop:
 				if r, ok := opts.routeCache.Load(q.Domain); ok {
 					route1 = r.(*route)
 				} else {
+					dm := q.Domain
+
+					if v := opts.Redirects[dm]; v != "" {
+						dm = v
+					}
+
 					for i := range opts.routes {
-						if r := &opts.routes[i]; r.AllowList.Allow(q.Domain) {
-							logger.Infof("%v matches %v", r.AllowList.Path, q.Domain)
+						if r := &opts.routes[i]; r.AllowList.Allow(dm) {
+							logger.Infof("%v matches %v", r.AllowList.Path, dm)
 
 							route1 = r
 
@@ -778,7 +785,15 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 				_ = dnsConn.SetDeadline(time.Now().Add(dnsConnWriteTimeout))
 
-				err := dnsConn.WriteMsg(q.Message)
+				qm := q.Message
+				hasq := len(qm.Question) != 0
+
+				if v := opts.Redirects[q.Domain]; v != "" && hasq {
+					qm = qm.Copy()
+					qm.Question[0].Name = dns.Fqdn(v)
+				}
+
+				err := dnsConn.WriteMsg(qm)
 				if err == nil {
 					var msg *dns.Msg
 
@@ -788,8 +803,16 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					if err == nil {
 						r := dnsQueryResult{Message: msg}
 
+						if qm != q.Message {
+							msg.Question = q.Message.Question
+						}
+
 						for _, ans := range msg.Answer {
 							if h := ans.Header(); h != nil {
+								if qm != q.Message && hasq {
+									h.Name = q.Message.Question[0].Name
+								}
+
 								ttl := time.Duration(h.Ttl) * time.Second
 								if opts.TTL.Min > 0 || opts.TTL.Max > 0 {
 									origin := ttl
@@ -862,7 +885,10 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 }
 
 func shouldResetDNSCache(x, y Options) bool {
-	return x.TTL != y.TTL || !reflect.DeepEqual(&x.Servers, &y.Servers) || !routesEqual(x.Routes, y.Routes)
+	return x.TTL != y.TTL ||
+		!reflect.DeepEqual(&x.Servers, &y.Servers) ||
+		!routesEqual(x.Routes, y.Routes) ||
+		!reflect.DeepEqual(&x.Redirects, &y.Redirects)
 }
 
 func routesEqual(a, b []RouteOptions) bool {
