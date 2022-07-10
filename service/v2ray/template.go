@@ -40,6 +40,16 @@ const v2rayTemplateBody = `
       },
 {{- end }}{{/* with .TROJAN */}}
 
+{{- else if eq $protocol "VLESS" }}
+
+{{- with .VLESS }}
+      "protocol": "vless",
+      "settings": {
+        "clients": {{ .Clients | json }},
+		"decryption": "none"
+      },
+{{- end }}{{/* with .VLESS */}}
+
 {{- else if eq $protocol "VMESS" }}
 
 {{- with .VMESS }}
@@ -51,7 +61,17 @@ const v2rayTemplateBody = `
 
 {{- end }}
       "streamSettings": {
-{{- if eq $transport "HTTP" }}
+{{- if eq $transport "GRPC" }}
+
+{{- with .GRPC }}
+        "network": "grpc",
+        "security": "tls",
+        "grpcSettings": {
+          "serviceName": {{ .ServiceName | json }}
+        },
+{{- end }}
+
+{{- else if eq $transport "HTTP" }}
 
 {{- with .HTTP }}
         "network": "http",

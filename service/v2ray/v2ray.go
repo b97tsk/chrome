@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -59,15 +59,25 @@ type ProtocolOptions struct {
 			Password string `json:"password"`
 		}
 	}
+	VLESS struct {
+		Clients []struct {
+			ID    string `json:"id"`
+			EMail string `json:"email,omitempty"`
+		}
+	}
 	VMESS struct {
 		Clients []struct {
 			ID      string `json:"id"`
 			AlterID int    `json:"alterId,omitempty" yaml:"aid"`
+			EMail   string `json:"email,omitempty"`
 		}
 	}
 }
 
 type TransportOptions struct {
+	GRPC struct {
+		ServiceName string
+	}
 	HTTP struct {
 		Host []string
 		Path string
@@ -328,15 +338,15 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 	for _, t := range strings.SplitN(opts.Type, "+", 3) {
 		t = strings.ToUpper(t)
 		switch t {
-		case "TROJAN", "VMESS":
+		case "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
-		case "HTTP", "TCP", "WS":
+		case "GRPC", "HTTP", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
 			opts.TLS.Enabled = true
 		case "":
 		default:
-			return nil, errors.New("unknown type: " + opts.Type)
+			return nil, fmt.Errorf("unknown type: %v", opts.Type)
 		}
 	}
 
