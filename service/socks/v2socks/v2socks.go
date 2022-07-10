@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -69,6 +68,10 @@ type ProtocolOptions struct {
 		HostportOptions `yaml:",inline"`
 		Password        string
 	}
+	VLESS struct {
+		HostportOptions `yaml:",inline"`
+		ID              string
+	}
 	VMESS struct {
 		HostportOptions `yaml:",inline"`
 		ID              string
@@ -77,6 +80,9 @@ type ProtocolOptions struct {
 }
 
 type TransportOptions struct {
+	GRPC struct {
+		ServiceName string
+	}
 	HTTP struct {
 		Host []string
 		Path string
@@ -420,15 +426,15 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 	for _, t := range strings.SplitN(opts.Type, "+", 3) {
 		t = strings.ToUpper(t)
 		switch t {
-		case "TROJAN", "VMESS":
+		case "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
-		case "HTTP", "TCP", "WS":
+		case "GRPC", "HTTP", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
 			opts.TLS.Enabled = true
 		case "":
 		default:
-			return nil, errors.New("unknown type: " + opts.Type)
+			return nil, fmt.Errorf("unknown type: %v", opts.Type)
 		}
 	}
 
@@ -437,6 +443,8 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 	switch opts.Protocol {
 	case "TROJAN":
 		hostport = &opts.TROJAN.HostportOptions
+	case "VLESS":
+		hostport = &opts.VLESS.HostportOptions
 	case "VMESS":
 		hostport = &opts.VMESS.HostportOptions
 	}
@@ -444,14 +452,14 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 	if hostport != nil {
 		host, port, err := net.SplitHostPort(hostport.Address)
 		if err != nil {
-			return nil, errors.New("invalid address: " + hostport.Address)
+			return nil, fmt.Errorf("invalid address: %v", hostport.Address)
 		}
 
 		hostport.Address = host
 
 		hostport.Port, err = strconv.Atoi(port)
 		if err != nil {
-			return nil, errors.New("invalid port in address: " + hostport.Address)
+			return nil, fmt.Errorf("invalid port in address: %v", hostport.Address)
 		}
 	}
 
@@ -459,7 +467,7 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		opts.Mux.Enabled = *opts.Mux.EnabledByYAML
 	} else {
 		switch opts.Protocol {
-		case "TROJAN", "VMESS":
+		case "TROJAN", "VLESS", "VMESS":
 			opts.Mux.Enabled = true
 		}
 	}
@@ -480,6 +488,8 @@ func parseURL(opts *Options) error {
 	switch {
 	case strings.HasPrefix(opts.URL, "trojan://"):
 		return parseTrojanURL(opts)
+	case strings.HasPrefix(opts.URL, "vless://"):
+		return parseVLessURL(opts)
 	case strings.HasPrefix(opts.URL, "vmess://"):
 		return parseVMessURL(opts)
 	}
@@ -494,12 +504,74 @@ func parseTrojanURL(opts *Options) error {
 	}
 
 	if u.User == nil {
-		return fmt.Errorf("invalid trojan url %v", opts.URL)
+		return fmt.Errorf("invalid trojan url: %v", opts.URL)
+	}
+
+	values := u.Query()
+
+	if sni := values.Get("sni"); sni != "" && sni != u.Hostname() {
+		opts.TLS.ServerName = sni
 	}
 
 	opts.Type = "TROJAN+TCP+TLS"
 	opts.TROJAN.Address = u.Host
 	opts.TROJAN.Password = u.User.Username()
+
+	return nil
+}
+
+func parseVLessURL(opts *Options) error {
+	u, err := url.Parse(opts.URL)
+	if err != nil {
+		return fmt.Errorf("parse vless url %v: %w", opts.URL, err)
+	}
+
+	if u.User == nil {
+		return fmt.Errorf("invalid vless url: %v", opts.URL)
+	}
+
+	values := u.Query()
+
+	switch s := values.Get("encryption"); s {
+	case "", "none":
+	default:
+		return fmt.Errorf("unsupported encryption in vless url %v: %v", opts.URL, s)
+	}
+
+	var transport string
+
+	switch typ := strings.ToUpper(values.Get("type")); typ {
+	case "GRPC":
+		transport = "GRPC"
+		opts.GRPC.ServiceName = values.Get("serviceName")
+	case "TCP":
+		transport = "TCP"
+
+		if strings.EqualFold(values.Get("security"), "TLS") {
+			transport = "TCP+TLS"
+
+			if host := values.Get("host"); host != "" && host != u.Hostname() {
+				opts.TLS.ServerName = host
+			}
+		}
+	case "WS":
+		transport = "WS"
+		if strings.EqualFold(values.Get("security"), "TLS") {
+			transport = "WS+TLS"
+
+			if host := values.Get("host"); host != "" && host != u.Hostname() {
+				opts.TLS.ServerName = host
+			}
+		}
+
+		opts.WS.Path = values.Get("path")
+	default:
+		return fmt.Errorf("unknown type in vless url %v: %v", opts.URL, typ)
+	}
+
+	opts.Type = "VLESS+" + transport
+	opts.VLESS.Address = u.Host
+	opts.VLESS.ID = u.User.Username()
 
 	return nil
 }
@@ -550,6 +622,9 @@ func parseVMessURL(opts *Options) error {
 	var transport string
 
 	switch strings.ToUpper(config.Net) {
+	case "GRPC":
+		transport = "GRPC"
+		opts.GRPC.ServiceName = config.Path
 	case "HTTP", "H2":
 		transport = "HTTP"
 
