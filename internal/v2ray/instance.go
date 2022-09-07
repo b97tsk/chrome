@@ -1,16 +1,14 @@
 package v2ray
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 
-	core "github.com/v2fly/v2ray-core/v4"
-	"github.com/v2fly/v2ray-core/v4/common/net"
-	"github.com/v2fly/v2ray-core/v4/infra/conf"
-	_ "github.com/v2fly/v2ray-core/v4/main/distro/all" // Imported for side-effect.
-	"google.golang.org/protobuf/proto"
+	core "github.com/v2fly/v2ray-core/v5"
+	"github.com/v2fly/v2ray-core/v5/common/net"
+	conf "github.com/v2fly/v2ray-core/v5/infra/conf/v4"
+	_ "github.com/v2fly/v2ray-core/v5/main/distro/all" // Imported for side-effect.
 )
 
 type Instance struct {
@@ -24,19 +22,7 @@ func NewInstanceFromJSON(data []byte) (*Instance, error) {
 		return nil, err
 	}
 
-	pb, err := config.Build()
-	if err != nil {
-		return nil, err
-	}
-
-	pbBytes, err := proto.Marshal(pb)
-	if err != nil {
-		return nil, err
-	}
-
-	pbBuffer := bytes.NewBuffer(pbBytes)
-
-	coreConfig, err := core.LoadConfig("protobuf", ".pb", pbBuffer)
+	coreConfig, err := config.Build()
 	if err != nil {
 		return nil, err
 	}
