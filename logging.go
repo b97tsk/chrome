@@ -12,7 +12,7 @@ import (
 
 type loggingService struct {
 	mu      sync.Mutex
-	level   int32
+	level   atomic.Int32
 	file    *os.File
 	output  io.Writer
 	loggers sync.Map
@@ -31,12 +31,12 @@ func (m *loggingService) Logger(name string) *log.Logger {
 
 // LogLevel gets the logging level.
 func (m *loggingService) LogLevel() log.Level {
-	return log.Level(atomic.LoadInt32(&m.level))
+	return log.Level(m.level.Load())
 }
 
 // SetLogLevel sets the logging level.
 func (m *loggingService) SetLogLevel(level log.Level) {
-	atomic.StoreInt32(&m.level, int32(level))
+	m.level.Store(int32(level))
 }
 
 // SetLogFile sets the file that each logging message would write to.

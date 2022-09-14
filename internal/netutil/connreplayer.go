@@ -12,7 +12,7 @@ type ConnReplayer struct {
 
 	data    []byte
 	avail   []byte
-	stopped uint32
+	stopped atomic.Bool
 }
 
 func NewConnReplayer(c net.Conn) *ConnReplayer {
@@ -20,11 +20,11 @@ func NewConnReplayer(c net.Conn) *ConnReplayer {
 }
 
 func (c *ConnReplayer) Stop() {
-	atomic.StoreUint32(&c.stopped, 1)
+	c.stopped.Store(true)
 }
 
 func (c *ConnReplayer) Stopped() bool {
-	return atomic.LoadUint32(&c.stopped) != 0
+	return c.stopped.Load()
 }
 
 func (c *ConnReplayer) Replay() bool {

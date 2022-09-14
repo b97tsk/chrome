@@ -20,7 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/httputil"
@@ -291,8 +290,7 @@ type handler struct {
 	appIDList    []string
 	badAppIDList []string
 	urlfetch     struct {
-		_       int32
-		MaxSize int64
+		MaxSize atomic.Int64
 	}
 }
 
@@ -351,7 +349,7 @@ func (h *handler) SetAppIDList(appIDList []string) {
 }
 
 func (h *handler) SetURLFetchMaxSize(size int64) {
-	storeInt64(&h.urlfetch.MaxSize, size)
+	h.urlfetch.MaxSize.Store(size)
 }
 
 func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -577,7 +575,7 @@ func (h *handler) autoRange(req *http.Request, resp *http.Response) (yes bool) {
 	resp.Body = newAutoRangeBody(
 		h, req, &snapshot, bodySize,
 		requestRangeFirst, requestRangeLast,
-		loadInt64(&h.urlfetch.MaxSize),
+		h.urlfetch.MaxSize.Load(),
 	)
 	resp.ContentLength = requestRangeLast - requestRangeFirst + 1
 	resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
@@ -989,16 +987,6 @@ func isTwoAppIDListsIdentical(a, b []string) bool {
 	}
 
 	return true
-}
-
-func loadInt64(addr *int64) int64 {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
-	return atomic.LoadInt64(ptr)
-}
-
-func storeInt64(addr *int64, val int64) {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
-	atomic.StoreInt64(ptr, val)
 }
 
 func canceled(e error, es *string) bool {

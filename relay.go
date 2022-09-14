@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/b97tsk/chrome/internal/netutil"
 )
@@ -51,28 +50,16 @@ type RelayOptions struct {
 
 type relayService struct {
 	replay struct {
-		_        uint32
 		Response struct {
-			Timeout time.Duration
+			Timeout atomic.Int64
 		}
 		Retry struct {
-			Always uint32
+			Always atomic.Uint32
 		}
 	}
-	_            uint32
-	connIdle     time.Duration
-	uplinkIdle   time.Duration
-	downlinkIdle time.Duration
-}
-
-func loadDuration(addr *time.Duration) time.Duration {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
-	return time.Duration(atomic.LoadInt64(ptr))
-}
-
-func storeDuration(addr *time.Duration, d time.Duration) {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(addr)) &^ 4))
-	atomic.StoreInt64(ptr, int64(d))
+	connIdle     atomic.Int64
+	uplinkIdle   atomic.Int64
+	downlinkIdle atomic.Int64
 }
 
 func boolPtrToUint32(v *bool, def uint32) uint32 {
@@ -88,11 +75,11 @@ func boolPtrToUint32(v *bool, def uint32) uint32 {
 
 // SetRelayOptions sets the relay options, which may be overrided when Relay.
 func (m *relayService) SetRelayOptions(opts RelayOptions) {
-	storeDuration(&m.replay.Response.Timeout, opts.Replay.Response.Timeout)
-	atomic.StoreUint32(&m.replay.Retry.Always, boolPtrToUint32(opts.Replay.Retry.Always, 0))
-	storeDuration(&m.connIdle, opts.ConnIdle)
-	storeDuration(&m.uplinkIdle, opts.UplinkIdle)
-	storeDuration(&m.downlinkIdle, opts.DownlinkIdle)
+	m.replay.Response.Timeout.Store(int64(opts.Replay.Response.Timeout))
+	m.replay.Retry.Always.Store(boolPtrToUint32(opts.Replay.Retry.Always, 0))
+	m.connIdle.Store(int64(opts.ConnIdle))
+	m.uplinkIdle.Store(int64(opts.UplinkIdle))
+	m.downlinkIdle.Store(int64(opts.DownlinkIdle))
 }
 
 // Relay relays two (TCP) connections, that is, read from one and write to
@@ -127,7 +114,7 @@ func (m *Manager) Relay(
 
 		timeout := opts.Replay.Response.Timeout
 		if timeout <= 0 {
-			timeout = loadDuration(&m.replay.Response.Timeout)
+			timeout = time.Duration(m.replay.Response.Timeout.Load())
 			if timeout <= 0 {
 				timeout = defaultResponseTimeout
 			}
@@ -153,7 +140,7 @@ func (m *Manager) Relay(
 		if time.Since(startTime) < timeout {
 			retryAlways := boolPtrToUint32(
 				opts.Replay.Retry.Always,
-				atomic.LoadUint32(&m.replay.Retry.Always),
+				m.replay.Retry.Always.Load(),
 			)
 			if retryAlways == 0 {
 				return false
@@ -170,21 +157,21 @@ func (m *Manager) Relay(
 
 func (m *relayService) relay(l, r net.Conn, opts RelayOptions) {
 	if opts.ConnIdle <= 0 {
-		opts.ConnIdle = loadDuration(&m.connIdle)
+		opts.ConnIdle = time.Duration(m.connIdle.Load())
 		if opts.ConnIdle <= 0 {
 			opts.ConnIdle = defaultConnIdle
 		}
 	}
 
 	if opts.UplinkIdle <= 0 {
-		opts.UplinkIdle = loadDuration(&m.uplinkIdle)
+		opts.UplinkIdle = time.Duration(m.uplinkIdle.Load())
 		if opts.UplinkIdle <= 0 {
 			opts.UplinkIdle = defaultUplinkIdle
 		}
 	}
 
 	if opts.DownlinkIdle <= 0 {
-		opts.DownlinkIdle = loadDuration(&m.downlinkIdle)
+		opts.DownlinkIdle = time.Duration(m.downlinkIdle.Load())
 		if opts.DownlinkIdle <= 0 {
 			opts.DownlinkIdle = defaultDownlinkIdle
 		}
@@ -192,9 +179,10 @@ func (m *relayService) relay(l, r net.Conn, opts RelayOptions) {
 
 	reset := make(chan time.Duration, 1)
 
-	num := int32(2)
+	var n atomic.Uint32
+
 	done := func() {
-		if atomic.AddInt32(&num, -1) == 0 {
+		if n.Add(1) == 2 {
 			close(reset)
 		}
 	}

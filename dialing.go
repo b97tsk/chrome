@@ -6,25 +6,22 @@ import (
 	"net"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/b97tsk/proxy"
 )
 
 type dialingService struct {
-	dialTimeout [3]uint32
+	dialTimeout atomic.Int64
 }
 
 // DialTimeout gets the dial timeout.
 func (m *dialingService) DialTimeout() time.Duration {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.dialTimeout[1])) &^ 4))
-	return time.Duration(atomic.LoadInt64(ptr))
+	return time.Duration(m.dialTimeout.Load())
 }
 
 // SetDialTimeout sets the dial timeout, which may be overrided when Dial.
 func (m *dialingService) SetDialTimeout(timeout time.Duration) {
-	ptr := (*int64)(unsafe.Pointer(uintptr(unsafe.Pointer(&m.dialTimeout[1])) &^ 4))
-	atomic.StoreInt64(ptr, int64(timeout))
+	m.dialTimeout.Store(int64(timeout))
 }
 
 // actualDialTimeout returns the dial timeout in effect.
