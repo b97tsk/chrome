@@ -12,7 +12,6 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/service/http"
-	"github.com/b97tsk/chrome/service/http/goagent"
 	"github.com/b97tsk/chrome/service/http/httpfs"
 	"github.com/b97tsk/chrome/service/http/pprof"
 	"github.com/b97tsk/chrome/service/socks"
@@ -127,7 +126,6 @@ func newManager() *chrome.Manager {
 	var m chrome.Manager
 
 	m.AddService(dnstun.Service{})
-	m.AddService(goagent.Service{})
 	m.AddService(http.Service{})
 	m.AddService(httpfs.Service{})
 	m.AddService(pprof.Service{})
