@@ -103,6 +103,8 @@ func (Service) Run(ctx chrome.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-serverDown:
+			return
 		case opts := <-ctx.Load:
 			if new, ok := opts.(*Options); ok {
 				old := <-optsOut
