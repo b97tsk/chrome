@@ -517,6 +517,10 @@ func parseTrojanURL(opts *Options) error {
 	opts.TROJAN.Address = u.Host
 	opts.TROJAN.Password = u.User.Username()
 
+	if values.Get("allowInsecure") == "1" {
+		opts.TLS.AllowInsecure = true
+	}
+
 	return nil
 }
 
@@ -595,9 +599,9 @@ func parseVMessURL(opts *Options) error {
 	var config struct {
 		Version json.RawMessage `json:"v"`
 
-		Net  string `json:"net"`
-		TLS  string `json:"tls"`
-		Type string `json:"type"`
+		Net  string          `json:"net"`
+		TLS  json.RawMessage `json:"tls"`
+		Type string          `json:"type"`
 
 		Address string          `json:"add"`
 		Port    json.RawMessage `json:"port"`
@@ -643,7 +647,7 @@ func parseVMessURL(opts *Options) error {
 			return fmt.Errorf("unknown type field in vmess url %v: %v", opts.URL, config.Type)
 		}
 
-		if strings.EqualFold(config.TLS, "TLS") {
+		if isTLS(unquote(string(config.TLS))) {
 			transport = "TCP+TLS"
 
 			if config.Host != "" && config.Host != config.Address {
@@ -652,7 +656,7 @@ func parseVMessURL(opts *Options) error {
 		}
 	case "WS":
 		transport = "WS"
-		if strings.EqualFold(config.TLS, "TLS") {
+		if isTLS(unquote(string(config.TLS))) {
 			transport = "WS+TLS"
 
 			if config.Host != "" && config.Host != config.Address {
@@ -779,6 +783,10 @@ func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan
 		case <-time.After(sleep):
 		}
 	}
+}
+
+func isTLS(s string) bool {
+	return len(s) != 0 && (s[0] == 't' || s[0] == 'T')
 }
 
 func unquote(s string) string {
