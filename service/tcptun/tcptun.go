@@ -2,8 +2,8 @@ package tcptun
 
 import (
 	"context"
+	"errors"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/b97tsk/chrome"
@@ -78,8 +78,8 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
-				if es := ""; err != nil && !canceled(err, &es) {
-					logger.Tracef("dial %v: %v", opts.ForwardAddr, es)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					logger.Tracef("dial %v: %v", opts.ForwardAddr, err)
 				}
 
 				return remote
@@ -129,14 +129,4 @@ func (Service) Run(ctx chrome.Context) {
 			}
 		}
 	}
-}
-
-func canceled(e error, es *string) bool {
-	if e == context.Canceled {
-		return true
-	}
-
-	*es = e.Error()
-
-	return strings.Contains(*es, "operation was canceled")
 }

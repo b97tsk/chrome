@@ -737,8 +737,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 					conn, err := ctx.Manager.Dial(q.Context, proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
 					if err != nil {
-						if es := ""; !canceled(err, &es) {
-							logger.Tracef("dial %v: %v", hostport, es)
+						if !errors.Is(err, context.Canceled) {
+							logger.Tracef("dial %v: %v", hostport, err)
 						}
 
 						break
@@ -903,16 +903,6 @@ func routesEqual(a, b []RouteOptions) bool {
 	}
 
 	return true
-}
-
-func canceled(e error, es *string) bool {
-	if e == context.Canceled {
-		return true
-	}
-
-	*es = e.Error()
-
-	return strings.Contains(*es, "operation was canceled")
 }
 
 func isTimeout(err error) bool {

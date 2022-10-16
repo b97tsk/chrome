@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -268,8 +269,8 @@ func (Service) Run(ctx chrome.Context) {
 								}
 
 								remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
-								if es := ""; err != nil && !canceled(err, &es) {
-									logger.Tracef("dial %v: %v", remoteAddr, es)
+								if err != nil && !errors.Is(err, context.Canceled) {
+									logger.Tracef("dial %v: %v", remoteAddr, err)
 								}
 
 								return remote
@@ -380,14 +381,4 @@ func readLines(fsys fs.FS, name string) ([]string, error) {
 	}
 
 	return lines, nil
-}
-
-func canceled(e error, es *string) bool {
-	if e == context.Canceled {
-		return true
-	}
-
-	*es = e.Error()
-
-	return strings.Contains(*es, "operation was canceled")
 }
