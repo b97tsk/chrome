@@ -74,7 +74,12 @@ const v2socksTemplateBody = `
             "users": [
               {
                 "id": {{ .ID | json }},
-                "alterId": {{ .AlterID }}
+                "alterId": {{ .AlterID }},
+{{- if .Security }}
+				"security": {{ .Security | json }}
+{{- else }}
+				"security": "auto"
+{{- end }}
               }
             ]
           }

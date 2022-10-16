@@ -76,7 +76,8 @@ type ProtocolOptions struct {
 	VMESS struct {
 		HostportOptions `yaml:",inline"`
 		ID              string
-		AlterID         int `yaml:"aid"`
+		AlterID         int    `yaml:"aid"`
+		Security        string `yaml:"scy"`
 	}
 }
 
@@ -604,10 +605,11 @@ func parseVMessURL(opts *Options) error {
 		TLS  json.RawMessage `json:"tls"`
 		Type string          `json:"type"`
 
-		Address string          `json:"add"`
-		Port    json.RawMessage `json:"port"`
-		ID      string          `json:"id"`
-		AlterID json.RawMessage `json:"aid"`
+		Address  string          `json:"add"`
+		Port     json.RawMessage `json:"port"`
+		ID       string          `json:"id"`
+		AlterID  json.RawMessage `json:"aid"`
+		Security string          `json:"scy"`
 
 		Path string `json:"path"`
 		Host string `json:"host"`
@@ -674,6 +676,10 @@ func parseVMessURL(opts *Options) error {
 	opts.VMESS.Address = net.JoinHostPort(config.Address, unquote(string(config.Port)))
 	opts.VMESS.ID = config.ID
 	opts.VMESS.AlterID, _ = strconv.Atoi(unquote(string(config.AlterID)))
+
+	if opts.VMESS.Security == "" {
+		opts.VMESS.Security = config.Security
+	}
 
 	return nil
 }
