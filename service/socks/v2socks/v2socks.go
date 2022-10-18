@@ -550,6 +550,10 @@ func parseVLessURL(opts *Options) error {
 	case "GRPC":
 		transport = "GRPC"
 		opts.GRPC.ServiceName = values.Get("serviceName")
+
+		if host := values.Get("host"); host != "" && host != u.Hostname() {
+			opts.TLS.ServerName = host
+		}
 	case "TCP":
 		transport = "TCP"
 
@@ -632,6 +636,10 @@ func parseVMessURL(opts *Options) error {
 	case "GRPC":
 		transport = "GRPC"
 		opts.GRPC.ServiceName = config.Path
+
+		if config.Host != "" && config.Host != config.Address {
+			opts.TLS.ServerName = config.Host
+		}
 	case "HTTP", "H2":
 		transport = "HTTP"
 
