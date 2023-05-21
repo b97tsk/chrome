@@ -23,7 +23,7 @@ func (Service) Name() string {
 	return ServiceName
 }
 
-func (Service) Options() interface{} {
+func (Service) Options() any {
 	return new(Options)
 }
 

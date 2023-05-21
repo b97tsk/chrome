@@ -31,7 +31,7 @@ type Service interface {
 	// Options may return nil to indicate no options.
 	// If non-nil, the returned value must be a pointer to a struct.
 	// The returned value is sent to Context.Load later after unmarshaling.
-	Options() interface{}
+	Options() any
 	// Run starts a job.
 	Run(Context)
 }
@@ -49,7 +49,7 @@ type Context struct {
 	// If the job has acquired some system resources (for example, listening to
 	// a port), this is the good chance to release the resources, so other jobs
 	// can acquire the resources.
-	Load <-chan interface{}
+	Load <-chan any
 	// Loaded means that the job now can start doing the work.
 	Loaded <-chan struct{}
 }
@@ -61,13 +61,13 @@ type Job struct {
 	// Cancel cancels the job and later cancels Context after Service.Run returns.
 	Cancel context.CancelFunc
 	// Load is for sending options to the job.
-	Load chan<- interface{}
+	Load chan<- any
 	// Loaded is for signaling that the job now can start doing the work.
 	Loaded chan<- struct{}
 }
 
 // SendOptions sends opts to Load.
-func (job Job) SendOptions(opts interface{}) {
+func (job Job) SendOptions(opts any) {
 	if job.Context == nil {
 		return
 	}
@@ -165,7 +165,7 @@ func (m *Manager) StartService(ctx context.Context, service Service) (Job, error
 
 	ctx, cancel := context.WithCancel(ctx)
 	ctx1, done := context.WithCancel(context.Background())
-	load, loaded := make(chan interface{}), make(chan struct{})
+	load, loaded := make(chan any), make(chan struct{})
 
 	go func() {
 		defer func() {
@@ -268,7 +268,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 			Timeout time.Duration
 		}
 		Relay RelayOptions
-		Jobs  map[string]interface{} `yaml:",inline"`
+		Jobs  map[string]any `yaml:",inline"`
 	}
 
 	dec := yaml.NewDecoder(r)
@@ -309,7 +309,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 	return nil
 }
 
-func (m *Manager) setOptions(name string, data interface{}) error {
+func (m *Manager) setOptions(name string, data any) error {
 	service := m.Service(name)
 	switch service {
 	case nil:

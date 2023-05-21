@@ -7,7 +7,7 @@ import (
 
 func init() {
 	funcs := template.FuncMap{
-		"json": func(v interface{}) (string, error) {
+		"json": func(v any) (string, error) {
 			bytes, err := json.Marshal(v)
 			return string(bytes), err
 		},

@@ -249,7 +249,7 @@ func (m *relayService) relay(l, r net.Conn, opts RelayOptions) {
 type relayBuffer [32 * 1024]byte
 
 var relayPool = sync.Pool{
-	New: func() interface{} { return new(relayBuffer) },
+	New: func() any { return new(relayBuffer) },
 }
 
 const (

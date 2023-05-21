@@ -43,7 +43,7 @@ type MatchSet struct {
 
 type pattern struct {
 	atoms []byte
-	data  interface{}
+	data  any
 }
 
 func charSetFromGroup(bytes []byte) (charset, []byte) {
@@ -230,7 +230,7 @@ func (set *MatchSet) parse(bytes []byte) []rune {
 	return atoms
 }
 
-func (set *MatchSet) Add(patt string, data interface{}) {
+func (set *MatchSet) Add(patt string, data any) {
 	atoms := set.parse([]byte(patt))
 
 	// Reverse atoms for better performance, because in practice,
@@ -257,13 +257,13 @@ func (set *MatchSet) Empty() bool {
 	return len(set.patterns) == 0
 }
 
-func (set *MatchSet) Match(source string, accumulate func(interface{})) {
+func (set *MatchSet) Match(source string, accumulate func(any)) {
 	if !set.Empty() {
 		set.match(source, accumulate)
 	}
 }
 
-func (set *MatchSet) match(source string, accumulate func(interface{})) {
+func (set *MatchSet) match(source string, accumulate func(any)) {
 	bytes := []byte(source)
 
 	// Also reverse source bytes, since all patterns are reversed.
@@ -297,7 +297,7 @@ func (set *MatchSet) checkPattern(
 	patt pattern,
 	bytes []byte, i int,
 	matches []pattern,
-	accumulate func(interface{}),
+	accumulate func(any),
 ) []pattern {
 	atom, size := utf8.DecodeRune(patt.atoms)
 	nextpatt := pattern{patt.atoms[size:], patt.data}
@@ -383,7 +383,7 @@ func (set *MatchSet) checkPattern(
 	return matches
 }
 
-func (set *MatchSet) MatchAll(source string) (matches []interface{}) {
-	set.Match(source, func(data interface{}) { matches = append(matches, data) })
+func (set *MatchSet) MatchAll(source string) (matches []any) {
+	set.Match(source, func(data any) { matches = append(matches, data) })
 	return
 }

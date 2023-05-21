@@ -56,7 +56,7 @@ func (m *servingService) Serve(ln net.Listener, fn func(net.Conn)) {
 //
 // Shutdown calls CloseConnections.
 func (m *servingService) CloseConnections() {
-	m.connections.Range(func(key, _ interface{}) bool {
+	m.connections.Range(func(key, _ any) bool {
 		_ = key.(net.Conn).Close()
 		return true
 	})
