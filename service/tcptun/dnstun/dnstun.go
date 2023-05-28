@@ -695,8 +695,7 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					break
 				}
 
-				newConn := dnsConn == nil
-				if newConn {
+				if dnsConn == nil {
 					opts, ok = <-options
 					if !ok {
 						return
@@ -783,7 +782,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					}
 				}
 
-				_ = dnsConn.SetDeadline(time.Now().Add(dnsConnWriteTimeout))
+				deadline := time.Now().Add(dnsConnWriteTimeout)
+				_ = dnsConn.SetDeadline(deadline)
 
 				qm := q.Message
 				hasq := len(qm.Question) != 0
@@ -797,7 +797,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 				if err == nil {
 					var msg *dns.Msg
 
-					_ = dnsConn.SetDeadline(time.Now().Add(dnsConnReadTimeout))
+					deadline = time.Now().Add(dnsConnReadTimeout)
+					_ = dnsConn.SetDeadline(deadline)
 
 					msg, err = dnsConn.ReadMsg()
 					if err == nil {
@@ -864,8 +865,16 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 				dnsConn.Close()
 				dnsConn = nil
 
-				if newConn && !isTimeout(err) {
-					break
+				if d := time.Until(deadline); d > 0 {
+					if max := 2 * time.Second; d > max {
+						d = max
+					}
+
+					select {
+					case <-time.After(d):
+					case <-ctx.Done():
+					case <-q.Context.Done():
+					}
 				}
 			}
 
@@ -903,11 +912,6 @@ func routesEqual(a, b []RouteOptions) bool {
 	}
 
 	return true
-}
-
-func isTimeout(err error) bool {
-	var t interface{ Timeout() bool }
-	return errors.As(err, &t) && t.Timeout()
 }
 
 const (
