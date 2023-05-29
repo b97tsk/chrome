@@ -11,8 +11,10 @@ import (
 	"github.com/b97tsk/chrome/internal/netutil"
 )
 
-// RelayOptions provides options for relay.
+// RelayOptions provides options for Relay.
 type RelayOptions struct {
+	// Timeout for each attempt to relay.
+	//
 	// After the remote-side connection has been established, we send a request
 	// to the remote and normally we can expect the remote sends back a response.
 	//
@@ -20,72 +22,51 @@ type RelayOptions struct {
 	// that we have successfully connected to the remote. A proxy can certainly
 	// delay the actual work and return a connection early for a good reason.
 	//
-	// Replay mode detects that if the remote does not send back a response
-	// within a period of time, we kill the connection and resend the request
-	// to a new one.
-	//
-	// Replay mode is always on. If you want it off, you can just set response
-	// timeout to a large value (5 minutes, which is the default, should be enough).
-	Replay struct {
-		Response struct {
-			Timeout time.Duration
-		}
-		Retry struct {
-			Always *bool
-		}
-	}
-	// ConnIdle is the idle timeout when relay starts.
+	// Relay detects that if the remote does not send back a response within
+	// a period of time, it kills the connection and resends the request to
+	// a new one.
+	Timeout time.Duration
+	// Interval specifies the minimum interval between two consecutive attempts.
+	// If one attempt fails shortly, next attempt has to wait.
+	Interval time.Duration
+	// ConnIdle is the idle timeout when Relay starts.
 	// If both connections (local-side and remote-side) remains idle (no reads)
-	// for the duration of ConnIdle, both are closed and relay ends.
+	// for the duration of ConnIdle, both are closed and Relay ends.
 	ConnIdle time.Duration
 	// UplinkIdle is the idle timeout when the remote-side connection (downlink)
 	// closes. If the local-side connection (uplink) remains idle (no reads)
-	// for the duration of UplinkIdle, it is closed and relay ends.
+	// for the duration of UplinkIdle, it is closed and Relay ends.
 	UplinkIdle time.Duration
 	// DownlinkIdle is the idle timeout when the local-side connection (uplink)
 	// closes. If the remote-side connection (downlink) remains idle (no reads)
-	// for the duration of DownlinkIdle, it is closed and relay ends.
+	// for the duration of DownlinkIdle, it is closed and Relay ends.
 	DownlinkIdle time.Duration
 }
 
 type relayService struct {
-	replay struct {
-		Response struct {
-			Timeout atomic.Int64
-		}
-		Retry struct {
-			Always atomic.Uint32
-		}
-	}
-	connIdle     atomic.Int64
-	uplinkIdle   atomic.Int64
-	downlinkIdle atomic.Int64
-}
-
-func boolPtrToUint32(v *bool, def uint32) uint32 {
-	switch {
-	case v == nil:
-		return def
-	case *v:
-		return 1
-	default:
-		return 0
+	relayOpts struct {
+		Timeout      atomic.Int64
+		Interval     atomic.Int64
+		ConnIdle     atomic.Int64
+		UplinkIdle   atomic.Int64
+		DownlinkIdle atomic.Int64
 	}
 }
 
-// SetRelayOptions sets the relay options, which may be overrided when Relay.
+// SetRelayOptions sets default options for Relay, which may be overrided when
+// Relay.
 func (m *relayService) SetRelayOptions(opts RelayOptions) {
-	m.replay.Response.Timeout.Store(int64(opts.Replay.Response.Timeout))
-	m.replay.Retry.Always.Store(boolPtrToUint32(opts.Replay.Retry.Always, 0))
-	m.connIdle.Store(int64(opts.ConnIdle))
-	m.uplinkIdle.Store(int64(opts.UplinkIdle))
-	m.downlinkIdle.Store(int64(opts.DownlinkIdle))
+	m.relayOpts.Timeout.Store(int64(opts.Timeout))
+	m.relayOpts.Interval.Store(int64(opts.Interval))
+	m.relayOpts.ConnIdle.Store(int64(opts.ConnIdle))
+	m.relayOpts.UplinkIdle.Store(int64(opts.UplinkIdle))
+	m.relayOpts.DownlinkIdle.Store(int64(opts.DownlinkIdle))
 }
 
 // Relay relays two (TCP) connections, that is, read from one and write to
 // the other, in both directions. In addition, Relay accepts a RelayOptions
 // that can be specified with opts parameter or by SetRelayOptions method.
-func (m *Manager) Relay(
+func (m *relayService) Relay(
 	local net.Conn,
 	getRemote func(context.Context) net.Conn,
 	sendResponse func(io.Writer) bool,
@@ -94,8 +75,22 @@ func (m *Manager) Relay(
 	local, localCtx := netutil.NewConnChecker(local)
 	defer local.Close()
 
-	replayer := netutil.NewConnReplayer(local)
-	local = replayer
+	r := netutil.NewConnReplayer(local)
+	local = r
+
+	if opts.Timeout <= 0 {
+		opts.Timeout = time.Duration(m.relayOpts.Timeout.Load())
+		if opts.Timeout <= 0 {
+			opts.Timeout = defaultRelayTimeout
+		}
+	}
+
+	if opts.Interval <= 0 {
+		opts.Interval = time.Duration(m.relayOpts.Interval.Load())
+		if opts.Interval <= 0 {
+			opts.Interval = defaultRelayInterval
+		}
+	}
 
 	try := func() (again bool) {
 		remote := getRemote(localCtx)
@@ -112,24 +107,16 @@ func (m *Manager) Relay(
 			sendResponse = nil
 		}
 
-		timeout := opts.Replay.Response.Timeout
-		if timeout <= 0 {
-			timeout = time.Duration(m.replay.Response.Timeout.Load())
-			if timeout <= 0 {
-				timeout = defaultResponseTimeout
-			}
-		}
-
-		defer time.AfterFunc(timeout, func() {
-			if !replayer.Stopped() {
+		defer time.AfterFunc(opts.Timeout, func() {
+			if !r.Stopped() {
 				aLongTimeAgo := time.Unix(1, 0)
 				_ = remote.SetReadDeadline(aLongTimeAgo)
 			}
 		}).Stop()
 
 		do := func(int) {
-			if !replayer.Stopped() {
-				replayer.Stop()
+			if !r.Stopped() {
+				r.Stop()
 			}
 		}
 
@@ -137,17 +124,18 @@ func (m *Manager) Relay(
 
 		m.relay(local, netutil.DoR(remote, do), opts)
 
-		if time.Since(startTime) < timeout {
-			retryAlways := boolPtrToUint32(
-				opts.Replay.Retry.Always,
-				m.replay.Retry.Always.Load(),
-			)
-			if retryAlways == 0 {
-				return false
+		if !r.Replay() {
+			return
+		}
+
+		if d := time.Since(startTime); d < opts.Interval {
+			select {
+			case <-time.After(opts.Interval - d):
+			case <-localCtx.Done():
 			}
 		}
 
-		return replayer.Replay() && localCtx.Err() == nil
+		return localCtx.Err() == nil
 	}
 
 	for try() {
@@ -157,23 +145,23 @@ func (m *Manager) Relay(
 
 func (m *relayService) relay(l, r net.Conn, opts RelayOptions) {
 	if opts.ConnIdle <= 0 {
-		opts.ConnIdle = time.Duration(m.connIdle.Load())
+		opts.ConnIdle = time.Duration(m.relayOpts.ConnIdle.Load())
 		if opts.ConnIdle <= 0 {
-			opts.ConnIdle = defaultConnIdle
+			opts.ConnIdle = defaultRelayConnIdle
 		}
 	}
 
 	if opts.UplinkIdle <= 0 {
-		opts.UplinkIdle = time.Duration(m.uplinkIdle.Load())
+		opts.UplinkIdle = time.Duration(m.relayOpts.UplinkIdle.Load())
 		if opts.UplinkIdle <= 0 {
-			opts.UplinkIdle = defaultUplinkIdle
+			opts.UplinkIdle = defaultRelayUplinkIdle
 		}
 	}
 
 	if opts.DownlinkIdle <= 0 {
-		opts.DownlinkIdle = time.Duration(m.downlinkIdle.Load())
+		opts.DownlinkIdle = time.Duration(m.relayOpts.DownlinkIdle.Load())
 		if opts.DownlinkIdle <= 0 {
-			opts.DownlinkIdle = defaultDownlinkIdle
+			opts.DownlinkIdle = defaultRelayDownlinkIdle
 		}
 	}
 
@@ -253,9 +241,9 @@ var relayPool = sync.Pool{
 }
 
 const (
-	defaultResponseTimeout = 5 * time.Minute
-
-	defaultConnIdle     = 5 * time.Minute
-	defaultUplinkIdle   = 2 * time.Second
-	defaultDownlinkIdle = 5 * time.Second
+	defaultRelayTimeout      = 5 * time.Minute
+	defaultRelayInterval     = 2500 * time.Millisecond
+	defaultRelayConnIdle     = 5 * time.Minute
+	defaultRelayUplinkIdle   = 2 * time.Second
+	defaultRelayDownlinkIdle = 5 * time.Second
 )
