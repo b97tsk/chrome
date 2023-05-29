@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"errors"
 	"io"
 	"math/rand"
 	"net"
@@ -25,9 +24,7 @@ type Options struct {
 
 	Proxy chrome.Proxy `yaml:"over"`
 
-	Dial struct {
-		Timeout time.Duration
-	}
+	Dial  chrome.DialOptions
 	Relay chrome.RelayOptions
 
 	DNS struct {
@@ -185,10 +182,7 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
-				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
-				if err != nil && !errors.Is(err, context.Canceled) {
-					logger.Tracef("dial %v: %v", remoteAddr, err)
-				}
+				remote, _ := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial, logger)
 
 				return remote
 			}
@@ -405,12 +399,8 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 							d = opts.DNS.Proxy.Dialer()
 						}
 
-						conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial.Timeout)
+						conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial, logger)
 						if err != nil {
-							if !errors.Is(err, context.Canceled) {
-								logger.Tracef("[dns] dial %v: %v", hostport, err)
-							}
-
 							break
 						}
 

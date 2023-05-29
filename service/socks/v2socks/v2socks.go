@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -56,9 +55,7 @@ type Options struct {
 		DownlinkOnly int `json:"downlinkOnly"`
 	}
 
-	Dial struct {
-		Timeout time.Duration
-	}
+	Dial  chrome.DialOptions
 	Relay chrome.RelayOptions
 
 	ins *v2ray.Instance
@@ -196,10 +193,7 @@ func (Service) Run(ctx chrome.Context) {
 					return nil
 				}
 
-				remote, err := ctx.Manager.Dial(localCtx, opts.ins, "tcp", remoteAddr, opts.Dial.Timeout)
-				if err != nil && !errors.Is(err, context.Canceled) {
-					logger.Tracef("dial %v: %v", remoteAddr, err)
-				}
+				remote, _ := ctx.Manager.Dial(localCtx, opts.ins, "tcp", remoteAddr, opts.Dial, logger)
 
 				return remote
 			}
@@ -353,10 +347,7 @@ func (Service) Run(ctx chrome.Context) {
 									return nil
 								}
 
-								remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
-								if err != nil && !errors.Is(err, context.Canceled) {
-									logger.Tracef("dial %v: %v", remoteAddr, err)
-								}
+								remote, _ := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial, logger)
 
 								return remote
 							}

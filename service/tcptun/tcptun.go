@@ -2,9 +2,7 @@ package tcptun
 
 import (
 	"context"
-	"errors"
 	"net"
-	"time"
 
 	"github.com/b97tsk/chrome"
 )
@@ -15,9 +13,7 @@ type Options struct {
 
 	Proxy chrome.Proxy `yaml:"over"`
 
-	Dial struct {
-		Timeout time.Duration
-	}
+	Dial  chrome.DialOptions
 	Relay chrome.RelayOptions
 }
 
@@ -77,10 +73,7 @@ func (Service) Run(ctx chrome.Context) {
 					return nil
 				}
 
-				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial.Timeout)
-				if err != nil && !errors.Is(err, context.Canceled) {
-					logger.Tracef("dial %v: %v", opts.ForwardAddr, err)
-				}
+				remote, _ := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial, logger)
 
 				return remote
 			}

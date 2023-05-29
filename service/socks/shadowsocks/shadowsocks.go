@@ -2,9 +2,7 @@ package shadowsocks
 
 import (
 	"context"
-	"errors"
 	"net"
-	"time"
 
 	"github.com/b97tsk/chrome"
 	"github.com/shadowsocks/go-shadowsocks2/core"
@@ -19,9 +17,7 @@ type Options struct {
 	Method   string
 	Password string
 
-	Dial struct {
-		Timeout time.Duration
-	}
+	Dial  chrome.DialOptions
 	Relay chrome.RelayOptions
 
 	cipher core.Cipher
@@ -97,10 +93,7 @@ func (Service) Run(ctx chrome.Context) {
 					return nil
 				}
 
-				remote, err := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial.Timeout)
-				if err != nil && !errors.Is(err, context.Canceled) {
-					logger.Tracef("dial %v: %v", remoteAddr, err)
-				}
+				remote, _ := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial, logger)
 
 				return remote
 			}

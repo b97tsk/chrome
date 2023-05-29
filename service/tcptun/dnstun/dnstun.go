@@ -6,7 +6,6 @@ import (
 	"crypto/sha1"
 	"crypto/tls"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -40,10 +39,8 @@ type Options struct {
 
 	Cache bool
 
-	Dial struct {
-		Timeout time.Duration
-	}
-	TTL struct {
+	Dial chrome.DialOptions
+	TTL  struct {
 		Min, Max time.Duration
 	}
 	Idle struct {
@@ -702,11 +699,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					}
 
 					servers := opts.Servers
-					proxy := &opts.Proxy
-
 					if tr.Route != nil {
 						servers = tr.Route.Servers
-						proxy = &tr.Route.Proxy
 					}
 
 					if len(servers) == 0 {
@@ -734,12 +728,13 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
 
-					conn, err := ctx.Manager.Dial(q.Context, proxy.Dialer(), "tcp", hostport, opts.Dial.Timeout)
-					if err != nil {
-						if !errors.Is(err, context.Canceled) {
-							logger.Tracef("dial %v: %v", hostport, err)
-						}
+					d := opts.Proxy.Dialer()
+					if tr.Route != nil {
+						d = tr.Route.Proxy.Dialer()
+					}
 
+					conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial, logger)
+					if err != nil {
 						break
 					}
 

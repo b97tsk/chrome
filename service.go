@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unicode"
 
 	"github.com/b97tsk/log"
@@ -264,9 +263,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 			File  EnvString
 			Level logLevel
 		}
-		Dial struct {
-			Timeout time.Duration
-		}
+		Dial  DialOptions
 		Relay RelayOptions
 		Jobs  map[string]any `yaml:",inline"`
 	}
@@ -283,7 +280,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 	}
 
 	m.SetLogLevel(config.Log.Level.Level)
-	m.SetDialTimeout(config.Dial.Timeout)
+	m.SetDialOptions(config.Dial)
 	m.SetRelayOptions(config.Relay)
 
 	for name, job := range m.jobs {

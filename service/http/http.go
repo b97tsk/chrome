@@ -7,7 +7,6 @@ import (
 	"crypto/sha1"
 	"crypto/tls"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -38,9 +37,7 @@ type Options struct {
 	Routes    []RouteOptions
 	Redirects map[string]string
 
-	Dial struct {
-		Timeout time.Duration
-	}
+	Dial  chrome.DialOptions
 	Relay chrome.RelayOptions
 
 	routes       []route
@@ -424,6 +421,8 @@ type handler struct {
 func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 	h := &handler{ctx: ctx, opts: opts}
 
+	logger := ctx.Manager.Logger(ServiceName)
+
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		opts := <-h.opts
 		d := opts.Proxy.Dialer()
@@ -434,7 +433,7 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 			} else {
 				for i := range opts.routes {
 					if r := &opts.routes[i]; r.AllowList.Allow(addr) {
-						h.ctx.Manager.Logger(ServiceName).Infof("%v matches %v", r.AllowList.Path, addr)
+						logger.Infof("%v matches %v", r.AllowList.Path, addr)
 
 						d = r.Proxy.Dialer()
 						opts.routeCache.Store(addr, r)
@@ -445,7 +444,7 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 			}
 		}
 
-		return h.ctx.Manager.Dial(ctx, d, network, addr, opts.Dial.Timeout)
+		return h.ctx.Manager.Dial(ctx, d, network, addr, opts.Dial, logger)
 	}
 
 	h.tr = &http.Transport{
@@ -504,10 +503,6 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 	resp, err := h.tr.RoundTrip(outreq)
 	if err != nil {
-		if !errors.Is(err, context.Canceled) {
-			h.ctx.Manager.Logger(ServiceName).Tracef("round trip: %v", err)
-		}
-
 		panic(http.ErrAbortHandler)
 	}
 	defer resp.Body.Close()
@@ -547,11 +542,7 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 		remoteAddr := h.rewriteHost(req.RequestURI)
 
 		getRemote := func(localCtx context.Context) net.Conn {
-			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				h.ctx.Manager.Logger(ServiceName).Tracef("connect: dial %v: %v", remoteAddr, err)
-			}
-
+			remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
 			return remote
 		}
 
@@ -580,11 +571,7 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 		remoteAddr := h.rewriteHost(req.Host)
 
 		getRemote := func(localCtx context.Context) net.Conn {
-			remote, err := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-			if err != nil && !errors.Is(err, context.Canceled) {
-				h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: dial %v: %v", remoteAddr, err)
-			}
-
+			remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
 			return remote
 		}
 
