@@ -12,7 +12,7 @@ import (
 const (
 	checkInterval   = 500 * time.Millisecond
 	checkWindow     = 1 * time.Millisecond
-	checkBufferSize = 1024
+	checkBufferSize = 2048
 )
 
 type connChecker struct {
