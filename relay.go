@@ -133,16 +133,14 @@ func (m *relayService) Relay(
 
 		if !r.Replay() {
 			if to := timedOut.Load(); to != 0 {
-				if to == 1 {
-					for to == 1 {
-						runtime.Gosched()
-						to = timedOut.Load()
-					}
-
-					var noDeadline time.Time
-					_ = local.SetReadDeadline(noDeadline)
-					_ = remote.SetReadDeadline(noDeadline)
+				for to == 1 {
+					runtime.Gosched()
+					to = timedOut.Load()
 				}
+
+				var noDeadline time.Time
+				_ = local.SetReadDeadline(noDeadline)
+				_ = remote.SetReadDeadline(noDeadline)
 
 				if localCtx.Err() == nil {
 					m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
@@ -265,7 +263,7 @@ var relayPool = sync.Pool{
 }
 
 const (
-	defaultRelayTimeout      = 5 * time.Minute
+	defaultRelayTimeout      = 10 * time.Second
 	defaultRelayInterval     = 2500 * time.Millisecond
 	defaultRelayConnIdle     = 5 * time.Minute
 	defaultRelayUplinkIdle   = 2 * time.Second
