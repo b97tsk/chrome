@@ -2,6 +2,7 @@ package chrome
 
 import (
 	"context"
+	"errors"
 	"math/bits"
 	"net"
 	"sync/atomic"
@@ -48,6 +49,15 @@ func (m *dialingService) Dial(
 	opts DialOptions,
 	logger *log.Logger,
 ) (c net.Conn, err error) {
+	if block, ok := dialer.(blockOrReset); ok {
+		if block {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}
+
+		return nil, errReset
+	}
+
 	if dialer == nil {
 		dialer = proxy.Direct
 	}
@@ -134,3 +144,5 @@ const (
 	defaultDialInterval    = 2500 * time.Millisecond
 	defaultDialMaxAttempts = 99
 )
+
+var errReset = errors.New("reset")

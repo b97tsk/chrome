@@ -2,9 +2,11 @@ package chrome
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"errors"
 	"math/rand"
+	"net"
 	"net/url"
 	"strings"
 
@@ -46,8 +48,13 @@ func MakeProxy(fwd proxy.Dialer, urls ...string) (Proxy, error) {
 	sep := []byte{'\n'}
 
 	for _, s := range urls {
-		if s == "" || strings.EqualFold(s, "Direct") {
+		switch {
+		case s == "" || strings.EqualFold(s, "Direct"):
 			continue
+		case strings.EqualFold(s, "Block"):
+			return Proxy{d: blockOrReset(true), sum: []byte("Block")}, nil
+		case strings.EqualFold(s, "Reset"):
+			return Proxy{d: blockOrReset(false), sum: []byte("Reset")}, nil
 		}
 
 		u, err := url.Parse(s)
@@ -72,6 +79,16 @@ func MakeProxy(fwd proxy.Dialer, urls ...string) (Proxy, error) {
 	}
 
 	return Proxy{d: fwd, sum: sum}, nil
+}
+
+type blockOrReset bool
+
+func (blockOrReset) Dial(network, addr string) (net.Conn, error) {
+	panic("not implemented")
+}
+
+func (blockOrReset) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	panic("not implemented")
 }
 
 // MakeProxyUsing creates a load balancing Proxy from multiple proxies with
