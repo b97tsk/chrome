@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -72,12 +73,6 @@ func (m *relayService) Relay(
 	sendResponse func(io.Writer) bool,
 	opts RelayOptions,
 ) {
-	local, localCtx := netutil.NewConnChecker(local)
-	defer local.Close()
-
-	r := netutil.NewConnReplayer(local)
-	local = r
-
 	if opts.Timeout <= 0 {
 		opts.Timeout = time.Duration(m.relayOpts.Timeout.Load())
 		if opts.Timeout <= 0 {
@@ -91,6 +86,12 @@ func (m *relayService) Relay(
 			opts.Interval = defaultRelayInterval
 		}
 	}
+
+	local, localCtx := netutil.NewConnChecker(local)
+	defer local.Close()
+
+	r := netutil.NewConnReplayer(local)
+	local = r
 
 	try := func() (again bool) {
 		remote := getRemote(localCtx)
@@ -107,10 +108,16 @@ func (m *relayService) Relay(
 			sendResponse = nil
 		}
 
+		var timedOut atomic.Uint32
+
 		defer time.AfterFunc(opts.Timeout, func() {
 			if !r.Stopped() {
+				timedOut.Store(1)
+
 				aLongTimeAgo := time.Unix(1, 0)
 				_ = remote.SetReadDeadline(aLongTimeAgo)
+
+				timedOut.Store(2)
 			}
 		}).Stop()
 
@@ -125,6 +132,23 @@ func (m *relayService) Relay(
 		m.relay(local, netutil.DoR(remote, do), opts)
 
 		if !r.Replay() {
+			if to := timedOut.Load(); to != 0 {
+				if to == 1 {
+					for to == 1 {
+						runtime.Gosched()
+						to = timedOut.Load()
+					}
+
+					var noDeadline time.Time
+					_ = local.SetReadDeadline(noDeadline)
+					_ = remote.SetReadDeadline(noDeadline)
+				}
+
+				if localCtx.Err() == nil {
+					m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
+				}
+			}
+
 			return
 		}
 
