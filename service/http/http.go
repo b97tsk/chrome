@@ -34,8 +34,9 @@ type Options struct {
 
 	Proxy chrome.Proxy `yaml:"over"`
 
-	Routes    []RouteOptions
-	Redirects map[string]string
+	Routes       []RouteOptions
+	Redirects    map[string]string
+	RewriteHosts map[string]string
 
 	Dial  chrome.DialOptions
 	Relay chrome.RelayOptions
@@ -397,8 +398,12 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
-				if !redirectsEqual(new.Redirects, old.Redirects) {
+				if !mapEqual(new.Redirects, old.Redirects) {
 					handler.setRedirects(new.Redirects)
+				}
+
+				if !mapEqual(new.RewriteHosts, old.RewriteHosts) {
+					handler.setRewriteHosts(new.RewriteHosts)
 				}
 
 				optsIn <- new
@@ -416,6 +421,7 @@ type handler struct {
 	opts      <-chan Options
 	tr        *http.Transport
 	redirects atomic.Value
+	rwhosts   atomic.Value
 }
 
 func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
@@ -463,8 +469,12 @@ func (h *handler) CloseIdleConnections() {
 	h.tr.CloseIdleConnections()
 }
 
-func (h *handler) setRedirects(redirects map[string]string) {
-	h.redirects.Store(redirects)
+func (h *handler) setRedirects(m map[string]string) {
+	h.redirects.Store(m)
+}
+
+func (h *handler) setRewriteHosts(m map[string]string) {
+	h.rwhosts.Store(m)
 }
 
 func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -473,14 +483,14 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	var upgradeType string
+	if httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") {
+		upgradeType = req.Header.Get("Upgrade")
+	}
+
 	outreq := req.Clone(req.Context())
 	outreq.Close = false
 	outreq.RequestURI = ""
-
-	var upgradeType string
-	if httpguts.HeaderValuesContainsToken(req.Header["Connection"], "upgrade") {
-		upgradeType = req.Header.Get("Upgrade")
-	}
 
 	httputil.RemoveHopbyhopHeaders(outreq.Header)
 
@@ -489,7 +499,7 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	if upgradeType != "" {
-		outreq.Header.Set("Connection", "upgrade")
+		outreq.Header.Set("Connection", "Upgrade")
 		outreq.Header.Set("Upgrade", upgradeType)
 
 		h.handleUpgrade(rw, outreq)
@@ -581,7 +591,7 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 
 func (h *handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool {
 	redirects, _ := h.redirects.Load().(map[string]string)
-	if s := redirects[req.URL.Host]; s != "" {
+	if s := redirects[req.Host]; s != "" {
 		if u, _ := url.Parse(s); u != nil {
 			if u.Path == "" {
 				u.Path = req.URL.Path
@@ -597,11 +607,9 @@ func (h *handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool
 }
 
 func (h *handler) rewriteHost(host string) string {
-	redirects, _ := h.redirects.Load().(map[string]string)
-	if s := redirects[host]; s != "" {
-		if u, _ := url.Parse(s); u != nil && u.Path == "" && u.Port() != "" {
-			host = u.Host
-		}
+	rwhosts, _ := h.rwhosts.Load().(map[string]string)
+	if s := rwhosts[host]; s != "" && strings.Contains(s, ":") {
+		return s
 	}
 
 	return host
@@ -621,7 +629,7 @@ func routesEqual(a, b []RouteOptions) bool {
 	return true
 }
 
-func redirectsEqual(a, b map[string]string) bool {
+func mapEqual(a, b map[string]string) bool {
 	if len(a) != len(b) {
 		return false
 	}
