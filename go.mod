@@ -8,7 +8,7 @@ require (
 	github.com/fsnotify/fsnotify v1.6.0
 	github.com/miekg/dns v1.1.55
 	github.com/shadowsocks/go-shadowsocks2 v0.1.5
-	github.com/v2fly/v2ray-core/v5 v5.6.0
+	github.com/v2fly/v2ray-core/v5 v5.7.0
 	golang.org/x/net v0.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
