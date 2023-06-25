@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"io"
+	"math"
 	"math/rand"
 	"net"
 	"reflect"
@@ -354,7 +355,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 			}
 
 			if result == nil {
-				var r dnsQueryResult
+				r := &dnsQueryResult{}
 
 				fqDomain := dns.Fqdn(q.Domain)
 
@@ -464,10 +465,13 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 						msg, err = dnsConn.ReadMsg()
 						if err == nil {
+							var minTTL uint32 = math.MaxUint32
+
 							for _, ans := range msg.Answer {
-								if r.Deadline.IsZero() {
-									if h := ans.Header(); h != nil {
+								if h := ans.Header(); h != nil {
+									if opts.DNS.TTL.Min > 0 || opts.DNS.TTL.Max > 0 {
 										ttl := time.Duration(h.Ttl) * time.Second
+
 										if opts.DNS.TTL.Min > 0 && ttl < opts.DNS.TTL.Min {
 											ttl = opts.DNS.TTL.Min
 										}
@@ -476,7 +480,13 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 											ttl = opts.DNS.TTL.Max
 										}
 
-										r.Deadline = time.Now().Add(ttl)
+										if ttl != time.Duration(h.Ttl)*time.Second {
+											h.Ttl = uint32(math.Ceil(ttl.Seconds()))
+										}
+									}
+
+									if minTTL > h.Ttl {
+										minTTL = h.Ttl
 									}
 								}
 
@@ -485,6 +495,13 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 									r.IPList = append(r.IPList, ans.A)
 								case *dns.AAAA:
 									r.IPList = append(r.IPList, ans.AAAA)
+								}
+							}
+
+							if minTTL < math.MaxUint32 {
+								newDeadline := time.Now().Add(time.Duration(minTTL) * time.Second)
+								if r.Deadline.IsZero() || newDeadline.Before(r.Deadline) {
+									r.Deadline = newDeadline
 								}
 							}
 
@@ -525,8 +542,12 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 				}
 
 				if len(r.IPList) != 0 {
-					result = &r
-					opts.dnsCache.Store(q.Domain, &r)
+					result = r
+
+					if !r.Deadline.IsZero() {
+						opts.dnsCache.Store(q.Domain, r)
+					}
+
 					logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 				}
 			}
