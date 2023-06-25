@@ -250,6 +250,11 @@ func (l *allowList) Allow(domain string) bool {
 	return l.includes.MatchAll(domain) != nil && l.excludes.MatchAll(domain) == nil
 }
 
+type dnsCacheKey struct {
+	Domain string
+	Qtype  uint16
+}
+
 type Service struct{}
 
 const ServiceName = "dnstun"
@@ -328,21 +333,23 @@ func (Service) Run(ctx chrome.Context) {
 					return
 				}
 
-				var result *dns.Msg
+				if len(msg.Question) == 0 {
+					logger.Trace("(local) read msg: 0 questions")
+					return
+				}
+
+				var result *dnsQueryResult
 
 				if opts.dnsCache != nil {
-					var qtype uint16
+					domain := strings.TrimSuffix(msg.Question[0].Name, ".")
+					qtype := msg.Question[0].Qtype
 
-					if len(msg.Question) != 0 {
-						qtype = msg.Question[0].Qtype
-					}
+					if cache, ok := opts.dnsCache.Load(dnsCacheKey{domain, qtype}); ok {
+						r := cache.(*dnsQueryResult)
+						if r.Deadline.After(time.Now()) {
+							result = r
 
-					if qtype == dns.TypeA || qtype == dns.TypeAAAA {
-						domain := strings.TrimSuffix(msg.Question[0].Name, ".")
-						if cache, ok := opts.dnsCache.Load(domain); ok {
-							r := cache.(*dnsQueryResult)
-							if r.Deadline.After(time.Now()) {
-								result = r.Message
+							if len(r.IPList) != 0 {
 								logger.Tracef("(from cache) %v: %v TTL=%v", domain, r.IPList, r.TTL())
 							}
 						}
@@ -350,23 +357,17 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if result == nil {
-					var qtype uint16
+					domain := strings.TrimSuffix(msg.Question[0].Name, ".")
+					qtype := msg.Question[0].Qtype
 
-					var domain string
-
-					if len(msg.Question) != 0 {
-						qtype = msg.Question[0].Qtype
-						domain = strings.TrimSuffix(msg.Question[0].Name, ".")
-					}
-
-					r := make(chan *dns.Msg, 1)
+					r := make(chan *dnsQueryResult, 1)
 
 					select {
 					case <-ctx.Done():
 						return
 					case <-localCtx.Done():
 						return
-					case dnsQueryIn <- dnsQuery{msg, qtype, domain, r, localCtx}:
+					case dnsQueryIn <- dnsQuery{msg, domain, qtype, r, localCtx}:
 					}
 
 					select {
@@ -382,7 +383,23 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
-				if err := dnsConn.WriteMsg(result); err != nil {
+				msgID := msg.Id
+				result.Message.CopyTo(msg)
+				msg.Id = msgID
+
+				if n := uint32(time.Since(result.Time).Seconds()); n > 0 {
+					for _, ans := range msg.Answer {
+						if h := ans.Header(); h != nil && h.Ttl != 0 {
+							if h.Ttl > n {
+								h.Ttl -= n
+							} else {
+								h.Ttl = 0
+							}
+						}
+					}
+				}
+
+				if err := dnsConn.WriteMsg(msg); err != nil {
 					logger.Tracef("(local) write msg: %v", err)
 					return
 				}
@@ -550,15 +567,16 @@ func (Service) Run(ctx chrome.Context) {
 
 type dnsQuery struct {
 	Message *dns.Msg
-	Qtype   uint16
 	Domain  string
-	Result  chan<- *dns.Msg
+	Qtype   uint16
+	Result  chan<- *dnsQueryResult
 	Context context.Context
 }
 
 type dnsQueryResult struct {
 	Message  *dns.Msg
 	IPList   []net.IP
+	Time     time.Time
 	Deadline time.Time
 }
 
@@ -581,17 +599,19 @@ Loop:
 				return
 			}
 
-			if opts.dnsCache != nil && (q.Qtype == dns.TypeA || q.Qtype == dns.TypeAAAA) {
-				if cache, ok := opts.dnsCache.Load(q.Domain); ok {
+			if opts.dnsCache != nil {
+				if cache, ok := opts.dnsCache.Load(dnsCacheKey{q.Domain, q.Qtype}); ok {
 					r := cache.(*dnsQueryResult)
 					if r.Deadline.After(time.Now()) {
-						logger.Tracef("(from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+						if len(r.IPList) != 0 {
+							logger.Tracef("(from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+						}
 
 						select {
 						case <-ctx.Done():
 							return
 						case <-q.Context.Done():
-						case q.Result <- r.Message:
+						case q.Result <- r:
 						default:
 						}
 
@@ -722,12 +742,15 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 			var result *dnsQueryResult
 
-			if opts.dnsCache != nil && (q.Qtype == dns.TypeA || q.Qtype == dns.TypeAAAA) {
-				if cache, ok := opts.dnsCache.Load(q.Domain); ok {
+			if opts.dnsCache != nil {
+				if cache, ok := opts.dnsCache.Load(dnsCacheKey{q.Domain, q.Qtype}); ok {
 					r := cache.(*dnsQueryResult)
 					if r.Deadline.After(time.Now()) {
 						result = r
-						logger.Tracef("(from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+
+						if len(r.IPList) != 0 {
+							logger.Tracef("(from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+						}
 					}
 				}
 			}
@@ -830,9 +853,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 				_ = dnsConn.SetDeadline(deadline)
 
 				qm := q.Message
-				hasq := len(qm.Question) != 0
 
-				if v := opts.Redirects[q.Domain]; v != "" && hasq {
+				if v := opts.Redirects[q.Domain]; v != "" {
 					qm = qm.Copy()
 					qm.Question[0].Name = dns.Fqdn(v)
 				}
@@ -846,21 +868,22 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 					msg, err = dnsConn.ReadMsg()
 					if err == nil {
-						r := dnsQueryResult{Message: msg}
+						r := &dnsQueryResult{Message: msg}
 
 						if qm != q.Message {
 							msg.Question = q.Message.Question
 						}
 
+						var minTTL uint32 = math.MaxUint32
+
 						for _, ans := range msg.Answer {
 							if h := ans.Header(); h != nil {
-								if qm != q.Message && hasq {
+								if qm != q.Message {
 									h.Name = q.Message.Question[0].Name
 								}
 
-								ttl := time.Duration(h.Ttl) * time.Second
 								if opts.TTL.Min > 0 || opts.TTL.Max > 0 {
-									origin := ttl
+									ttl := time.Duration(h.Ttl) * time.Second
 
 									if opts.TTL.Min > 0 && ttl < opts.TTL.Min {
 										ttl = opts.TTL.Min
@@ -870,13 +893,13 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 										ttl = opts.TTL.Max
 									}
 
-									if ttl != origin {
+									if ttl != time.Duration(h.Ttl)*time.Second {
 										h.Ttl = uint32(math.Ceil(ttl.Seconds()))
 									}
 								}
 
-								if r.Deadline.IsZero() {
-									r.Deadline = time.Now().Add(ttl)
+								if minTTL > h.Ttl {
+									minTTL = h.Ttl
 								}
 							}
 
@@ -888,13 +911,19 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 							}
 						}
 
-						result = &r
+						r.Time = time.Now()
+
+						if minTTL < math.MaxUint32 {
+							r.Deadline = r.Time.Add(time.Duration(minTTL) * time.Second)
+						}
+
+						result = r
+
+						if opts.dnsCache != nil && !r.Deadline.IsZero() {
+							opts.dnsCache.Store(dnsCacheKey{q.Domain, q.Qtype}, r)
+						}
 
 						if len(r.IPList) != 0 {
-							if opts.dnsCache != nil {
-								opts.dnsCache.Store(q.Domain, &r)
-							}
-
 							logger.Debugf("(remote) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
 						}
 
@@ -927,7 +956,7 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 				case <-ctx.Done():
 					return
 				case <-q.Context.Done():
-				case q.Result <- result.Message:
+				case q.Result <- result:
 				default:
 				}
 			}
