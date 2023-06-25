@@ -6,10 +6,10 @@ require (
 	github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1
 	github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d
 	github.com/fsnotify/fsnotify v1.6.0
-	github.com/miekg/dns v1.1.51
+	github.com/miekg/dns v1.1.55
 	github.com/shadowsocks/go-shadowsocks2 v0.1.5
 	github.com/v2fly/v2ray-core/v5 v5.6.0
-	golang.org/x/net v0.7.0
+	golang.org/x/net v0.11.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -65,13 +65,13 @@ require (
 	github.com/xtaci/smux v1.5.15 // indirect
 	go.starlark.net v0.0.0-20220817180228-f738f5508c12 // indirect
 	go4.org/netipx v0.0.0-20220812043211-3cc044ffd68d // indirect
-	golang.org/x/crypto v0.6.0 // indirect
+	golang.org/x/crypto v0.10.0 // indirect
 	golang.org/x/exp v0.0.0-20221205204356-47842c84f3db // indirect
-	golang.org/x/mod v0.7.0 // indirect
-	golang.org/x/sys v0.5.0 // indirect
-	golang.org/x/text v0.7.0 // indirect
+	golang.org/x/mod v0.8.0 // indirect
+	golang.org/x/sys v0.9.0 // indirect
+	golang.org/x/text v0.10.0 // indirect
 	golang.org/x/time v0.0.0-20210220033141-f8bda1e9f3ba // indirect
-	golang.org/x/tools v0.3.0 // indirect
+	golang.org/x/tools v0.6.0 // indirect
 	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f // indirect
 	google.golang.org/grpc v1.53.0 // indirect
 	google.golang.org/protobuf v1.28.2-0.20220831092852-f930b1dc76e8 // indirect
