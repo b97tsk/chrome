@@ -47,26 +47,26 @@ type Options struct {
 }
 
 type RouteOptions struct {
-	AllowList chrome.EnvString `yaml:"file"`
-	Proxy     chrome.Proxy     `yaml:"over"`
-
-	AllowListChecksum string `yaml:"-"`
+	Name     string
+	What     string
+	Checksum string       `yaml:"-"`
+	Proxy    chrome.Proxy `yaml:"over"`
 }
 
 func (r *RouteOptions) equal(other *RouteOptions) bool {
-	return r.AllowList == other.AllowList &&
-		r.AllowListChecksum == other.AllowListChecksum &&
-		r.Proxy.Equal(other.Proxy)
+	return r.Name == other.Name && r.Checksum == other.Checksum && r.Proxy.Equal(other.Proxy)
 }
 
 type route struct {
+	Name      string
 	AllowList *allowList
 	Proxy     chrome.Proxy
 }
 
 type allowList struct {
-	Path     string
+	What     string
 	Checksum string
+	Logger   *log.Logger
 
 	includes matchset.MatchSet
 	excludes matchset.MatchSet
@@ -77,28 +77,94 @@ type patternConfig struct {
 }
 
 func (l *allowList) Init(fsys fs.FS) error {
-	includesConfigMap := make(map[string]*patternConfig)
-	excludesConfigMap := make(map[string]*patternConfig)
+	includes := make(map[string]*patternConfig)
+	excludes := make(map[string]*patternConfig)
 
-	if err := l.loadFile(fsys, l.Path, includesConfigMap, excludesConfigMap); err != nil {
-		return err
+	s := bufio.NewScanner(strings.NewReader(l.What))
+	s.Split(scanLines)
+
+	for s.Scan() {
+		if err := l.parseLine(fsys, ".", s.Text(), includes, excludes); err != nil {
+			return err
+		}
 	}
 
-	for pattern, config := range includesConfigMap {
+	for pattern, config := range includes {
 		l.includes.Add(pattern, config)
 	}
 
-	for pattern, config := range excludesConfigMap {
+	for pattern, config := range excludes {
 		l.excludes.Add(pattern, config)
 	}
 
 	return nil
 }
 
-func (l *allowList) loadFile(
-	fsys fs.FS, name string,
-	includesConfigMap, excludesConfigMap map[string]*patternConfig,
-) error {
+func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes map[string]*patternConfig) error {
+	if line[0] == '@' {
+		filepath := line[1:]
+		if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
+			filepath = path.Join(path.Dir(name), filepath)
+		}
+
+		if err := l.parseFile(fsys, filepath, includes, excludes); err != nil {
+			return fmt.Errorf("load %v: %w", name, err)
+		}
+
+		return nil
+	}
+
+	exclude := line[0] == '!'
+	if exclude {
+		line = line[1:]
+	}
+
+	portSuffix := rePortSuffix.FindString(line)
+	pattern := line[:len(line)-len(portSuffix)]
+
+	switch {
+	case strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]"):
+		pattern = pattern[1 : len(pattern)-1]
+	case portSuffix != "" && strings.Contains(pattern, ":"):
+		// Assume the whole line is an IPv6 address.
+		portSuffix = ""
+		pattern = line
+	}
+
+	configMap := includes
+	if exclude {
+		configMap = excludes
+	}
+
+	if portSuffix == "" {
+		configMap[pattern] = nil
+		return nil
+	}
+
+	config, configExists := configMap[pattern]
+	if config == nil {
+		if configExists {
+			return nil
+		}
+
+		config = &patternConfig{}
+		configMap[pattern] = config
+	}
+
+	port := portSuffix[1:]
+
+	for _, p := range config.ports {
+		if p == port {
+			return nil
+		}
+	}
+
+	config.ports = append(config.ports, port)
+
+	return nil
+}
+
+func (l *allowList) parseFile(fsys fs.FS, name string, includes, excludes map[string]*patternConfig) error {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return err
@@ -106,117 +172,76 @@ func (l *allowList) loadFile(
 	defer file.Close()
 
 	s := bufio.NewScanner(file)
-Outer:
+	s.Split(scanLines)
+
 	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line == "" || line[0] == '#' {
-			continue
+		if err := l.parseLine(fsys, name, s.Text(), includes, excludes); err != nil {
+			return err
 		}
-
-		if line[0] == '@' {
-			filepath := line[1:]
-			if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
-				filepath = path.Join(path.Dir(name), filepath)
-			}
-
-			if err := l.loadFile(fsys, filepath, includesConfigMap, excludesConfigMap); err != nil {
-				return fmt.Errorf("load %v: %w", name, err)
-			}
-
-			continue
-		}
-
-		exclude := line[0] == '!'
-		if exclude {
-			line = line[1:]
-		}
-
-		portSuffix := rePortSuffix.FindString(line)
-		pattern := line[:len(line)-len(portSuffix)]
-
-		switch {
-		case strings.HasPrefix(pattern, "[") && strings.HasSuffix(pattern, "]"):
-			pattern = pattern[1 : len(pattern)-1]
-		case portSuffix != "" && strings.Contains(pattern, ":"):
-			// Assume the whole line is an IPv6 address.
-			portSuffix = ""
-			pattern = line
-		}
-
-		configMap := includesConfigMap
-		if exclude {
-			configMap = excludesConfigMap
-		}
-
-		if portSuffix == "" {
-			configMap[pattern] = nil
-			continue
-		}
-
-		config, configExists := configMap[pattern]
-		if config == nil {
-			if configExists {
-				continue
-			}
-
-			config = &patternConfig{}
-			configMap[pattern] = config
-		}
-
-		port := portSuffix[1:]
-
-		for _, p := range config.ports {
-			if p == port {
-				continue Outer
-			}
-		}
-
-		config.ports = append(config.ports, port)
 	}
 
-	return s.Err()
+	if err := s.Err(); err != nil {
+		return err
+	}
+
+	if l.Logger != nil {
+		l.Logger.Infof("loaded %v", name)
+	}
+
+	return nil
 }
 
-func checksum(fsys fs.FS, name string) ([]byte, error) {
+func checksum(fsys fs.FS, what string) ([]byte, error) {
 	h := sha1.New()
-	if err := _checksum(fsys, name, h); err != nil {
-		return nil, err
+
+	s := bufio.NewScanner(strings.NewReader(what))
+	s.Split(scanLines)
+
+	for s.Scan() {
+		if err := checksumLine(fsys, ".", s.Text(), h); err != nil {
+			return nil, err
+		}
 	}
 
 	return h.Sum(make([]byte, 0, h.Size())), nil
 }
 
-func _checksum(fsys fs.FS, name string, digest io.Writer) error {
+var sep = []byte("\n")
+
+func checksumLine(fsys fs.FS, name, line string, digest io.Writer) error {
+	if line[0] == '@' {
+		filepath := line[1:]
+		if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
+			filepath = path.Join(path.Dir(name), filepath)
+		}
+
+		if err := checksumFile(fsys, filepath, digest); err != nil {
+			return fmt.Errorf("load %v: %w", name, err)
+		}
+
+		return nil
+	}
+
+	_, _ = digest.Write([]byte(line))
+	_, _ = digest.Write(sep)
+
+	return nil
+}
+
+func checksumFile(fsys fs.FS, name string, digest io.Writer) error {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	sep := []byte{'\n'}
-
 	s := bufio.NewScanner(file)
+	s.Split(scanLines)
+
 	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line == "" || line[0] == '#' {
-			continue
+		if err := checksumLine(fsys, name, s.Text(), digest); err != nil {
+			return err
 		}
-
-		if line[0] == '@' {
-			filepath := line[1:]
-			if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
-				filepath = path.Join(path.Dir(name), filepath)
-			}
-
-			if err := _checksum(fsys, filepath, digest); err != nil {
-				return fmt.Errorf("load %v: %w", name, err)
-			}
-
-			continue
-		}
-
-		_, _ = digest.Write([]byte(line))
-		_, _ = digest.Write(sep)
 	}
 
 	return s.Err()
@@ -358,8 +383,24 @@ func (Service) Run(ctx chrome.Context) {
 
 				for i := range new.Routes {
 					r := &new.Routes[i]
-					checksum1, _ := checksum(ctx.Manager, r.AllowList.String())
-					r.AllowListChecksum = hex.EncodeToString(checksum1)
+
+					if r.Name == "" {
+						if advance, token, _ := scanLines([]byte(r.What), true); advance == len(r.What) {
+							r.Name = string(token)
+						}
+					}
+
+					if r.Name == "" {
+						r.Name = fmt.Sprintf("#%v", i+1)
+					}
+
+					sum, err := checksum(ctx.Manager, r.What)
+					if err != nil {
+						logger.Error(err)
+						return
+					}
+
+					r.Checksum = hex.EncodeToString(sum)
 				}
 
 				if !routesEqual(new.Routes, old.Routes) {
@@ -370,27 +411,26 @@ func (Service) Run(ctx chrome.Context) {
 					for i := range new.Routes {
 						r := &new.Routes[i]
 
-						l := old.allowListMap[r.AllowList.String()]
-						if l == nil || l.Checksum != r.AllowListChecksum {
+						l := old.allowListMap[r.Name]
+						if l == nil || l.Checksum != r.Checksum {
 							l = &allowList{
-								Path:     r.AllowList.String(),
-								Checksum: r.AllowListChecksum,
+								What:     r.What,
+								Checksum: r.Checksum,
+								Logger:   logger,
 							}
 
 							if err := l.Init(ctx.Manager); err != nil {
 								logger.Error(err)
 								return
 							}
-
-							logger.Infof("loaded %v", r.AllowList)
 						}
 
 						if new.allowListMap == nil {
 							new.allowListMap = make(map[string]*allowList)
 						}
 
-						new.routes = append(new.routes, route{l, r.Proxy})
-						new.allowListMap[r.AllowList.String()] = l
+						new.routes = append(new.routes, route{r.Name, l, r.Proxy})
+						new.allowListMap[r.Name] = l
 					}
 
 					if new.routes != nil {
@@ -439,7 +479,7 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 			} else {
 				for i := range opts.routes {
 					if r := &opts.routes[i]; r.AllowList.Allow(addr) {
-						logger.Infof("%v matches %v", r.AllowList.Path, addr)
+						logger.Infof("%v matches %v", r.Name, addr)
 
 						d = r.Proxy.Dialer()
 						opts.routeCache.Store(addr, r)
@@ -641,6 +681,28 @@ func mapEqual(a, b map[string]string) bool {
 	}
 
 	return true
+}
+
+func scanLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	start := 0
+
+Again:
+	advance, token, err = bufio.ScanLines(data[start:], atEOF)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	start += advance
+
+	if token != nil {
+		token = bytes.TrimSpace(token)
+
+		if len(token) == 0 || bytes.HasPrefix(token, []byte("#")) {
+			goto Again
+		}
+	}
+
+	return start, token, nil
 }
 
 var rePortSuffix = regexp.MustCompile(`:\d+$`)
