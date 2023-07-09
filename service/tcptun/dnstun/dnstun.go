@@ -41,6 +41,10 @@ type Options struct {
 
 	Cache bool
 
+	IPv4 struct {
+		Only bool
+	}
+
 	Dial chrome.DialOptions
 	TTL  struct {
 		Min, Max time.Duration
@@ -338,16 +342,20 @@ func (Service) Run(ctx chrome.Context) {
 					return
 				}
 
-				var result *dnsQueryResult
+				domain := strings.TrimSuffix(msg.Question[0].Name, ".")
+				qtype := msg.Question[0].Qtype
 
-				if opts.dnsCache != nil {
-					domain := strings.TrimSuffix(msg.Question[0].Name, ".")
-					qtype := msg.Question[0].Qtype
+				var qr *dnsQueryResult
 
+				if opts.IPv4.Only && qtype == dns.TypeAAAA {
+					qr = &dnsQueryResult{Message: new(dns.Msg).SetReply(msg)}
+				}
+
+				if qr == nil && opts.dnsCache != nil {
 					if cache, ok := opts.dnsCache.Load(dnsCacheKey{domain, qtype}); ok {
 						r := cache.(*dnsQueryResult)
 						if r.Deadline.After(time.Now()) {
-							result = r
+							qr = r
 
 							if len(r.IPList) != 0 {
 								logger.Tracef("(from cache) %v: %v TTL=%v", domain, r.IPList, r.TTL())
@@ -356,10 +364,7 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
-				if result == nil {
-					domain := strings.TrimSuffix(msg.Question[0].Name, ".")
-					qtype := msg.Question[0].Qtype
-
+				if qr == nil {
 					r := make(chan *dnsQueryResult, 1)
 
 					select {
@@ -375,19 +380,19 @@ func (Service) Run(ctx chrome.Context) {
 						return
 					case <-localCtx.Done():
 						return
-					case result = <-r:
+					case qr = <-r:
 					}
 
-					if result == nil {
+					if qr == nil {
 						return
 					}
 				}
 
 				msgID := msg.Id
-				result.Message.CopyTo(msg)
+				qr.Message.CopyTo(msg)
 				msg.Id = msgID
 
-				if n := uint32(time.Since(result.Time).Seconds()); n > 0 {
+				if n := uint32(time.Since(qr.Time).Seconds()); n > 0 {
 					for _, ans := range msg.Answer {
 						if h := ans.Header(); h != nil && h.Ttl != 0 {
 							if h.Ttl > n {
@@ -876,6 +881,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 						var minTTL uint32 = math.MaxUint32
 
+						var filterOutIPv6 bool
+
 						for _, ans := range msg.Answer {
 							if h := ans.Header(); h != nil {
 								if qm != q.Message {
@@ -907,8 +914,28 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 							case *dns.A:
 								r.IPList = append(r.IPList, ans.A)
 							case *dns.AAAA:
-								r.IPList = append(r.IPList, ans.AAAA)
+								if opts.IPv4.Only {
+									filterOutIPv6 = true
+								} else {
+									r.IPList = append(r.IPList, ans.AAAA)
+								}
 							}
+						}
+
+						if filterOutIPv6 {
+							remains := msg.Answer[:0]
+
+							for _, ans := range msg.Answer {
+								if _, ok := ans.(*dns.AAAA); !ok {
+									remains = append(remains, ans)
+								}
+							}
+
+							for i, j := len(remains), len(msg.Answer); i < j; i++ {
+								msg.Answer[i] = nil
+							}
+
+							msg.Answer = remains
 						}
 
 						r.Time = time.Now()
@@ -967,7 +994,7 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 }
 
 func shouldResetDNSCache(x, y Options) bool {
-	return x.TTL != y.TTL ||
+	return x.IPv4 != y.IPv4 || x.TTL != y.TTL ||
 		!reflect.DeepEqual(&x.Servers, &y.Servers) ||
 		!routesEqual(x.Routes, y.Routes) ||
 		!reflect.DeepEqual(&x.Redirects, &y.Redirects)
