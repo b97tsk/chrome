@@ -491,26 +491,31 @@ func parseURL(opts *Options) error {
 }
 
 func parseTrojanURL(opts *Options) error {
-	u, err := url.Parse(opts.URL)
-	if err != nil {
-		return fmt.Errorf("parse trojan url %v: %w", opts.URL, err)
-	}
-
-	if u.User == nil {
+	before, after, _ := strings.Cut(strings.TrimPrefix(opts.URL, "trojan://"), "@")
+	if before == "" || after == "" {
 		return fmt.Errorf("invalid trojan url: %v", opts.URL)
 	}
 
-	values := u.Query()
+	u, err := url.Parse("trojan://xxxxx@" + after)
+	if err != nil {
+		return err
+	}
 
-	if sni := values.Get("sni"); sni != "" && sni != u.Hostname() {
+	if u.Port() == "" {
+		return fmt.Errorf("missing port: %v", opts.URL)
+	}
+
+	q := u.Query()
+
+	if sni := q.Get("sni"); sni != "" && sni != u.Hostname() {
 		opts.TLS.ServerName = sni
 	}
 
 	opts.Type = "TROJAN+TCP+TLS"
 	opts.TROJAN.Address = u.Host
-	opts.TROJAN.Password = u.User.Username()
+	opts.TROJAN.Password = before
 
-	if values.Get("allowInsecure") == "1" {
+	if q.Get("allowInsecure") == "1" {
 		opts.TLS.AllowInsecure = true
 	}
 
@@ -518,18 +523,23 @@ func parseTrojanURL(opts *Options) error {
 }
 
 func parseVLessURL(opts *Options) error {
-	u, err := url.Parse(opts.URL)
-	if err != nil {
-		return fmt.Errorf("parse vless url %v: %w", opts.URL, err)
-	}
-
-	if u.User == nil {
+	before, after, _ := strings.Cut(strings.TrimPrefix(opts.URL, "vless://"), "@")
+	if before == "" || after == "" {
 		return fmt.Errorf("invalid vless url: %v", opts.URL)
 	}
 
-	values := u.Query()
+	u, err := url.Parse("vless://xxxxx@" + after)
+	if err != nil {
+		return err
+	}
 
-	switch s := values.Get("encryption"); s {
+	if u.Port() == "" {
+		return fmt.Errorf("missing port: %v", opts.URL)
+	}
+
+	q := u.Query()
+
+	switch s := q.Get("encryption"); s {
 	case "", "none":
 	default:
 		return fmt.Errorf("unsupported encryption in vless url %v: %v", opts.URL, s)
@@ -537,42 +547,42 @@ func parseVLessURL(opts *Options) error {
 
 	var transport string
 
-	switch typ := strings.ToUpper(values.Get("type")); typ {
+	switch typ := strings.ToUpper(q.Get("type")); typ {
 	case "GRPC":
 		transport = "GRPC"
-		opts.GRPC.ServiceName = values.Get("serviceName")
+		opts.GRPC.ServiceName = q.Get("serviceName")
 
-		if host := values.Get("host"); host != "" && host != u.Hostname() {
+		if host := q.Get("host"); host != "" && host != u.Hostname() {
 			opts.TLS.ServerName = host
 		}
 	case "TCP":
 		transport = "TCP"
 
-		if strings.EqualFold(values.Get("security"), "TLS") {
+		if strings.EqualFold(q.Get("security"), "TLS") {
 			transport = "TCP+TLS"
 
-			if host := values.Get("host"); host != "" && host != u.Hostname() {
+			if host := q.Get("host"); host != "" && host != u.Hostname() {
 				opts.TLS.ServerName = host
 			}
 		}
 	case "WS":
 		transport = "WS"
-		if strings.EqualFold(values.Get("security"), "TLS") {
+		if strings.EqualFold(q.Get("security"), "TLS") {
 			transport = "WS+TLS"
 
-			if host := values.Get("host"); host != "" && host != u.Hostname() {
+			if host := q.Get("host"); host != "" && host != u.Hostname() {
 				opts.TLS.ServerName = host
 			}
 		}
 
-		opts.WS.Path = values.Get("path")
+		opts.WS.Path = q.Get("path")
 	default:
 		return fmt.Errorf("unknown type in vless url %v: %v", opts.URL, typ)
 	}
 
 	opts.Type = "VLESS+" + transport
 	opts.VLESS.Address = u.Host
-	opts.VLESS.ID = u.User.Username()
+	opts.VLESS.ID = before
 
 	return nil
 }
