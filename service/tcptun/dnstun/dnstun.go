@@ -96,44 +96,51 @@ type route struct {
 type allowList struct {
 	What     string
 	Checksum string
-	Logger   *log.Logger
 
-	includes matchset.MatchSet
-	excludes matchset.MatchSet
+	includes, excludes struct {
+		patterns matchset.MatchSet
+	}
 }
 
-func (l *allowList) Init(fsys fs.FS) error {
-	includes := make(map[string]struct{})
-	excludes := make(map[string]struct{})
+func (l *allowList) Init(fsys fs.FS, logger *log.Logger) error {
+	p := &allowListParser{logger: logger}
 
 	s := bufio.NewScanner(strings.NewReader(l.What))
 	s.Split(scanLines)
 
 	for s.Scan() {
-		if err := l.parseLine(fsys, ".", s.Text(), includes, excludes); err != nil {
+		if err := p.parseLine(fsys, ".", s.Text()); err != nil {
 			return err
 		}
 	}
 
-	for pattern, config := range includes {
-		l.includes.Add(pattern, config)
+	for pattern, config := range p.includes.patterns {
+		l.includes.patterns.Add(pattern, config)
 	}
 
-	for pattern, config := range excludes {
-		l.excludes.Add(pattern, config)
+	for pattern, config := range p.excludes.patterns {
+		l.excludes.patterns.Add(pattern, config)
 	}
 
 	return nil
 }
 
-func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes map[string]struct{}) error {
+type allowListParser struct {
+	logger *log.Logger
+
+	includes, excludes struct {
+		patterns map[string]struct{}
+	}
+}
+
+func (p *allowListParser) parseLine(fsys fs.FS, name, line string) error {
 	if line[0] == '@' {
 		filepath := line[1:]
 		if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
 			filepath = path.Join(path.Dir(name), filepath)
 		}
 
-		if err := l.parseFile(fsys, filepath, includes, excludes); err != nil {
+		if err := p.parseFile(fsys, filepath); err != nil {
 			return fmt.Errorf("load %v: %w", name, err)
 		}
 
@@ -145,6 +152,15 @@ func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes 
 		line = line[1:]
 	}
 
+	settings := &p.includes
+	if exclude {
+		settings = &p.excludes
+	}
+
+	if strings.Contains(line, "/") {
+		return nil // Ignore CIDRs.
+	}
+
 	portSuffix := rePortSuffix.FindString(line)
 	pattern := line[:len(line)-len(portSuffix)]
 
@@ -153,21 +169,19 @@ func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes 
 		pattern = pattern[1 : len(pattern)-1]
 	case portSuffix != "" && strings.Contains(pattern, ":"):
 		// Assume the whole line is an IPv6 address.
-		// portSuffix = ""
-		pattern = line
+		return nil // Ignore IPv6 addresses.
 	}
 
-	seen := includes
-	if exclude {
-		seen = excludes
+	if settings.patterns == nil {
+		settings.patterns = make(map[string]struct{})
 	}
 
-	seen[pattern] = struct{}{}
+	settings.patterns[pattern] = struct{}{}
 
 	return nil
 }
 
-func (l *allowList) parseFile(fsys fs.FS, name string, includes, excludes map[string]struct{}) error {
+func (p *allowListParser) parseFile(fsys fs.FS, name string) error {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return err
@@ -178,7 +192,7 @@ func (l *allowList) parseFile(fsys fs.FS, name string, includes, excludes map[st
 	s.Split(scanLines)
 
 	for s.Scan() {
-		if err := l.parseLine(fsys, name, s.Text(), includes, excludes); err != nil {
+		if err := p.parseLine(fsys, name, s.Text()); err != nil {
 			return err
 		}
 	}
@@ -187,8 +201,8 @@ func (l *allowList) parseFile(fsys fs.FS, name string, includes, excludes map[st
 		return err
 	}
 
-	if l.Logger != nil {
-		l.Logger.Infof("loaded %v", name)
+	if p.logger != nil {
+		p.logger.Infof("loaded %v", name)
 	}
 
 	return nil
@@ -251,7 +265,7 @@ func checksumFile(fsys fs.FS, name string, digest io.Writer) error {
 }
 
 func (l *allowList) Allow(domain string) bool {
-	return l.includes.MatchAll(domain) != nil && l.excludes.MatchAll(domain) == nil
+	return l.includes.patterns.MatchAll(domain) != nil && l.excludes.patterns.MatchAll(domain) == nil
 }
 
 type dnsCacheKey struct {
@@ -528,10 +542,9 @@ func (Service) Run(ctx chrome.Context) {
 							l = &allowList{
 								What:     r.What,
 								Checksum: r.Checksum,
-								Logger:   logger,
 							}
 
-							if err := l.Init(ctx.Manager); err != nil {
+							if err := l.Init(ctx.Manager, logger); err != nil {
 								logger.Error(err)
 								return
 							}
