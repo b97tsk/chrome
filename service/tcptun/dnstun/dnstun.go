@@ -683,6 +683,26 @@ Loop:
 				}
 			}
 
+			// Remove inactive transactions.
+			{
+				slice := transactions
+				transactions = slice[:0]
+
+				for _, tr := range slice {
+					select {
+					case <-tr.Done():
+					default:
+						transactions = append(transactions, tr)
+					}
+				}
+
+				slice = slice[len(transactions):]
+
+				for i := range slice {
+					slice[i] = nil
+				}
+			}
+
 			tr := newTransaction(ctx, options, route1)
 			transactions = append(transactions, tr)
 
