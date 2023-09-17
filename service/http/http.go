@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path"
 	"regexp"
@@ -24,6 +25,7 @@ import (
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/matchset"
+	"github.com/b97tsk/chrome/internal/netiputil"
 	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/b97tsk/log"
 	"golang.org/x/net/http/httpguts"
@@ -66,48 +68,60 @@ type route struct {
 type allowList struct {
 	What     string
 	Checksum string
-	Logger   *log.Logger
 
-	includes matchset.MatchSet
-	excludes matchset.MatchSet
+	includes, excludes struct {
+		patterns matchset.MatchSet
+		ipranges netiputil.AddrRangeSet
+	}
 }
 
 type patternConfig struct {
 	ports []string
 }
 
-func (l *allowList) Init(fsys fs.FS) error {
-	includes := make(map[string]*patternConfig)
-	excludes := make(map[string]*patternConfig)
+func (l *allowList) Init(fsys fs.FS, logger *log.Logger) error {
+	p := &allowListParser{logger: logger}
 
 	s := bufio.NewScanner(strings.NewReader(l.What))
 	s.Split(scanLines)
 
 	for s.Scan() {
-		if err := l.parseLine(fsys, ".", s.Text(), includes, excludes); err != nil {
+		if err := p.parseLine(fsys, ".", s.Text()); err != nil {
 			return err
 		}
 	}
 
-	for pattern, config := range includes {
-		l.includes.Add(pattern, config)
+	for pattern, config := range p.includes.patterns {
+		l.includes.patterns.Add(pattern, config)
 	}
 
-	for pattern, config := range excludes {
-		l.excludes.Add(pattern, config)
+	for pattern, config := range p.excludes.patterns {
+		l.excludes.patterns.Add(pattern, config)
 	}
+
+	l.includes.ipranges = p.includes.ipranges
+	l.excludes.ipranges = p.excludes.ipranges
 
 	return nil
 }
 
-func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes map[string]*patternConfig) error {
+type allowListParser struct {
+	logger *log.Logger
+
+	includes, excludes struct {
+		patterns map[string]*patternConfig
+		ipranges netiputil.AddrRangeSet
+	}
+}
+
+func (p *allowListParser) parseLine(fsys fs.FS, name, line string) error {
 	if line[0] == '@' {
 		filepath := line[1:]
 		if strings.HasPrefix(filepath, "./") || strings.HasPrefix(filepath, "../") {
 			filepath = path.Join(path.Dir(name), filepath)
 		}
 
-		if err := l.parseFile(fsys, filepath, includes, excludes); err != nil {
+		if err := p.parseFile(fsys, filepath); err != nil {
 			return fmt.Errorf("load %v: %w", name, err)
 		}
 
@@ -117,6 +131,26 @@ func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes 
 	exclude := line[0] == '!'
 	if exclude {
 		line = line[1:]
+	}
+
+	settings := &p.includes
+	if exclude {
+		settings = &p.excludes
+	}
+
+	if strings.Contains(line, "/") {
+		r, closed, err := netiputil.ParsePrefix(line)
+		if err != nil {
+			return fmt.Errorf("load %v: %w", name, err)
+		}
+
+		settings.ipranges.Add(r)
+
+		if !closed {
+			return nil
+		}
+
+		line = r.High.String() // Either 255.255.255.255 or ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff.
 	}
 
 	portSuffix := rePortSuffix.FindString(line)
@@ -131,24 +165,23 @@ func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes 
 		pattern = line
 	}
 
-	configMap := includes
-	if exclude {
-		configMap = excludes
+	if settings.patterns == nil {
+		settings.patterns = make(map[string]*patternConfig)
 	}
 
 	if portSuffix == "" {
-		configMap[pattern] = nil
+		settings.patterns[pattern] = nil
 		return nil
 	}
 
-	config, configExists := configMap[pattern]
+	config, configExists := settings.patterns[pattern]
 	if config == nil {
 		if configExists {
 			return nil
 		}
 
 		config = &patternConfig{}
-		configMap[pattern] = config
+		settings.patterns[pattern] = config
 	}
 
 	port := portSuffix[1:]
@@ -164,7 +197,7 @@ func (l *allowList) parseLine(fsys fs.FS, name, line string, includes, excludes 
 	return nil
 }
 
-func (l *allowList) parseFile(fsys fs.FS, name string, includes, excludes map[string]*patternConfig) error {
+func (p *allowListParser) parseFile(fsys fs.FS, name string) error {
 	file, err := fsys.Open(name)
 	if err != nil {
 		return err
@@ -175,7 +208,7 @@ func (l *allowList) parseFile(fsys fs.FS, name string, includes, excludes map[st
 	s.Split(scanLines)
 
 	for s.Scan() {
-		if err := l.parseLine(fsys, name, s.Text(), includes, excludes); err != nil {
+		if err := p.parseLine(fsys, name, s.Text()); err != nil {
 			return err
 		}
 	}
@@ -184,8 +217,8 @@ func (l *allowList) parseFile(fsys fs.FS, name string, includes, excludes map[st
 		return err
 	}
 
-	if l.Logger != nil {
-		l.Logger.Infof("loaded %v", name)
+	if p.logger != nil {
+		p.logger.Infof("loaded %v", name)
 	}
 
 	return nil
@@ -247,9 +280,18 @@ func checksumFile(fsys fs.FS, name string, digest io.Writer) error {
 	return s.Err()
 }
 
-func match(set *matchset.MatchSet, host, port string) bool {
-	for _, c := range set.MatchAll(host) {
-		config := c.(*patternConfig)
+func (l *allowList) Allow(host, port string, addr netip.Addr) bool {
+	return match(&l.includes.patterns, l.includes.ipranges, host, port, addr) &&
+		!match(&l.excludes.patterns, l.excludes.ipranges, host, port, addr)
+}
+
+func match(patterns *matchset.MatchSet, ipranges netiputil.AddrRangeSet, host, port string, addr netip.Addr) bool {
+	if addr.IsValid() && ipranges.Contains(addr) {
+		return true
+	}
+
+	for _, v := range patterns.MatchAll(host) {
+		config := v.(*patternConfig)
 		if config == nil {
 			return true
 		}
@@ -262,11 +304,6 @@ func match(set *matchset.MatchSet, host, port string) bool {
 	}
 
 	return false
-}
-
-func (l *allowList) Allow(hostport string) bool {
-	host, port, _ := net.SplitHostPort(hostport)
-	return match(&l.includes, host, port) && !match(&l.excludes, host, port)
 }
 
 type Service struct{}
@@ -416,10 +453,9 @@ func (Service) Run(ctx chrome.Context) {
 							l = &allowList{
 								What:     r.What,
 								Checksum: r.Checksum,
-								Logger:   logger,
 							}
 
-							if err := l.Init(ctx.Manager); err != nil {
+							if err := l.Init(ctx.Manager, logger); err != nil {
 								logger.Error(err)
 								return
 							}
@@ -477,8 +513,16 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 			if r, ok := opts.routeCache.Load(addr); ok {
 				d = r.(*route).Proxy.Dialer()
 			} else {
+				host, port, _ := net.SplitHostPort(addr)
+
+				addr1, _ := netip.ParseAddr(host)
+				if addr1.IsValid() {
+					addr1 = addr1.Unmap()
+					host = addr1.String()
+				}
+
 				for i := range opts.routes {
-					if r := &opts.routes[i]; r.AllowList.Allow(addr) {
+					if r := &opts.routes[i]; r.AllowList.Allow(host, port, addr1) {
 						logger.Infof("%v matches %v", r.Name, addr)
 
 						d = r.Proxy.Dialer()
