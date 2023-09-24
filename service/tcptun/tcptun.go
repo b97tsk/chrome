@@ -73,7 +73,12 @@ func (Service) Run(ctx chrome.Context) {
 					return nil
 				}
 
-				remote, _ := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr, opts.Dial, logger)
+				getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
+					opts, ok := <-optsOut
+					return opts.Proxy, opts.Dial, ok
+				}
+
+				remote, _ := ctx.Manager.Dial(localCtx, "tcp", opts.ForwardAddr, getopts, logger)
 
 				return remote
 			}

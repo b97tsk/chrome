@@ -183,7 +183,12 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
-				remote, _ := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial, logger)
+				getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
+					opts, ok := <-optsOut
+					return opts.Proxy, opts.Dial, ok
+				}
+
+				remote, _ := ctx.Manager.Dial(localCtx, "tcp", remoteAddr, getopts, logger)
 
 				return remote
 			}
@@ -395,12 +400,17 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
 
-						d := opts.Proxy.Dialer()
-						if opts.DNS.Proxy != nil {
-							d = opts.DNS.Proxy.Dialer()
+						getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
+							opts, ok := <-options
+
+							if opts.DNS.Proxy != nil {
+								opts.Proxy = *opts.DNS.Proxy
+							}
+
+							return opts.Proxy, opts.Dial, ok
 						}
 
-						conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial, logger)
+						conn, err := ctx.Manager.Dial(q.Context, "tcp", hostport, getopts, logger)
 						if err != nil {
 							break
 						}

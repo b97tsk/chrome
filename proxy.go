@@ -128,6 +128,10 @@ func makeProxyUsing(strategy string, proxies []Proxy, shuffle bool) (Proxy, erro
 	return p, nil
 }
 
+// ProxyFromDialer creates a Proxy from a Dialer.
+// The Dialer returned shouldn't be used for comparison.
+func ProxyFromDialer(d proxy.Dialer) Proxy { return Proxy{d: d} }
+
 // IsZero reports whether p is proxy.Direct.
 func (p Proxy) IsZero() bool {
 	switch p.d {

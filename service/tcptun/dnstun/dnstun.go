@@ -838,12 +838,17 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
 
-					d := opts.Proxy.Dialer()
-					if tr.Route != nil {
-						d = tr.Route.Proxy.Dialer()
+					getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
+						opts, ok := <-options
+
+						if tr.Route != nil {
+							opts.Proxy = tr.Route.Proxy
+						}
+
+						return opts.Proxy, opts.Dial, ok
 					}
 
-					conn, err := ctx.Manager.Dial(q.Context, d, "tcp", hostport, opts.Dial, logger)
+					conn, err := ctx.Manager.Dial(q.Context, "tcp", hostport, getopts, logger)
 					if err != nil {
 						break
 					}

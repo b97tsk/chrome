@@ -259,12 +259,12 @@ func (Service) Run(ctx chrome.Context) {
 							remoteAddr := addr.String()
 
 							getRemote := func(localCtx context.Context) net.Conn {
-								opts, ok := <-optsOut
-								if !ok {
-									return nil
+								getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
+									opts, ok := <-optsOut
+									return opts.Proxy, opts.Dial, ok
 								}
 
-								remote, _ := ctx.Manager.Dial(localCtx, opts.Proxy.Dialer(), "tcp", remoteAddr, opts.Dial, logger)
+								remote, _ := ctx.Manager.Dial(localCtx, "tcp", remoteAddr, getopts, logger)
 
 								return remote
 							}

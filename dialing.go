@@ -39,50 +39,17 @@ func (m *dialingService) SetDialOptions(opts DialOptions) {
 	m.dialOpts.MaxAttempts.Store(int64(opts.MaxAttempts))
 }
 
-// Dial dials address with dialer repeatedly until success or ctx is canceled.
-// Dial accepts a DialOptions that can be specified with opts parameter or
-// by SetDialOptions method.
+// Dial connects address repeatedly until success or ctx is canceled.
+//
+// For each attempt, Dial calls getopts to obtain a Proxy and a DialOptions.
+// Dial uses the Proxy to connect target address, and the DialOptions for
+// custom behavior.
 func (m *dialingService) Dial(
 	ctx context.Context,
-	dialer proxy.Dialer,
 	network, address string,
-	opts DialOptions,
+	getopts func() (Proxy, DialOptions, bool),
 	logger *log.Logger,
 ) (c net.Conn, err error) {
-	if block, ok := dialer.(blockOrReset); ok {
-		if block {
-			<-ctx.Done()
-			return nil, ctx.Err()
-		}
-
-		return nil, errReset
-	}
-
-	if dialer == nil {
-		dialer = proxy.Direct
-	}
-
-	if opts.Timeout <= 0 {
-		opts.Timeout = time.Duration(m.dialOpts.Timeout.Load())
-		if opts.Timeout <= 0 {
-			opts.Timeout = defaultDialTimeout
-		}
-	}
-
-	if opts.Interval <= 0 {
-		opts.Interval = time.Duration(m.dialOpts.Interval.Load())
-		if opts.Interval <= 0 {
-			opts.Interval = defaultDialInterval
-		}
-	}
-
-	if opts.MaxAttempts <= 0 {
-		opts.MaxAttempts = int(m.dialOpts.MaxAttempts.Load())
-		if opts.MaxAttempts <= 0 {
-			opts.MaxAttempts = defaultDialMaxAttempts
-		}
-	}
-
 	attempts := 0
 	es, esc := "", 0
 
@@ -91,6 +58,48 @@ func (m *dialingService) Dial(
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
+		}
+
+		p, opts, ok := getopts()
+		if !ok {
+			return nil, errDismissed
+		}
+
+		dialer := p.Dialer()
+
+		if block, ok := dialer.(blockOrReset); ok {
+			if block {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+
+			return nil, errReset
+		}
+
+		if opts.Timeout <= 0 {
+			opts.Timeout = time.Duration(m.dialOpts.Timeout.Load())
+			if opts.Timeout <= 0 {
+				opts.Timeout = defaultDialTimeout
+			}
+		}
+
+		if opts.Interval <= 0 {
+			opts.Interval = time.Duration(m.dialOpts.Interval.Load())
+			if opts.Interval <= 0 {
+				opts.Interval = defaultDialInterval
+			}
+		}
+
+		if opts.MaxAttempts <= 0 {
+			opts.MaxAttempts = int(m.dialOpts.MaxAttempts.Load())
+			if opts.MaxAttempts <= 0 {
+				opts.MaxAttempts = defaultDialMaxAttempts
+			}
+		}
+
+		if attempts >= opts.MaxAttempts {
+			<-ctx.Done()
+			return nil, ctx.Err()
 		}
 
 		startTime := time.Now()
@@ -132,10 +141,6 @@ func (m *dialingService) Dial(
 			case <-ctx.Done():
 			}
 		}
-
-		if attempts == opts.MaxAttempts {
-			<-ctx.Done()
-		}
 	}
 }
 
@@ -145,4 +150,7 @@ const (
 	defaultDialMaxAttempts = 99
 )
 
-var errReset = errors.New("reset")
+var (
+	errDismissed = errors.New("dismissed")
+	errReset     = errors.New("reset")
+)

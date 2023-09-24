@@ -506,35 +506,38 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 	logger := ctx.Manager.Logger(ServiceName)
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		opts := <-h.opts
-		d := opts.Proxy.Dialer()
+		getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
+			opts, ok := <-h.opts
 
-		if opts.routeCache != nil {
-			if r, ok := opts.routeCache.Load(addr); ok {
-				d = r.(*route).Proxy.Dialer()
-			} else {
-				host, port, _ := net.SplitHostPort(addr)
+			if opts.routeCache != nil {
+				if r, ok := opts.routeCache.Load(addr); ok {
+					opts.Proxy = r.(*route).Proxy
+				} else {
+					host, port, _ := net.SplitHostPort(addr)
 
-				addr1, _ := netip.ParseAddr(host)
-				if addr1.IsValid() {
-					addr1 = addr1.Unmap()
-					host = addr1.String()
-				}
+					addr1, _ := netip.ParseAddr(host)
+					if addr1.IsValid() {
+						addr1 = addr1.Unmap()
+						host = addr1.String()
+					}
 
-				for i := range opts.routes {
-					if r := &opts.routes[i]; r.AllowList.Allow(host, port, addr1) {
-						logger.Infof("%v matches %v", r.Name, addr)
+					for i := range opts.routes {
+						if r := &opts.routes[i]; r.AllowList.Allow(host, port, addr1) {
+							logger.Infof("%v matches %v", r.Name, addr)
 
-						d = r.Proxy.Dialer()
-						opts.routeCache.Store(addr, r)
+							opts.Proxy = r.Proxy
+							opts.routeCache.Store(addr, r)
 
-						break
+							break
+						}
 					}
 				}
 			}
+
+			return opts.Proxy, opts.Dial, ok
 		}
 
-		return h.ctx.Manager.Dial(ctx, d, network, addr, opts.Dial, logger)
+		return h.ctx.Manager.Dial(ctx, network, addr, getopts, logger)
 	}
 
 	h.tr = &http.Transport{
