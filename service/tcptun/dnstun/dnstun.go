@@ -336,10 +336,10 @@ func (Service) Run(ctx chrome.Context) {
 				return
 			}
 
-			local, localCtx := netutil.NewConnChecker(c)
-			defer local.Close()
+			cc := netutil.NewConnChecker(c)
+			defer cc.Close()
 
-			dnsConn := &dns.Conn{Conn: local}
+			dnsConn := &dns.Conn{Conn: cc}
 
 			for {
 				msg, err := dnsConn.ReadMsg()
@@ -384,15 +384,15 @@ func (Service) Run(ctx chrome.Context) {
 					select {
 					case <-ctx.Done():
 						return
-					case <-localCtx.Done():
+					case <-cc.Done():
 						return
-					case dnsQueryIn <- dnsQuery{msg, domain, qtype, r, localCtx}:
+					case dnsQueryIn <- dnsQuery{msg, domain, qtype, r, cc}:
 					}
 
 					select {
 					case <-ctx.Done():
 						return
-					case <-localCtx.Done():
+					case <-cc.Done():
 						return
 					case qr = <-r:
 					}

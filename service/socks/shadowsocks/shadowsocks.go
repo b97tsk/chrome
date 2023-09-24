@@ -103,7 +103,7 @@ func (Service) Run(ctx chrome.Context) {
 				return remote
 			}
 
-			ctx.Manager.Relay(c, getopts, getRemote, nil)
+			ctx.Manager.Relay(c, getopts, getRemote, nil, logger)
 		})
 
 		return nil

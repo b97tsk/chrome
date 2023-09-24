@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome/internal/netutil"
+	"github.com/b97tsk/log"
 )
 
 // RelayOptions provides options for Relay.
@@ -76,11 +77,12 @@ func (m *relayService) Relay(
 	getopts func() (RelayOptions, bool),
 	getRemote func(context.Context) net.Conn,
 	sendResponse func(io.Writer) bool,
+	logger *log.Logger,
 ) {
-	local, localCtx := netutil.NewConnChecker(local)
-	defer local.Close()
+	cc := netutil.NewConnChecker(local)
+	defer cc.Close()
 
-	r := netutil.NewConnReplayer(local)
+	r := netutil.NewConnReplayer(cc)
 	local = r
 
 	try := func() (again bool) {
@@ -103,7 +105,7 @@ func (m *relayService) Relay(
 			}
 		}
 
-		remote := getRemote(localCtx)
+		remote := getRemote(cc)
 		if remote == nil {
 			return
 		}
@@ -133,6 +135,7 @@ func (m *relayService) Relay(
 		do := func(int) {
 			if !r.Stopped() {
 				r.Stop()
+				cc.Stop()
 			}
 		}
 
@@ -151,9 +154,7 @@ func (m *relayService) Relay(
 				_ = local.SetReadDeadline(noDeadline)
 				_ = remote.SetReadDeadline(noDeadline)
 
-				if localCtx.Err() == nil {
-					m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
-				}
+				m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
 			}
 
 			return
@@ -162,15 +163,23 @@ func (m *relayService) Relay(
 		if d := time.Since(startTime); d < opts.Interval {
 			select {
 			case <-time.After(opts.Interval - d):
-			case <-localCtx.Done():
+			case <-cc.Done():
 			}
 		}
 
-		return localCtx.Err() == nil
+		return cc.Err() == nil
 	}
 
 	for try() {
 		continue
+	}
+
+	if logger != nil {
+		switch err := context.Cause(cc); err {
+		case nil, io.EOF, netutil.ErrStopped:
+		default:
+			logger.Tracef("relay: %v", err)
+		}
 	}
 }
 

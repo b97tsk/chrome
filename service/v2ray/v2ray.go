@@ -283,7 +283,7 @@ func (Service) Run(ctx chrome.Context) {
 								return true
 							}
 
-							ctx.Manager.Relay(c, getopts, getRemote, sendResponse)
+							ctx.Manager.Relay(c, getopts, getRemote, sendResponse, logger)
 						})
 					}
 

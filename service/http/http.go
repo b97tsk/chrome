@@ -658,7 +658,9 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return true
 		}
 
-		h.ctx.Manager.Relay(conn, getopts, getRemote, sendResponse)
+		logger := h.ctx.Manager.Logger(ServiceName)
+
+		h.ctx.Manager.Relay(conn, getopts, getRemote, sendResponse, logger)
 	})
 }
 
@@ -682,7 +684,9 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 			return remote
 		}
 
-		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getopts, getRemote, nil)
+		logger := h.ctx.Manager.Logger(ServiceName)
+
+		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getopts, getRemote, nil, logger)
 	})
 }
 

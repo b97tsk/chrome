@@ -4,56 +4,61 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"time"
 )
 
 const (
-	checkInterval   = 500 * time.Millisecond
-	checkWindow     = 1 * time.Millisecond
-	checkBufferSize = 2048
+	checkInterval            = 500 * time.Millisecond
+	checkDuration            = 1 * time.Millisecond
+	checkBufferInitialSize   = 2 * 1024
+	checkBufferMaximumSize   = 32 * 1024
+	checkBufferGrowThreshold = 10 * checkInterval
 )
 
-type connChecker struct {
-	net.Conn
+var (
+	ErrFullBuffer = errors.New("full buffer")
+	ErrStopped    = errors.New("stopped")
+)
 
+type ConnChecker struct {
+	net.Conn
+	context.Context
+
+	cancel   context.CancelCauseFunc
 	cbr      chan *bufio.Reader
-	beat     chan struct{}
-	cancel   func()
 	deadline chan time.Time
 }
 
-// NewConnChecker returns a new net.Conn based on conn, and a context.Context
-// whose cancellation indicates that conn is no longer readable (closed or
-// lost).
+// NewConnChecker creates a ConnChecker cc that periodically checks if c is
+// no longer readable (closed or lost); if yes, it cancels cc.Context.
 //
-// Internally, NewConnChecker starts a goroutine that periodically checks
-// if conn is no longer readable (closed or lost); if yes, it cancels the
-// associated context.Context.
-func NewConnChecker(conn net.Conn) (net.Conn, context.Context) {
-	ctx, cancel := context.WithCancel(context.Background())
+// c must not be used afterward (use cc instead).
+func NewConnChecker(c net.Conn) (cc *ConnChecker) {
+	ctx, cancel := context.WithCancelCause(context.Background())
 
-	c := &connChecker{
-		Conn:     conn,
-		cbr:      make(chan *bufio.Reader, 1),
-		beat:     make(chan struct{}, 1),
+	cc = &ConnChecker{
+		Conn:     c,
+		Context:  ctx,
 		cancel:   cancel,
+		cbr:      make(chan *bufio.Reader, 1),
 		deadline: make(chan time.Time, 1),
 	}
 
-	c.cbr <- bufio.NewReaderSize(conn, checkBufferSize)
-	c.deadline <- time.Time{}
+	cc.cbr <- bufio.NewReaderSize(c, checkBufferInitialSize)
+	cc.deadline <- time.Time{}
 
-	go c.start(ctx)
+	go func() { _ = cc.start(ctx) }()
 
-	return c, ctx
+	return
 }
 
-func (c *connChecker) start(ctx context.Context) {
-	defer c.cancel()
+func (c *ConnChecker) start(ctx context.Context) (cause error) {
+	defer func() { c.cancel(cause) }()
 
-	var skipNextCheck bool
+	var growtime time.Time
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -64,33 +69,39 @@ func (c *connChecker) start(ctx context.Context) {
 		select {
 		case <-done:
 			return
-		case <-c.beat:
-			skipNextCheck = true
 		case <-ticker.C:
-			if skipNextCheck {
-				skipNextCheck = false
-				continue
-			}
 			select {
 			case br := <-c.cbr:
 				var err error
 
-				if br.Buffered() < checkBufferSize {
+				if br.Buffered() < br.Size() {
 					deadline := <-c.deadline
-					_ = c.Conn.SetReadDeadline(time.Now().Add(checkWindow))
-					_, err = br.Peek(checkBufferSize)
+					_ = c.Conn.SetReadDeadline(time.Now().Add(checkDuration))
+					_, err = br.Peek(br.Size())
 					_ = c.Conn.SetReadDeadline(deadline)
 					c.deadline <- deadline
+					growtime = time.Time{}
+				}
+
+				if br.Buffered() == br.Size() {
+					if size := br.Size(); size < checkBufferMaximumSize {
+						switch now := time.Now(); {
+						case growtime.IsZero():
+							growtime = now.Add(checkBufferGrowThreshold)
+						case now.After(growtime):
+							rd := io.MultiReader(io.LimitReader(br, int64(size)), c.Conn)
+							br = bufio.NewReaderSize(rd, size*2)
+							growtime = time.Time{}
+						}
+					} else {
+						err = ErrFullBuffer
+					}
 				}
 
 				c.cbr <- br
 
-				switch {
-				case err == nil:
-				case err == bufio.ErrBufferFull:
-				case errors.Is(err, os.ErrDeadlineExceeded):
-				default:
-					return
+				if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
+					return err
 				}
 			default:
 			}
@@ -98,42 +109,35 @@ func (c *connChecker) start(ctx context.Context) {
 	}
 }
 
-func (c *connChecker) Read(p []byte) (n int, err error) {
+func (c *ConnChecker) Stop() { c.cancel(ErrStopped) }
+
+func (c *ConnChecker) Read(p []byte) (n int, err error) {
 	br := <-c.cbr
 	n, err = br.Read(p)
 	c.cbr <- br
 
 	if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
-		c.cancel()
-		return
-	}
-
-	select {
-	case c.beat <- struct{}{}:
-	default:
+		c.cancel(err)
 	}
 
 	return
 }
 
-func (c *connChecker) Close() error {
-	c.cancel()
-
+func (c *ConnChecker) Close() error {
+	c.Stop()
 	return c.Conn.Close()
 }
 
-func (c *connChecker) SetDeadline(t time.Time) error {
+func (c *ConnChecker) SetDeadline(t time.Time) error {
 	<-c.deadline
 	err := c.Conn.SetDeadline(t)
 	c.deadline <- t
-
 	return err
 }
 
-func (c *connChecker) SetReadDeadline(t time.Time) error {
+func (c *ConnChecker) SetReadDeadline(t time.Time) error {
 	<-c.deadline
 	err := c.Conn.SetReadDeadline(t)
 	c.deadline <- t
-
 	return err
 }
