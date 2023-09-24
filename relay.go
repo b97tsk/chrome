@@ -64,29 +64,19 @@ func (m *relayService) SetRelayOptions(opts RelayOptions) {
 	m.relayOpts.DownlinkIdle.Store(int64(opts.DownlinkIdle))
 }
 
-// Relay relays two (TCP) connections, that is, read from one and write to
-// the other, in both directions. In addition, Relay accepts a RelayOptions
-// that can be specified with opts parameter or by SetRelayOptions method.
+// Relay (TCP only) sends packets from local to remote, and vice versa.
+//
+// For each attempt, Relay calls getopts to obtain a RelayOptions for custom
+// behavior, and calls getRemote to obtain a remote connection.
+//
+// If sendResponse is not nil, it will be called once for sending response to
+// local, after obtaining a remote connection.
 func (m *relayService) Relay(
 	local net.Conn,
+	getopts func() (RelayOptions, bool),
 	getRemote func(context.Context) net.Conn,
 	sendResponse func(io.Writer) bool,
-	opts RelayOptions,
 ) {
-	if opts.Timeout <= 0 {
-		opts.Timeout = time.Duration(m.relayOpts.Timeout.Load())
-		if opts.Timeout <= 0 {
-			opts.Timeout = defaultRelayTimeout
-		}
-	}
-
-	if opts.Interval <= 0 {
-		opts.Interval = time.Duration(m.relayOpts.Interval.Load())
-		if opts.Interval <= 0 {
-			opts.Interval = defaultRelayInterval
-		}
-	}
-
 	local, localCtx := netutil.NewConnChecker(local)
 	defer local.Close()
 
@@ -94,6 +84,25 @@ func (m *relayService) Relay(
 	local = r
 
 	try := func() (again bool) {
+		opts, ok := getopts()
+		if !ok {
+			return
+		}
+
+		if opts.Timeout <= 0 {
+			opts.Timeout = time.Duration(m.relayOpts.Timeout.Load())
+			if opts.Timeout <= 0 {
+				opts.Timeout = defaultRelayTimeout
+			}
+		}
+
+		if opts.Interval <= 0 {
+			opts.Interval = time.Duration(m.relayOpts.Interval.Load())
+			if opts.Interval <= 0 {
+				opts.Interval = defaultRelayInterval
+			}
+		}
+
 		remote := getRemote(localCtx)
 		if remote == nil {
 			return

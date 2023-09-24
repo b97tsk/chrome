@@ -67,6 +67,11 @@ func (Service) Run(ctx chrome.Context) {
 		server = ln
 
 		go ctx.Manager.Serve(ln, func(c net.Conn) {
+			getopts := func() (chrome.RelayOptions, bool) {
+				opts, ok := <-optsOut
+				return opts.Relay, ok
+			}
+
 			getRemote := func(localCtx context.Context) net.Conn {
 				opts := <-optsOut
 				if opts.ForwardAddr == "" {
@@ -83,7 +88,7 @@ func (Service) Run(ctx chrome.Context) {
 				return remote
 			}
 
-			ctx.Manager.Relay(c, getRemote, nil, (<-optsOut).Relay)
+			ctx.Manager.Relay(c, getopts, getRemote, nil)
 		})
 
 		return nil

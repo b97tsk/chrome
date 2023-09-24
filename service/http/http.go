@@ -638,6 +638,11 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	h.hijack(rw, func(conn net.Conn) {
 		remoteAddr := h.rewriteHost(req.RequestURI)
 
+		getopts := func() (chrome.RelayOptions, bool) {
+			opts, ok := <-h.opts
+			return opts.Relay, ok
+		}
+
 		getRemote := func(localCtx context.Context) net.Conn {
 			remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
 			return remote
@@ -653,7 +658,7 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 			return true
 		}
 
-		h.ctx.Manager.Relay(conn, getRemote, sendResponse, (<-h.opts).Relay)
+		h.ctx.Manager.Relay(conn, getopts, getRemote, sendResponse)
 	})
 }
 
@@ -667,12 +672,17 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 
 		remoteAddr := h.rewriteHost(req.Host)
 
+		getopts := func() (chrome.RelayOptions, bool) {
+			opts, ok := <-h.opts
+			return opts.Relay, ok
+		}
+
 		getRemote := func(localCtx context.Context) net.Conn {
 			remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
 			return remote
 		}
 
-		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getRemote, nil, (<-h.opts).Relay)
+		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getopts, getRemote, nil)
 	})
 }
 

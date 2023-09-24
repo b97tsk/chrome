@@ -87,6 +87,11 @@ func (Service) Run(ctx chrome.Context) {
 
 			remoteAddr := addr.String()
 
+			getopts := func() (chrome.RelayOptions, bool) {
+				opts, ok := <-optsOut
+				return opts.Relay, ok
+			}
+
 			getRemote := func(localCtx context.Context) net.Conn {
 				getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
 					opts, ok := <-optsOut
@@ -98,7 +103,7 @@ func (Service) Run(ctx chrome.Context) {
 				return remote
 			}
 
-			ctx.Manager.Relay(c, getRemote, nil, (<-optsOut).Relay)
+			ctx.Manager.Relay(c, getopts, getRemote, nil)
 		})
 
 		return nil
