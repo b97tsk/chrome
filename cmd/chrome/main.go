@@ -99,6 +99,8 @@ func Main() (code int) {
 
 	var reload <-chan time.Time
 
+	logger := man.Logger("main")
+
 	for {
 		select {
 		case e := <-watcher.Events:
@@ -107,12 +109,12 @@ func Main() (code int) {
 				reload = time.After(1 * time.Second)
 			}
 		case err := <-watcher.Errors:
-			logger := man.Logger("main")
 			logger.Warn(err)
 		case <-reload:
 			if err := man.LoadFile(configFile); err != nil {
-				logger := man.Logger("main")
 				logger.Warn(err)
+			} else {
+				logger.Info("reloaded")
 			}
 
 			reload = nil
