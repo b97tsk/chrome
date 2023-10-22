@@ -9,15 +9,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"math/rand"
 	"net"
-	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
@@ -42,10 +38,9 @@ type Options struct {
 	TransportOptions `yaml:",inline"`
 
 	Mux struct {
-		Enabled       bool        `json:"enabled" yaml:"-"`
-		EnabledByYAML *bool       `json:"-" yaml:"enabled"`
-		Concurrency   int         `json:"concurrency,omitempty"`
-		Ping          PingOptions `json:"-"`
+		Enabled       bool  `json:"enabled" yaml:"-"`
+		EnabledByYAML *bool `json:"-" yaml:"enabled"`
+		Concurrency   int   `json:"concurrency,omitempty"`
 	}
 
 	Policy struct {
@@ -108,19 +103,6 @@ type CertificateOptions struct {
 type HostportOptions struct {
 	Address string `yaml:"hostport"`
 	Port    int    `yaml:"-"`
-}
-
-type PingOptions struct {
-	Enabled  bool
-	URL      string
-	URLs     []string
-	Number   int
-	Timeout  time.Duration
-	Interval struct {
-		Start time.Duration
-		Step  time.Duration
-		Max   time.Duration
-	}
 }
 
 type Service struct{}
@@ -230,11 +212,7 @@ func (Service) Run(ctx chrome.Context) {
 	}
 	defer stopServer()
 
-	var (
-		ins        *v2ray.Instance
-		restart    chan struct{}
-		cancelPing context.CancelFunc
-	)
+	var ins *v2ray.Instance
 
 	startInstance := func(opts Options) {
 		ins1, err := createInstance(opts)
@@ -249,30 +227,9 @@ func (Service) Run(ctx chrome.Context) {
 		}
 
 		ins = ins1
-
-		if opts.Mux.Enabled && opts.Mux.Ping.Enabled {
-			var ctxPing context.Context
-			ctxPing, cancelPing = context.WithCancel(context.Background())
-
-			if restart == nil {
-				restart = make(chan struct{})
-			}
-
-			go func() {
-				err := startPing(ctxPing, opts.Mux.Ping, opts.ListenAddr, restart)
-				if err != nil {
-					logger.Errorf("ping: %v", err)
-				}
-			}()
-		}
 	}
 
 	stopInstance := func() {
-		if cancelPing != nil {
-			cancelPing()
-			cancelPing = nil
-		}
-
 		if ins != nil {
 			if err := ins.Close(); err != nil {
 				logger.Debugf("close instance: %v", err)
@@ -392,14 +349,6 @@ func (Service) Run(ctx chrome.Context) {
 			if err := startServer(); err != nil {
 				return
 			}
-		case <-restart:
-			opts := <-optsOut
-
-			stopInstance()
-			startInstance(opts)
-
-			opts.ins = ins
-			optsIn <- opts
 		}
 	}
 }
@@ -675,114 +624,6 @@ func parseVMessURL(opts *Options) error {
 	return nil
 }
 
-func startPing(ctx context.Context, opts PingOptions, laddr string, restart chan<- struct{}) error {
-	urls := opts.URLs
-	if len(urls) == 0 {
-		url := defaultPingURL
-		if opts.URL != "" {
-			url = opts.URL
-		}
-
-		urls = []string{url}
-	}
-
-	if opts.Number < 1 {
-		opts.Number = defaultPingNumber
-	}
-
-	if opts.Timeout < 1 {
-		opts.Timeout = defaultPingTimeout
-	}
-
-	if opts.Interval.Start < 1 {
-		opts.Interval.Start = defaultPingIntervalStart
-	}
-
-	if opts.Interval.Step < 1 {
-		opts.Interval.Step = defaultPingIntervalStep
-	}
-
-	if opts.Interval.Max < 1 {
-		opts.Interval.Max = defaultPingIntervalMax
-	}
-
-	jar, _ := cookiejar.New(nil)
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(&url.URL{Scheme: "socks5", Host: laddr}),
-		},
-		Jar: jar,
-	}
-	defer client.CloseIdleConnections()
-
-	done := ctx.Done()
-	number := opts.Number
-	sleep := time.Duration(0)
-
-	for {
-		ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
-
-		url := urls[0]
-		if len(urls) > 1 {
-			url = urls[rand.Intn(len(urls))]
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			cancel()
-			return err
-		}
-
-		req.Header.Set("User-Agent", "") // Reduce header size.
-
-		resp, err := client.Do(req)
-		if err == nil {
-			const maxBodySlurpSize = 2 << 10
-			if resp.ContentLength <= maxBodySlurpSize {
-				_, _ = io.CopyN(io.Discard, resp.Body, maxBodySlurpSize)
-			}
-
-			resp.Body.Close()
-		}
-
-		if err != nil {
-			number--
-			sleep = 0 //nolint:wsl
-		} else {
-			number = opts.Number
-			switch {
-			case sleep == 0:
-				sleep = opts.Interval.Start
-			case sleep < opts.Interval.Max:
-				sleep += opts.Interval.Step
-			}
-		}
-
-		cancel()
-
-		if number < 1 {
-			select {
-			case <-done:
-			case restart <- struct{}{}:
-			}
-
-			return nil
-		}
-
-		sleep := sleep
-		if sleep < 1 {
-			sleep = opts.Interval.Start
-		}
-
-		select {
-		case <-done:
-			return nil
-		case <-time.After(sleep):
-		}
-	}
-}
-
 func isTLS(s string) bool {
 	return len(s) != 0 && (s[0] == 't' || s[0] == 'T')
 }
@@ -818,12 +659,3 @@ func readLines(fsys fs.FS, name string) ([]string, error) {
 
 	return lines, nil
 }
-
-const (
-	defaultPingURL           = "http://www.google.com/gen_204"
-	defaultPingNumber        = 4
-	defaultPingTimeout       = 5 * time.Second
-	defaultPingIntervalStart = 1 * time.Second
-	defaultPingIntervalStep  = 2 * time.Second
-	defaultPingIntervalMax   = 11 * time.Second
-)
