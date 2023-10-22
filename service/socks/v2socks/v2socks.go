@@ -38,9 +38,8 @@ type Options struct {
 	TransportOptions `yaml:",inline"`
 
 	Mux struct {
-		Enabled       bool  `json:"enabled" yaml:"-"`
-		EnabledByYAML *bool `json:"-" yaml:"enabled"`
-		Concurrency   int   `json:"concurrency,omitempty"`
+		Enabled     bool `json:"enabled,omitempty"`
+		Concurrency int  `json:"concurrency,omitempty"`
 	}
 
 	Policy struct {
@@ -412,15 +411,6 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		hostport.Port, err = strconv.Atoi(port)
 		if err != nil {
 			return nil, fmt.Errorf("invalid port in address: %v", hostport.Address)
-		}
-	}
-
-	if opts.Mux.EnabledByYAML != nil {
-		opts.Mux.Enabled = *opts.Mux.EnabledByYAML
-	} else {
-		switch opts.Protocol {
-		case "TROJAN", "VLESS", "VMESS":
-			opts.Mux.Enabled = true
 		}
 	}
 
