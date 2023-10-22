@@ -490,9 +490,9 @@ func parseURL(opts *Options) error {
 
 	switch {
 	case strings.HasPrefix(opts.URL, "trojan://"):
-		return parseTrojanURL(opts)
+		return parseVLessURL(opts, "trojan://")
 	case strings.HasPrefix(opts.URL, "vless://"):
-		return parseVLessURL(opts)
+		return parseVLessURL(opts, "vless://")
 	case strings.HasPrefix(opts.URL, "vmess://"):
 		return parseVMessURL(opts)
 	}
@@ -500,45 +500,13 @@ func parseURL(opts *Options) error {
 	return fmt.Errorf("unknown scheme in url %v", opts.URL)
 }
 
-func parseTrojanURL(opts *Options) error {
-	before, after, _ := strings.Cut(strings.TrimPrefix(opts.URL, "trojan://"), "@")
+func parseVLessURL(opts *Options, prefix string) error {
+	before, after, _ := strings.Cut(strings.TrimPrefix(opts.URL, prefix), "@")
 	if before == "" || after == "" {
-		return fmt.Errorf("invalid trojan url: %v", opts.URL)
+		return fmt.Errorf("invalid url: %v", opts.URL)
 	}
 
-	u, err := url.Parse("trojan://xxxxx@" + after)
-	if err != nil {
-		return err
-	}
-
-	if u.Port() == "" {
-		return fmt.Errorf("missing port: %v", opts.URL)
-	}
-
-	q := u.Query()
-
-	if sni := q.Get("sni"); sni != "" && sni != u.Hostname() {
-		opts.TLS.ServerName = sni
-	}
-
-	opts.Type = "TROJAN+TCP+TLS"
-	opts.TROJAN.Address = u.Host
-	opts.TROJAN.Password = before
-
-	if q.Get("allowInsecure") == "1" {
-		opts.TLS.AllowInsecure = true
-	}
-
-	return nil
-}
-
-func parseVLessURL(opts *Options) error {
-	before, after, _ := strings.Cut(strings.TrimPrefix(opts.URL, "vless://"), "@")
-	if before == "" || after == "" {
-		return fmt.Errorf("invalid vless url: %v", opts.URL)
-	}
-
-	u, err := url.Parse("vless://xxxxx@" + after)
+	u, err := url.Parse(prefix + "xxxxx@" + after)
 	if err != nil {
 		return err
 	}
@@ -552,47 +520,56 @@ func parseVLessURL(opts *Options) error {
 	switch s := q.Get("encryption"); s {
 	case "", "none":
 	default:
-		return fmt.Errorf("unsupported encryption in vless url %v: %v", opts.URL, s)
+		return fmt.Errorf("unsupported encryption in url %v: %v", opts.URL, s)
 	}
 
 	var transport string
 
 	switch typ := strings.ToUpper(q.Get("type")); typ {
+	case "":
+		transport = "TCP+TLS"
 	case "GRPC":
 		transport = "GRPC"
 		opts.GRPC.ServiceName = q.Get("serviceName")
-
-		if host := q.Get("host"); host != "" && host != u.Hostname() {
-			opts.TLS.ServerName = host
-		}
 	case "TCP":
 		transport = "TCP"
-
 		if strings.EqualFold(q.Get("security"), "TLS") {
 			transport = "TCP+TLS"
-
-			if host := q.Get("host"); host != "" && host != u.Hostname() {
-				opts.TLS.ServerName = host
-			}
 		}
 	case "WS":
 		transport = "WS"
 		if strings.EqualFold(q.Get("security"), "TLS") {
 			transport = "WS+TLS"
-
-			if host := q.Get("host"); host != "" && host != u.Hostname() {
-				opts.TLS.ServerName = host
-			}
 		}
 
 		opts.WS.Path = q.Get("path")
 	default:
-		return fmt.Errorf("unknown type in vless url %v: %v", opts.URL, typ)
+		return fmt.Errorf("unknown type in url %v: %v", opts.URL, typ)
 	}
 
-	opts.Type = "VLESS+" + transport
-	opts.VLESS.Address = u.Host
-	opts.VLESS.ID = before
+	switch transport {
+	case "GRPC", "TCP+TLS", "WS+TLS":
+		if sni := q.Get("sni"); sni != "" && sni != u.Hostname() {
+			opts.TLS.ServerName = sni
+		} else if host := q.Get("host"); host != "" && host != u.Hostname() {
+			opts.TLS.ServerName = host
+		}
+	}
+
+	switch prefix {
+	case "trojan://":
+		opts.Type = "TROJAN+" + transport
+		opts.TROJAN.Address = u.Host
+		opts.TROJAN.Password = before
+	case "vless://":
+		opts.Type = "VLESS+" + transport
+		opts.VLESS.Address = u.Host
+		opts.VLESS.ID = before
+	}
+
+	if q.Get("allowInsecure") == "1" {
+		opts.TLS.AllowInsecure = true
+	}
 
 	return nil
 }
@@ -647,10 +624,6 @@ func parseVMessURL(opts *Options) error {
 	case "GRPC":
 		transport = "GRPC"
 		opts.GRPC.ServiceName = config.Path
-
-		if config.Host != "" && config.Host != config.Address {
-			opts.TLS.ServerName = config.Host
-		}
 	case "HTTP", "H2":
 		transport = "HTTP"
 
@@ -671,24 +644,23 @@ func parseVMessURL(opts *Options) error {
 
 		if isTLS(unquote(string(config.TLS))) {
 			transport = "TCP+TLS"
-
-			if config.Host != "" && config.Host != config.Address {
-				opts.TLS.ServerName = config.Host
-			}
 		}
 	case "WS":
 		transport = "WS"
 		if isTLS(unquote(string(config.TLS))) {
 			transport = "WS+TLS"
-
-			if config.Host != "" && config.Host != config.Address {
-				opts.TLS.ServerName = config.Host
-			}
 		}
 
 		opts.WS.Path = config.Path
 	default:
 		return fmt.Errorf("unknown net field in vmess url %v: %v", opts.URL, config.Net)
+	}
+
+	switch transport {
+	case "GRPC", "TCP+TLS", "WS+TLS":
+		if config.Host != "" && config.Host != config.Address {
+			opts.TLS.ServerName = config.Host
+		}
 	}
 
 	opts.Type = "VMESS+" + transport
