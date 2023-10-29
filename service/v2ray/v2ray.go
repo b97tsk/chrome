@@ -185,10 +185,11 @@ func (Service) Run(ctx chrome.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case opts := <-ctx.Load:
-			if new, ok := opts.(*Options); ok {
+		case ev := <-ctx.Event:
+			switch ev := ev.(type) {
+			case chrome.LoadEvent:
 				old := <-optsOut
-				new := *new
+				new := *ev.Options.(*Options)
 				new.ins = old.ins
 
 				{
@@ -299,18 +300,18 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				optsIn <- new
-			}
-		case <-ctx.Loaded:
-			if ins == nil {
-				opts := <-optsOut
-				startInstance(opts)
-
+			case chrome.LoadedEvent:
 				if ins == nil {
-					return
-				}
+					opts := <-optsOut
+					startInstance(opts)
 
-				opts.ins = ins
-				optsIn <- opts
+					if ins == nil {
+						return
+					}
+
+					opts.ins = ins
+					optsIn <- opts
+				}
 			}
 		}
 	}

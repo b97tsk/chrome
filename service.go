@@ -35,22 +35,33 @@ type Service interface {
 	Run(Context)
 }
 
+// Event is the interface of events.
+type Event any
+
+// LoadEvent is for sending options to a job.
+//
+// When a job receives this event, it should only parse the options but not
+// start doing anything what it's supposed to do, not until the job receives
+// a LoadedEvent.
+//
+// If a job has acquired some system resources (for example, listening to
+// a port) but no longer needs them, this is the good chance to release them,
+// so other jobs can acquire them.
+type LoadEvent struct {
+	Options any
+}
+
+// LoadedEvent is for telling a job to start doing what it's supposed to do.
+type LoadedEvent struct{}
+
 // A Context provides contextual values for a job.
 type Context struct {
 	// Context is for cancellation. It is canceled when the job cancels.
 	context.Context
 	// Manager is the Manager that starts the job.
 	Manager *Manager
-	// Load is for receiving options. The job should only parse the options
-	// but not start doing the work, not until the job receives a value from
-	// Loaded.
-	//
-	// If the job has acquired some system resources (for example, listening to
-	// a port), this is the good chance to release the resources, so other jobs
-	// can acquire the resources.
-	Load <-chan any
-	// Loaded means that the job now can start doing the work.
-	Loaded <-chan struct{}
+	// Event is for receiving events sent to the job.
+	Event <-chan Event
 }
 
 // A Job provides mechanism to control the job started by a Service.
@@ -59,14 +70,12 @@ type Job struct {
 	context.Context
 	// Cancel cancels the job and later cancels Context after Service.Run returns.
 	Cancel context.CancelFunc
-	// Load is for sending options to the job.
-	Load chan<- any
-	// Loaded is for signaling that the job now can start doing the work.
-	Loaded chan<- struct{}
+	// Event is for sending events to the job.
+	Event chan<- Event
 }
 
-// SendOptions sends opts to Load.
-func (job Job) SendOptions(opts any) {
+// SendEvent sends a event to the job.
+func (job Job) SendEvent(ev Event) {
 	if job.Context == nil {
 		return
 	}
@@ -74,19 +83,7 @@ func (job Job) SendOptions(opts any) {
 	select {
 	case <-job.Done():
 		return
-	case job.Load <- opts:
-	}
-}
-
-// SendLoaded sends a value to Loaded.
-func (job Job) SendLoaded() {
-	if job.Context == nil {
-		return
-	}
-
-	select {
-	case <-job.Done():
-	case job.Loaded <- struct{}{}:
+	case job.Event <- ev:
 	}
 }
 
@@ -163,8 +160,8 @@ func (m *Manager) StartService(ctx context.Context, service Service) (Job, error
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	ctx1, done := context.WithCancel(context.Background())
-	load, loaded := make(chan any), make(chan struct{})
+	job, done := context.WithCancel(context.Background())
+	event := make(chan Event)
 
 	go func() {
 		defer func() {
@@ -177,10 +174,10 @@ func (m *Manager) StartService(ctx context.Context, service Service) (Job, error
 			done()
 		}()
 
-		service.Run(Context{ctx, m, load, loaded})
+		service.Run(Context{ctx, m, event})
 	}()
 
-	return Job{ctx1, cancel, load, loaded}, nil
+	return Job{job, cancel, event}, nil
 }
 
 // Open implements fs.FS. Open is available for jobs started by Load(File|FS)
@@ -300,7 +297,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 	}
 
 	for _, job := range m.jobs {
-		job.SendLoaded()
+		job.SendEvent(LoadedEvent{})
 	}
 
 	return nil
@@ -339,10 +336,10 @@ func (m *Manager) setOptions(name string, data any) error {
 	}
 
 	if opts != nil {
-		job.SendOptions(opts)
+		job.SendEvent(LoadEvent{opts})
 		// m.fsys is not always available for jobs.
 		// Jobs can only access m.fsys (via m.Open) while handling opts.
-		job.SendOptions(nil) // Make sure opts is handled.
+		job.SendEvent(nil) // Make sure opts is handled.
 	}
 
 	return nil

@@ -229,10 +229,11 @@ func (Service) Run(ctx chrome.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case opts := <-ctx.Load:
-			if new, ok := opts.(*Options); ok {
+		case ev := <-ctx.Event:
+			switch ev := ev.(type) {
+			case chrome.LoadEvent:
 				old := <-optsOut
-				new := *new
+				new := *ev.Options.(*Options)
 				new.dnsCache = old.dnsCache
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
@@ -275,10 +276,10 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				optsIn <- new
-			}
-		case <-ctx.Loaded:
-			if err := startServer(); err != nil {
-				return
+			case chrome.LoadedEvent:
+				if err := startServer(); err != nil {
+					return
+				}
 			}
 		}
 	}
