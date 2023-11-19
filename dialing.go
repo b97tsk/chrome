@@ -103,15 +103,27 @@ func (m *dialingService) Dial(
 		}
 
 		startTime := time.Now()
-		temp, cancel := context.WithDeadline(ctx, startTime.Add(opts.Timeout))
-		c, err = proxy.Dial(temp, dialer, network, address)
+		dialCtx, cancel := context.WithCancel(ctx)
+		timer := time.AfterFunc(opts.Timeout, cancel)
+		c, err = proxy.Dial(dialCtx, dialer, network, address)
+		timerStopped := timer.Stop()
 
 		attempts++
 
-		cancel()
-
-		if err == nil {
+		if err == nil && timerStopped {
+			// We probably should not cancel dialCtx here, as some buggy dialer might
+			// return connections that still rely on it.
+			// timerStopped need to be true here, so that dialCtx will not be canceled
+			// by timer.
 			return
+		}
+
+		if c != nil {
+			_ = c.Close()
+		}
+
+		if timerStopped {
+			cancel()
 		}
 
 		select {

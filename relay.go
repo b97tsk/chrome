@@ -154,7 +154,9 @@ func (m *relayService) Relay(
 				_ = local.SetReadDeadline(noDeadline)
 				_ = remote.SetReadDeadline(noDeadline)
 
-				m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
+				if cc.Err() == nil {
+					m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
+				}
 			}
 
 			return
@@ -176,7 +178,7 @@ func (m *relayService) Relay(
 
 	if logger != nil {
 		switch err := context.Cause(cc); err {
-		case nil, io.EOF, netutil.ErrStopped:
+		case nil, io.EOF, netutil.ErrClosed:
 		default:
 			logger.Tracef("relay: %v", err)
 		}

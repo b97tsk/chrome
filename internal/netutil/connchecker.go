@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -20,7 +21,7 @@ const (
 
 var (
 	ErrFullBuffer = errors.New("full buffer")
-	ErrStopped    = errors.New("stopped")
+	ErrClosed     = errors.New("closed")
 )
 
 type ConnChecker struct {
@@ -28,6 +29,7 @@ type ConnChecker struct {
 	context.Context
 
 	cancel   context.CancelCauseFunc
+	stop     atomic.Bool
 	cbr      chan *bufio.Reader
 	deadline chan time.Time
 }
@@ -56,7 +58,11 @@ func NewConnChecker(c net.Conn) (cc *ConnChecker) {
 }
 
 func (c *ConnChecker) start(ctx context.Context) (cause error) {
-	defer func() { c.cancel(cause) }()
+	defer func() {
+		if cause != nil {
+			c.cancel(cause)
+		}
+	}()
 
 	var growtime time.Time
 
@@ -70,6 +76,9 @@ func (c *ConnChecker) start(ctx context.Context) (cause error) {
 		case <-done:
 			return
 		case <-ticker.C:
+			if c.stop.Load() {
+				return
+			}
 			select {
 			case br := <-c.cbr:
 				var err error
@@ -109,7 +118,9 @@ func (c *ConnChecker) start(ctx context.Context) (cause error) {
 	}
 }
 
-func (c *ConnChecker) Stop() { c.cancel(ErrStopped) }
+func (c *ConnChecker) Stop() {
+	c.stop.Store(true)
+}
 
 func (c *ConnChecker) Read(p []byte) (n int, err error) {
 	br := <-c.cbr
@@ -124,7 +135,7 @@ func (c *ConnChecker) Read(p []byte) (n int, err error) {
 }
 
 func (c *ConnChecker) Close() error {
-	c.Stop()
+	c.cancel(ErrClosed)
 	return c.Conn.Close()
 }
 
