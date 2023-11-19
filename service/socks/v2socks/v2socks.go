@@ -1,7 +1,6 @@
 package v2socks
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -33,20 +32,15 @@ type Options struct {
 	Type      string
 	Protocol  string `yaml:"-"`
 	Transport string `yaml:"-"`
+	Security  string `yaml:"-"`
 
 	ProtocolOptions  `yaml:",inline"`
 	TransportOptions `yaml:",inline"`
+	SecurityOptions  `yaml:",inline"`
 
 	Mux struct {
 		Enabled     bool `json:"enabled,omitempty"`
 		Concurrency int  `json:"concurrency,omitempty"`
-	}
-
-	Policy struct {
-		Handshake    int `json:"handshake,omitempty"`
-		ConnIdle     int `json:"connIdle,omitempty"`
-		UplinkOnly   int `json:"uplinkOnly"`
-		DownlinkOnly int `json:"downlinkOnly"`
 	}
 
 	Dial  chrome.DialOptions
@@ -58,50 +52,44 @@ type Options struct {
 type ProtocolOptions struct {
 	TROJAN struct {
 		HostportOptions `yaml:",inline"`
-		Password        string
+		Password        string `json:"password"`
 	}
-	VLESS struct {
+	VLESS, VMESS struct {
 		HostportOptions `yaml:",inline"`
-		ID              string
-	}
-	VMESS struct {
-		HostportOptions `yaml:",inline"`
-		ID              string
-		AlterID         int    `yaml:"aid"`
-		Security        string `yaml:"scy"`
+		UUID            string `json:"uuid"`
 	}
 }
 
 type TransportOptions struct {
 	GRPC struct {
-		ServiceName string
-	}
-	HTTP struct {
-		Host []string
-		Path string
+		ServiceName string `json:"serviceName"`
 	}
 	TCP struct{}
-	TLS struct {
-		Enabled       bool                 `json:"-" yaml:"-"`
-		ServerName    string               `json:"serverName,omitempty"`
-		AllowInsecure bool                 `json:"allowInsecure,omitempty"`
-		Certificates  []CertificateOptions `json:"certificates,omitempty" yaml:"-"`
-		CertFile      chrome.EnvString     `json:"-"`
+	WS  struct {
+		Path   string `json:"path,omitempty"`
+		Header []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"header,omitempty"`
 	}
-	WS struct {
-		Path   string
-		Header map[string]string
+}
+
+type SecurityOptions struct {
+	TLS struct {
+		ServerName  string               `json:"serverName,omitempty"`
+		Certificate []CertificateOptions `json:"certificate,omitempty" yaml:"-"`
+		CertFile    chrome.EnvString     `json:"-"`
 	}
 }
 
 type CertificateOptions struct {
-	Usage       string   `json:"usage"`
-	Certificate []string `json:"certificate"`
+	Usage       string `json:"usage"`
+	Certificate string `json:"certificate"`
 }
 
 type HostportOptions struct {
-	Address string `yaml:"hostport"`
-	Port    int    `yaml:"-"`
+	Address string `json:"address" yaml:"hostport"`
+	Port    int    `json:"port" yaml:"-"`
 }
 
 type Service struct{}
@@ -214,18 +202,17 @@ func (Service) Run(ctx chrome.Context) {
 	var ins *v2ray.Instance
 
 	startInstance := func(opts Options) {
-		ins1, err := createInstance(opts)
+		data, err := parseOptions(opts)
 		if err != nil {
-			logger.Errorf("create instance: %v", err)
+			logger.Errorf("parse options: %v", err)
 			return
 		}
 
-		if err := ins1.Start(); err != nil {
+		ins, err = v2ray.StartInstance(data)
+		if err != nil {
 			logger.Errorf("start instance: %v", err)
 			return
 		}
-
-		ins = ins1
 	}
 
 	stopInstance := func() {
@@ -267,15 +254,18 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if new.TLS.CertFile != "" {
-					certLines, err := readLines(ctx.Manager, new.TLS.CertFile.String())
+					certData, err := fs.ReadFile(ctx.Manager, new.TLS.CertFile.String())
 					if err != nil {
 						logger.Errorf("read cert file: %v", err)
 						return
 					}
 
-					if len(certLines) != 0 {
-						new.TLS.Certificates = []CertificateOptions{{"verify", certLines}}
+					if len(certData) == 0 {
+						logger.Errorf("empty file: %v", new.TLS.CertFile)
+						return
 					}
+
+					new.TLS.Certificate = []CertificateOptions{{"AUTHORITY_VERIFY", string(certData)}}
 				}
 
 				if !new.Proxy.IsZero() {
@@ -367,7 +357,7 @@ func shouldRestart(x, y Options) bool {
 	return !reflect.DeepEqual(x, y)
 }
 
-func createInstance(opts Options) (*v2ray.Instance, error) {
+func parseOptions(opts Options) ([]byte, error) {
 	if err := parseURL(&opts); err != nil {
 		return nil, err
 	}
@@ -380,10 +370,10 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		switch t {
 		case "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
-		case "GRPC", "HTTP", "TCP", "WS":
+		case "GRPC", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
-			opts.TLS.Enabled = true
+			opts.Security = t
 		case "":
 		default:
 			return nil, fmt.Errorf("unknown type: %v", opts.Type)
@@ -420,7 +410,7 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		return nil, err
 	}
 
-	return v2ray.NewInstanceFromJSON(buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 func parseURL(opts *Options) error {
@@ -469,7 +459,7 @@ func parseVLessURL(opts *Options, prefix string) error {
 	case "":
 		transport = "TCP+TLS"
 	case "GRPC":
-		transport = "GRPC"
+		transport = "GRPC+TLS"
 		opts.GRPC.ServiceName = q.Get("serviceName")
 	case "TCP":
 		transport = "TCP"
@@ -488,7 +478,7 @@ func parseVLessURL(opts *Options, prefix string) error {
 	}
 
 	switch transport {
-	case "GRPC", "TCP+TLS", "WS+TLS":
+	case "GRPC+TLS", "TCP+TLS", "WS+TLS":
 		if sni := q.Get("sni"); sni != "" && sni != u.Hostname() {
 			opts.TLS.ServerName = sni
 		} else if host := q.Get("host"); host != "" && host != u.Hostname() {
@@ -504,11 +494,7 @@ func parseVLessURL(opts *Options, prefix string) error {
 	case "vless://":
 		opts.Type = "VLESS+" + transport
 		opts.VLESS.Address = u.Host
-		opts.VLESS.ID = before
-	}
-
-	if q.Get("allowInsecure") == "1" {
-		opts.TLS.AllowInsecure = true
+		opts.VLESS.UUID = before
 	}
 
 	return nil
@@ -531,17 +517,13 @@ func parseVMessURL(opts *Options) error {
 	}
 
 	var config struct {
-		Version json.RawMessage `json:"v"`
-
 		Net  string          `json:"net"`
 		TLS  json.RawMessage `json:"tls"`
 		Type string          `json:"type"`
 
-		Address  string          `json:"add"`
-		Port     json.RawMessage `json:"port"`
-		ID       string          `json:"id"`
-		AlterID  json.RawMessage `json:"aid"`
-		Security string          `json:"scy"`
+		Address string          `json:"add"`
+		Port    json.RawMessage `json:"port"`
+		UUID    string          `json:"id"`
 
 		Path string `json:"path"`
 		Host string `json:"host"`
@@ -551,30 +533,12 @@ func parseVMessURL(opts *Options) error {
 		return fmt.Errorf("unmarshal decoded vmess url %v: %w", opts.URL, err)
 	}
 
-	if unquote(string(config.Version)) == "" {
-		fields := strings.SplitN(config.Path, ";", 2)
-		if len(fields) == 2 {
-			config.Path, config.Host = fields[0], fields[1]
-		}
-	}
-
 	var transport string
 
 	switch strings.ToUpper(config.Net) {
 	case "GRPC":
-		transport = "GRPC"
+		transport = "GRPC+TLS"
 		opts.GRPC.ServiceName = config.Path
-	case "HTTP", "H2":
-		transport = "HTTP"
-
-		if config.Host != "" {
-			opts.HTTP.Host = []string{config.Host}
-			if config.Host != config.Address {
-				opts.TLS.ServerName = config.Host
-			}
-		}
-
-		opts.HTTP.Path = config.Path
 	case "TCP":
 		transport = "TCP"
 
@@ -597,7 +561,7 @@ func parseVMessURL(opts *Options) error {
 	}
 
 	switch transport {
-	case "GRPC", "TCP+TLS", "WS+TLS":
+	case "GRPC+TLS", "TCP+TLS", "WS+TLS":
 		if config.Host != "" && config.Host != config.Address {
 			opts.TLS.ServerName = config.Host
 		}
@@ -605,12 +569,7 @@ func parseVMessURL(opts *Options) error {
 
 	opts.Type = "VMESS+" + transport
 	opts.VMESS.Address = net.JoinHostPort(config.Address, unquote(string(config.Port)))
-	opts.VMESS.ID = config.ID
-	opts.VMESS.AlterID, _ = strconv.Atoi(unquote(string(config.AlterID)))
-
-	if opts.VMESS.Security == "" {
-		opts.VMESS.Security = config.Security
-	}
+	opts.VMESS.UUID = config.UUID
 
 	return nil
 }
@@ -625,28 +584,4 @@ func unquote(s string) string {
 	}
 
 	return s
-}
-
-func readLines(fsys fs.FS, name string) ([]string, error) {
-	file, err := fsys.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var lines []string
-
-	s := bufio.NewScanner(file)
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-
-	if err := s.Err(); err != nil {
-		return nil, err
-	}
-
-	return lines, nil
 }

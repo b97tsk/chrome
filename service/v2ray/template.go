@@ -21,119 +21,56 @@ var v2rayTemplate *template.Template
 const v2rayTemplateBody = `
 {{- $protocol := .Protocol -}}
 {{- $transport := .Transport -}}
+{{- $security := .Security -}}
 {
-  "log": {
-    "loglevel": "none"
-  },
-  "inbounds": [
-    {
+	"log": {
+		"access": { "type": "None" },
+		"error": { "type": "None" }
+	},
+	"inbounds": [
+		{
 {{- if .ListenHost }}
-      "listen": {{ .ListenHost | json }},
+			"listen": {{ .ListenHost | json }},
 {{- end }}
-      "port": {{ .ListenPort | json }},
+			"port": {{ .ListenPort | json }},
 {{- if eq $protocol "TROJAN" }}
-
-{{- with .TROJAN }}
-      "protocol": "trojan",
-      "settings": {
-        "clients": {{ .Clients | json }}
-      },
-{{- end }}{{/* with .TROJAN */}}
-
+			"protocol": "trojan",
+			"settings": {{ .TROJAN | json }},
 {{- else if eq $protocol "VLESS" }}
-
-{{- with .VLESS }}
-      "protocol": "vless",
-      "settings": {
-        "clients": {{ .Clients | json }},
-		"decryption": "none"
-      },
-{{- end }}{{/* with .VLESS */}}
-
+			"protocol": "vless",
+			"settings": {{ .VLESS | json }},
 {{- else if eq $protocol "VMESS" }}
-
-{{- with .VMESS }}
-      "protocol": "vmess",
-      "settings": {
-        "clients": {{ .Clients | json }}
-      },
-{{- end }}{{/* with .VMESS */}}
-
+			"protocol": "vmess",
+			"settings": {{ .VMESS | json }},
 {{- end }}
-      "streamSettings": {
+			"streamSettings": {
 {{- if eq $transport "GRPC" }}
-
-{{- with .GRPC }}
-        "network": "grpc",
-        "security": "tls",
-        "grpcSettings": {
-          "serviceName": {{ .ServiceName | json }}
-        },
-{{- end }}
-
-{{- else if eq $transport "HTTP" }}
-
-{{- with .HTTP }}
-        "network": "http",
-        "security": "tls",
-        "httpSettings": {
-          "host": {{ .Host | json }},
-          "path": {{ .Path | json }}
-        },
-{{- end }}{{/* with .HTTP */}}
-
+				"transport": "grpc",
+				"transportSettings": {{ .GRPC | json }},
 {{- else if eq $transport "TCP" }}
-
-{{- $tlsEnabled := .TLS.Enabled }}
-{{- with .TCP }}
-        "network": "tcp",
-{{- if $tlsEnabled }}
-        "security": "tls",
-{{- end }}
-{{- end }}{{/* with .TCP */}}
-
+				"transport": "tcp",
+				"transportSettings": {{ .TCP | json }},
 {{- else if eq $transport "WS" }}
-
-{{- $tlsEnabled := .TLS.Enabled }}
-{{- with .WS }}
-        "network": "ws",
-{{- if $tlsEnabled }}
-        "security": "tls",
+				"transport": "ws",
+				"transportSettings": {{ .WS | json }},
 {{- end }}
-        "wsSettings": {
-          "path": {{ .Path | json }},
-          "headers": {{ .Header | json }}
-        },
-{{- end }}{{/* with .WS */}}
-
+{{- if eq $security "TLS" }}
+				"security": "tls",
+				"securitySettings": {{ .TLS | json }},
 {{- end }}
-        "tlsSettings": {{ .TLS | json }}
-      }
-    }
-  ],
-  "outbounds": [
-    {
+				"socketSettings": {}
+			}
+		}
+	],
+	"outbounds": [
+		{
 {{- if .ForwardServer.Address }}
-      "protocol": "socks",
-      "settings": {
-        "servers": [
-          {
-{{- with .ForwardServer }}
-            "address": {{ .Address | json }},
-            "port": {{ .Port }}
-{{- end }}{{/* with .ForwardServer */}}
-          }
-        ]
-      }
+			"protocol": "socks",
+			"settings": {{ .ForwardServer | json }}
 {{- else }}
-      "protocol": "freedom"
+			"protocol": "freedom"
 {{- end }}
-    }
-  ],
-  "policy": {
-    "levels": {
-      "0": {{ .Policy | json }}
-    }
-  }
+		}
+	]
 }
 `

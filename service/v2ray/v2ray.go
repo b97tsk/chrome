@@ -1,7 +1,6 @@
 package v2ray
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -26,23 +25,18 @@ type Options struct {
 	Proxy chrome.Proxy `yaml:"over"`
 
 	ForwardServer struct {
-		Address string
-		Port    int
+		Address string `json:"address"`
+		Port    int    `json:"port"`
 	} `yaml:"-"`
 
 	Type      string
 	Protocol  string `yaml:"-"`
 	Transport string `yaml:"-"`
+	Security  string `yaml:"-"`
 
 	ProtocolOptions  `yaml:",inline"`
 	TransportOptions `yaml:",inline"`
-
-	Policy struct {
-		Handshake    int `json:"handshake,omitempty"`
-		ConnIdle     int `json:"connIdle,omitempty"`
-		UplinkOnly   int `json:"uplinkOnly"`
-		DownlinkOnly int `json:"downlinkOnly"`
-	}
+	SecurityOptions  `yaml:",inline"`
 
 	Dial  chrome.DialOptions
 	Relay chrome.RelayOptions
@@ -51,51 +45,37 @@ type Options struct {
 }
 
 type ProtocolOptions struct {
-	TROJAN struct {
-		Clients []struct {
-			Password string `json:"password"`
-		}
-	}
-	VLESS struct {
-		Clients []struct {
-			ID    string `json:"id"`
-			EMail string `json:"email,omitempty"`
-		}
-	}
-	VMESS struct {
-		Clients []struct {
-			ID      string `json:"id"`
-			AlterID int    `json:"alterId,omitempty" yaml:"aid"`
-			EMail   string `json:"email,omitempty"`
-		}
+	TROJAN, VLESS, VMESS struct {
+		Users []string `json:"users"`
 	}
 }
 
 type TransportOptions struct {
 	GRPC struct {
-		ServiceName string
-	}
-	HTTP struct {
-		Host []string
-		Path string
+		ServiceName string `json:"serviceName"`
 	}
 	TCP struct{}
-	TLS struct {
-		Enabled      bool                 `json:"-" yaml:"-"`
-		ServerName   string               `json:"serverName,omitempty"`
-		Certificates []CertificateOptions `json:"certificates,omitempty" yaml:"-"`
-		CertFile     chrome.EnvString     `json:"-"`
-		KeyFile      chrome.EnvString     `json:"-"`
+	WS  struct {
+		Path   string `json:"path,omitempty"`
+		Header []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"header,omitempty"`
 	}
-	WS struct {
-		Path   string
-		Header map[string]string
+}
+
+type SecurityOptions struct {
+	TLS struct {
+		ServerName  string               `json:"serverName,omitempty"`
+		Certificate []CertificateOptions `json:"certificate,omitempty" yaml:"-"`
+		CertFile    chrome.EnvString     `json:"-"`
+		KeyFile     chrome.EnvString     `json:"-"`
 	}
 }
 
 type CertificateOptions struct {
-	Certificate []string `json:"certificate"`
-	Key         []string `json:"key"`
+	Certificate string `json:"certificate"`
+	Key         string `json:"key"`
 }
 
 type Service struct{}
@@ -144,18 +124,18 @@ func (Service) Run(ctx chrome.Context) {
 
 		ln.Close()
 
-		ins1, err := createInstance(opts)
+		data, err := parseOptions(opts)
 		if err != nil {
-			logger.Errorf("create instance: %v", err)
+			logger.Errorf("parse options: %v", err)
 			return
 		}
 
-		if err := ins1.Start(); err != nil {
+		ins, err = v2ray.StartInstance(data)
+		if err != nil {
 			logger.Errorf("start instance: %v", err)
 			return
 		}
 
-		ins = ins1
 		laddr = ln.Addr()
 
 		logger.Infof("listening on %v", laddr)
@@ -209,29 +189,29 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if new.TLS.CertFile != "" && new.TLS.KeyFile != "" {
-					certLines, err := readLines(ctx.Manager, new.TLS.CertFile.String())
+					certData, err := fs.ReadFile(ctx.Manager, new.TLS.CertFile.String())
 					if err != nil {
 						logger.Errorf("read cert file: %v", err)
 						return
 					}
 
-					if len(certLines) == 0 {
+					if len(certData) == 0 {
 						logger.Errorf("empty file: %v", new.TLS.CertFile)
 						return
 					}
 
-					keyLines, err := readLines(ctx.Manager, new.TLS.KeyFile.String())
+					keyData, err := fs.ReadFile(ctx.Manager, new.TLS.KeyFile.String())
 					if err != nil {
 						logger.Errorf("read key file: %v", err)
 						return
 					}
 
-					if len(keyLines) == 0 {
+					if len(keyData) == 0 {
 						logger.Errorf("empty file: %v", new.TLS.KeyFile)
 						return
 					}
 
-					new.TLS.Certificates = []CertificateOptions{{certLines, keyLines}}
+					new.TLS.Certificate = []CertificateOptions{{string(certData), string(keyData)}}
 				}
 
 				if !new.Proxy.IsZero() {
@@ -331,7 +311,7 @@ func shouldRestart(x, y Options) bool {
 	return !reflect.DeepEqual(x, y)
 }
 
-func createInstance(opts Options) (*v2ray.Instance, error) {
+func parseOptions(opts Options) ([]byte, error) {
 	opts.Protocol = "VMESS"
 	opts.Transport = "TCP"
 
@@ -340,10 +320,10 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		switch t {
 		case "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
-		case "GRPC", "HTTP", "TCP", "WS":
+		case "GRPC", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
-			opts.TLS.Enabled = true
+			opts.Security = t
 		case "":
 		default:
 			return nil, fmt.Errorf("unknown type: %v", opts.Type)
@@ -355,29 +335,5 @@ func createInstance(opts Options) (*v2ray.Instance, error) {
 		return nil, err
 	}
 
-	return v2ray.NewInstanceFromJSON(buf.Bytes())
-}
-
-func readLines(fsys fs.FS, name string) ([]string, error) {
-	file, err := fsys.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var lines []string
-
-	s := bufio.NewScanner(file)
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-
-	if err := s.Err(); err != nil {
-		return nil, err
-	}
-
-	return lines, nil
+	return buf.Bytes(), nil
 }

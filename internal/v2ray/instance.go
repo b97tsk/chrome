@@ -2,12 +2,10 @@ package v2ray
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	core "github.com/v2fly/v2ray-core/v5"
 	"github.com/v2fly/v2ray-core/v5/common/net"
-	conf "github.com/v2fly/v2ray-core/v5/infra/conf/v4"
 	_ "github.com/v2fly/v2ray-core/v5/main/distro/all" // Imported for side-effect.
 )
 
@@ -15,28 +13,13 @@ type Instance struct {
 	ins *core.Instance
 }
 
-func NewInstanceFromJSON(data []byte) (*Instance, error) {
-	var config conf.Config
-
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
-	}
-
-	coreConfig, err := config.Build()
-	if err != nil {
-		return nil, err
-	}
-
-	ins, err := core.New(coreConfig)
+func StartInstance(data []byte) (*Instance, error) {
+	ins, err := core.StartInstance("jsonv5", data)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Instance{ins}, nil
-}
-
-func (v *Instance) Start() error {
-	return v.ins.Start()
 }
 
 func (v *Instance) Close() error {

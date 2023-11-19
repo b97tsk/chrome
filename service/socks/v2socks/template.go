@@ -21,151 +21,56 @@ var v2socksTemplate *template.Template
 const v2socksTemplateBody = `
 {{- $protocol := .Protocol -}}
 {{- $transport := .Transport -}}
+{{- $security := .Security -}}
 {
-  "log": {
-    "loglevel": "none"
-  },
-  "outbounds": [
-    {
+	"log": {
+		"access": { "type": "None" },
+		"error": { "type": "None" }
+	},
+	"outbounds": [
+		{
 {{- if eq $protocol "TROJAN" }}
-
-{{- with .TROJAN }}
-      "protocol": "trojan",
-      "settings": {
-        "servers": [
-          {
-            "address": {{ .Address | json }},
-            "port": {{ .Port }},
-            "password": {{ .Password | json }}
-          }
-        ]
-      },
-{{- end }}{{/* with .TROJAN */}}
-
+			"protocol": "trojan",
+			"settings": {{ .TROJAN | json }},
 {{- else if eq $protocol "VLESS" }}
-
-{{- with .VLESS }}
-      "protocol": "vless",
-      "settings": {
-        "vnext": [
-          {
-            "address": {{ .Address | json }},
-            "port": {{ .Port }},
-            "users": [
-              {
-                "id": {{ .ID | json }},
-                "encryption": "none"
-              }
-            ]
-          }
-        ]
-      },
-{{- end }}{{/* with .VLESS */}}
-
+			"protocol": "vless",
+			"settings": {{ .VLESS | json }},
 {{- else if eq $protocol "VMESS" }}
-
-{{- with .VMESS }}
-      "protocol": "vmess",
-      "settings": {
-        "vnext": [
-          {
-            "address": {{ .Address | json }},
-            "port": {{ .Port }},
-            "users": [
-              {
-                "id": {{ .ID | json }},
-                "alterId": {{ .AlterID }},
-{{- if .Security }}
-				"security": {{ .Security | json }}
-{{- else }}
-				"security": "auto"
+			"protocol": "vmess",
+			"settings": {{ .VMESS | json }},
 {{- end }}
-              }
-            ]
-          }
-        ]
-      },
-{{- end }}{{/* with .VMESS */}}
-
-{{- end }}
-      "streamSettings": {
+			"streamSettings": {
 {{- if eq $transport "GRPC" }}
-
-{{- with .GRPC }}
-        "network": "grpc",
-        "security": "tls",
-        "grpcSettings": {
-          "serviceName": {{ .ServiceName | json }}
-        },
-{{- end }}
-
-{{- else if eq $transport "HTTP" }}
-
-{{- with .HTTP }}
-        "network": "http",
-        "security": "tls",
-        "httpSettings": {
-          "host": {{ .Host | json }},
-          "path": {{ .Path | json }}
-        },
-{{- end }}{{/* with .HTTP */}}
-
+				"transport": "grpc",
+				"transportSettings": {{ .GRPC | json }},
 {{- else if eq $transport "TCP" }}
-
-{{- $tlsEnabled := .TLS.Enabled }}
-{{- with .TCP }}
-        "network": "tcp",
-{{- if $tlsEnabled }}
-        "security": "tls",
-{{- end }}
-{{- end }}{{/* with .TCP */}}
-
+				"transport": "tcp",
+				"transportSettings": {{ .TCP | json }},
 {{- else if eq $transport "WS" }}
-
-{{- $tlsEnabled := .TLS.Enabled }}
-{{- with .WS }}
-        "network": "ws",
-{{- if $tlsEnabled }}
-        "security": "tls",
+				"transport": "ws",
+				"transportSettings": {{ .WS | json }},
 {{- end }}
-        "wsSettings": {
-          "path": {{ .Path | json }},
-          "headers": {{ .Header | json }}
-        },
-{{- end }}{{/* with .WS */}}
-
+{{- if eq $security "TLS" }}
+				"security": "tls",
+				"securitySettings": {{ .TLS | json }},
 {{- end }}
-        "tlsSettings": {{ .TLS | json }}
-      },
+				"socketSettings": {}
+			},
 {{- if .ForwardServer.Address }}
-      "proxySettings": {
-		"tag": "fwd",
-		"transportLayer": true
-      },
+			"proxySettings": {
+				"tag": "fwd",
+				"transportLayer": true
+			},
 {{- end }}
-      "mux": {{ .Mux | json }}
+			"mux": {{ .Mux | json }}
 {{- if .ForwardServer.Address }}
-    },
-    {
-      "protocol": "socks",
-      "settings": {
-        "servers": [
-          {
-{{- with .ForwardServer }}
-            "address": {{ .Address | json }},
-            "port": {{ .Port }}
-{{- end }}{{/* with .ForwardServer */}}
-          }
-        ]
-      },
-	  "tag": "fwd"
+		},
+		{
+			"protocol": "socks",
+			"settings": {{ .ForwardServer | json }},
+			"tag": "fwd"
 {{- end }}
-    }
-  ],
-  "policy": {
-    "levels": {
-      "0": {{ .Policy | json }}
-    }
-  }
+		}
+	]
 }
 `
