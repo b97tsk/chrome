@@ -77,12 +77,14 @@ type TransportOptions struct {
 	}
 	TCP struct{}
 	WS  struct {
-		Path   string `json:"path,omitempty"`
-		Header []struct {
-			Key   string `json:"key"`
-			Value string `json:"value"`
-		} `json:"header,omitempty"`
+		Path   string       `json:"path,omitempty"`
+		Header []HeaderItem `json:"header,omitempty"`
 	}
+}
+
+type HeaderItem struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 type SecurityOptions struct {
@@ -556,11 +558,19 @@ func parseVLessURL(opts *Options, prefix string) error {
 		}
 	case "WS":
 		transport = "WS"
+
+		var sni string
+
 		if strings.EqualFold(q.Get("security"), "TLS") {
 			transport = "WS+TLS"
+			sni = q.Get("sni")
 		}
 
 		opts.WS.Path = q.Get("path")
+
+		if host := q.Get("host"); host != "" && host != sni && host != u.Hostname() {
+			opts.WS.Header = append(opts.WS.Header, HeaderItem{"Host", host})
+		}
 	default:
 		return fmt.Errorf("unknown type in url %v: %v", opts.URL, typ)
 	}
@@ -642,6 +652,10 @@ func parseVMessURL(opts *Options) error {
 		}
 
 		opts.WS.Path = config.Path
+
+		if transport == "WS" && config.Host != "" && config.Host != config.Address {
+			opts.WS.Header = append(opts.WS.Header, HeaderItem{"Host", config.Host})
+		}
 	default:
 		return fmt.Errorf("unknown net field in vmess url %v: %v", opts.URL, config.Net)
 	}
