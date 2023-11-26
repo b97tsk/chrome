@@ -45,6 +45,10 @@ type Options struct {
 }
 
 type ProtocolOptions struct {
+	SHADOWSOCKS struct {
+		Method   string `json:"method"`
+		Password string `json:"password"`
+	}
 	TROJAN, VLESS, VMESS struct {
 		Users []string `json:"users"`
 	}
@@ -318,7 +322,7 @@ func parseOptions(opts Options) ([]byte, error) {
 	for _, t := range strings.SplitN(opts.Type, "+", 3) {
 		t = strings.ToUpper(t)
 		switch t {
-		case "TROJAN", "VLESS", "VMESS":
+		case "SHADOWSOCKS", "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
 		case "GRPC", "TCP", "WS":
 			opts.Transport = t
@@ -330,10 +334,34 @@ func parseOptions(opts Options) ([]byte, error) {
 		}
 	}
 
+	if opts.Protocol == "SHADOWSOCKS" {
+		switch normalizeMethod(opts.SHADOWSOCKS.Method) {
+		case "aes-128-gcm":
+			opts.SHADOWSOCKS.Method = "AES_128_GCM"
+		case "aes-256-gcm":
+			opts.SHADOWSOCKS.Method = "AES_256_GCM"
+		case "chacha20-poly1305", "chacha20-ietf-poly1305":
+			opts.SHADOWSOCKS.Method = "CHACHA20_POLY1305"
+		default:
+			return nil, fmt.Errorf("unknown method: %v", orEmpty(opts.SHADOWSOCKS.Method))
+		}
+	}
+
 	var buf bytes.Buffer
 	if err := v2rayTemplate.Execute(&buf, &opts); err != nil {
 		return nil, err
 	}
 
 	return buf.Bytes(), nil
+}
+
+func normalizeMethod(s string) string {
+	return strings.ReplaceAll(strings.ToLower(s), "_", "-")
+}
+
+func orEmpty(s string) string {
+	if s == "" {
+		return "(empty)"
+	}
+	return s
 }

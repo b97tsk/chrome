@@ -33,7 +33,10 @@ const v2rayTemplateBody = `
 			"listen": {{ .ListenHost | json }},
 {{- end }}
 			"port": {{ .ListenPort | json }},
-{{- if eq $protocol "TROJAN" }}
+{{- if eq $protocol "SHADOWSOCKS" }}
+			"protocol": "shadowsocks",
+			"settings": {{ .SHADOWSOCKS | json }},
+{{- else if eq $protocol "TROJAN" }}
 			"protocol": "trojan",
 			"settings": {{ .TROJAN | json }},
 {{- else if eq $protocol "VLESS" }}

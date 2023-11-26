@@ -50,6 +50,11 @@ type Options struct {
 }
 
 type ProtocolOptions struct {
+	SHADOWSOCKS struct {
+		HostportOptions `yaml:",inline"`
+		Method          string `json:"method"`
+		Password        string `json:"password"`
+	}
 	TROJAN struct {
 		HostportOptions `yaml:",inline"`
 		Password        string `json:"password"`
@@ -368,7 +373,7 @@ func parseOptions(opts Options) ([]byte, error) {
 	for _, t := range strings.SplitN(opts.Type, "+", 3) {
 		t = strings.ToUpper(t)
 		switch t {
-		case "TROJAN", "VLESS", "VMESS":
+		case "SHADOWSOCKS", "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
 		case "GRPC", "TCP", "WS":
 			opts.Transport = t
@@ -383,6 +388,8 @@ func parseOptions(opts Options) ([]byte, error) {
 	var hostport *HostportOptions
 
 	switch opts.Protocol {
+	case "SHADOWSOCKS":
+		hostport = &opts.SHADOWSOCKS.HostportOptions
 	case "TROJAN":
 		hostport = &opts.TROJAN.HostportOptions
 	case "VLESS":
@@ -405,6 +412,19 @@ func parseOptions(opts Options) ([]byte, error) {
 		}
 	}
 
+	if opts.Protocol == "SHADOWSOCKS" {
+		switch normalizeMethod(opts.SHADOWSOCKS.Method) {
+		case "aes-128-gcm":
+			opts.SHADOWSOCKS.Method = "AES_128_GCM"
+		case "aes-256-gcm":
+			opts.SHADOWSOCKS.Method = "AES_256_GCM"
+		case "chacha20-poly1305", "chacha20-ietf-poly1305":
+			opts.SHADOWSOCKS.Method = "CHACHA20_POLY1305"
+		default:
+			return nil, fmt.Errorf("unknown method: %v", orEmpty(opts.SHADOWSOCKS.Method))
+		}
+	}
+
 	var buf bytes.Buffer
 	if err := v2socksTemplate.Execute(&buf, &opts); err != nil {
 		return nil, err
@@ -419,6 +439,8 @@ func parseURL(opts *Options) error {
 	}
 
 	switch {
+	case strings.HasPrefix(opts.URL, "ss://"):
+		return parseShadowsocksURL(opts)
 	case strings.HasPrefix(opts.URL, "trojan://"):
 		return parseVLessURL(opts, "trojan://")
 	case strings.HasPrefix(opts.URL, "vless://"):
@@ -428,6 +450,51 @@ func parseURL(opts *Options) error {
 	}
 
 	return fmt.Errorf("unknown scheme in url %v", opts.URL)
+}
+
+func parseShadowsocksURL(opts *Options) error {
+	u, err := url.Parse(opts.URL)
+	if err != nil {
+		return err
+	}
+
+	if u.User == nil {
+		data, err := decodeBase64String(u.Host)
+		if err != nil {
+			return fmt.Errorf("invalid url: %v", opts.URL)
+		}
+
+		u, _ = url.Parse(u.Scheme + "://" + string(data))
+		if u == nil || u.User == nil {
+			return fmt.Errorf("invalid url: %v", opts.URL)
+		}
+	}
+
+	method := u.User.Username()
+	password, ok := u.User.Password()
+	if !ok {
+		data, err := decodeBase64String(method)
+		if err != nil {
+			return fmt.Errorf("invalid url: %v", opts.URL)
+		}
+
+		method, password, ok = strings.Cut(string(data), ":")
+		if !ok {
+			return fmt.Errorf("invalid url: %v", opts.URL)
+		}
+	}
+
+	switch normalizeMethod(method) {
+	case "aes-128-gcm", "aes-256-gcm", "chacha20-poly1305", "chacha20-ietf-poly1305":
+		opts.Type = "SHADOWSOCKS"
+		opts.SHADOWSOCKS.Address = u.Host
+		opts.SHADOWSOCKS.Method = method
+		opts.SHADOWSOCKS.Password = password
+	default:
+		return fmt.Errorf("unknown method in url %v: %v", opts.URL, method)
+	}
+
+	return nil
 }
 
 func parseVLessURL(opts *Options, prefix string) error {
@@ -501,19 +568,9 @@ func parseVLessURL(opts *Options, prefix string) error {
 }
 
 func parseVMessURL(opts *Options) error {
-	b64 := strings.TrimPrefix(opts.URL, "vmess://")
-
-	b64 = strings.ReplaceAll(b64, "-", "+")
-	b64 = strings.ReplaceAll(b64, "_", "/")
-
-	enc := base64.StdEncoding
-	if len(b64)%4 != 0 {
-		enc = base64.RawStdEncoding
-	}
-
-	data, err := enc.DecodeString(b64)
+	data, err := decodeBase64String(strings.TrimPrefix(opts.URL, "vmess://"))
 	if err != nil {
-		return fmt.Errorf("decode vmess url %v: %w", opts.URL, err)
+		return fmt.Errorf("invalid url: %v", opts.URL)
 	}
 
 	var config struct {
@@ -583,5 +640,28 @@ func unquote(s string) string {
 		return s
 	}
 
+	return s
+}
+
+func decodeBase64String(s string) ([]byte, error) {
+	s = strings.ReplaceAll(s, "-", "+")
+	s = strings.ReplaceAll(s, "_", "/")
+
+	enc := base64.StdEncoding
+	if len(s)%4 != 0 {
+		enc = base64.RawStdEncoding
+	}
+
+	return enc.DecodeString(s)
+}
+
+func normalizeMethod(s string) string {
+	return strings.ReplaceAll(strings.ToLower(s), "_", "-")
+}
+
+func orEmpty(s string) string {
+	if s == "" {
+		return "(empty)"
+	}
 	return s
 }
