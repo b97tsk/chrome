@@ -32,6 +32,9 @@ const v2socksTemplateBody = `
 {{- if eq $protocol "SHADOWSOCKS" }}
 			"protocol": "shadowsocks",
 			"settings": {{ .SHADOWSOCKS | json }},
+{{- else if eq $protocol "SHADOWSOCKS2022" }}
+			"protocol": "shadowsocks2022",
+			"settings": {{ .SHADOWSOCKS2022 | json }},
 {{- else if eq $protocol "TROJAN" }}
 			"protocol": "trojan",
 			"settings": {{ .TROJAN | json }},

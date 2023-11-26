@@ -55,6 +55,12 @@ type ProtocolOptions struct {
 		Method          string `json:"method"`
 		Password        string `json:"password"`
 	}
+	SHADOWSOCKS2022 struct {
+		HostportOptions `yaml:",inline"`
+		Method          string   `json:"method"`
+		PSK             string   `json:"psk"`
+		IPSK            []string `json:"ipsk,omitempty"`
+	}
 	TROJAN struct {
 		HostportOptions `yaml:",inline"`
 		Password        string `json:"password"`
@@ -373,7 +379,7 @@ func parseOptions(opts Options) ([]byte, error) {
 	for _, t := range strings.SplitN(opts.Type, "+", 3) {
 		t = strings.ToUpper(t)
 		switch t {
-		case "SHADOWSOCKS", "TROJAN", "VLESS", "VMESS":
+		case "SHADOWSOCKS", "SHADOWSOCKS2022", "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
 		case "GRPC", "TCP", "WS":
 			opts.Transport = t
@@ -390,6 +396,8 @@ func parseOptions(opts Options) ([]byte, error) {
 	switch opts.Protocol {
 	case "SHADOWSOCKS":
 		hostport = &opts.SHADOWSOCKS.HostportOptions
+	case "SHADOWSOCKS2022":
+		hostport = &opts.SHADOWSOCKS2022.HostportOptions
 	case "TROJAN":
 		hostport = &opts.TROJAN.HostportOptions
 	case "VLESS":
@@ -412,7 +420,8 @@ func parseOptions(opts Options) ([]byte, error) {
 		}
 	}
 
-	if opts.Protocol == "SHADOWSOCKS" {
+	switch opts.Protocol {
+	case "SHADOWSOCKS":
 		switch normalizeMethod(opts.SHADOWSOCKS.Method) {
 		case "aes-128-gcm":
 			opts.SHADOWSOCKS.Method = "AES_128_GCM"
@@ -422,6 +431,13 @@ func parseOptions(opts Options) ([]byte, error) {
 			opts.SHADOWSOCKS.Method = "CHACHA20_POLY1305"
 		default:
 			return nil, fmt.Errorf("unknown method: %v", orEmpty(opts.SHADOWSOCKS.Method))
+		}
+	case "SHADOWSOCKS2022":
+		switch method := normalizeMethod(opts.SHADOWSOCKS2022.Method); method {
+		case "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm":
+			opts.SHADOWSOCKS2022.Method = method
+		default:
+			return nil, fmt.Errorf("unknown method: %v", orEmpty(opts.SHADOWSOCKS2022.Method))
 		}
 	}
 
@@ -490,6 +506,11 @@ func parseShadowsocksURL(opts *Options) error {
 		opts.SHADOWSOCKS.Address = u.Host
 		opts.SHADOWSOCKS.Method = method
 		opts.SHADOWSOCKS.Password = password
+	case "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm":
+		opts.Type = "SHADOWSOCKS2022"
+		opts.SHADOWSOCKS2022.Address = u.Host
+		opts.SHADOWSOCKS2022.Method = method
+		opts.SHADOWSOCKS2022.PSK = password
 	default:
 		return fmt.Errorf("unknown method in url %v: %v", opts.URL, method)
 	}
