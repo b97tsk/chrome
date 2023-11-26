@@ -583,12 +583,20 @@ func parseVLessURL(opts *Options, prefix string) error {
 		opts.Type = "VLESS+" + transport
 		opts.VLESS.Address = u.Host
 		opts.VLESS.UUID = before
+	case "vmess://":
+		opts.Type = "VMESS+" + transport
+		opts.VMESS.Address = u.Host
+		opts.VMESS.UUID = before
 	}
 
 	return nil
 }
 
 func parseVMessURL(opts *Options) error {
+	if strings.Contains(opts.URL, "@") {
+		return parseVLessURL(opts, "vmess://")
+	}
+
 	data, err := decodeBase64String(strings.TrimPrefix(opts.URL, "vmess://"))
 	if err != nil {
 		return fmt.Errorf("invalid url: %v", opts.URL)
