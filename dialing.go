@@ -132,7 +132,7 @@ func (m *dialingService) Dial(
 		default:
 		}
 
-		if logger != nil && logger.TraceWritable() {
+		if err != nil && logger != nil && logger.TraceWritable() {
 			if s := err.Error(); s != es {
 				es, esc = s, 1
 			} else {
