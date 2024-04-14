@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -119,18 +118,18 @@ func (m *relayService) Relay(
 			sendResponse = nil
 		}
 
-		var timedOut atomic.Uint32
+		var timedOut bool
 
-		defer time.AfterFunc(opts.Timeout, func() {
+		c := make(chan struct{})
+		t := time.AfterFunc(opts.Timeout, func() {
+			defer close(c)
+
 			if !r.Stopped() {
-				timedOut.Store(1)
-
+				timedOut = true
 				aLongTimeAgo := time.Unix(1, 0)
 				_ = remote.SetReadDeadline(aLongTimeAgo)
-
-				timedOut.Store(2)
 			}
-		}).Stop()
+		})
 
 		do := func(int) {
 			if !r.Stopped() {
@@ -143,20 +142,17 @@ func (m *relayService) Relay(
 
 		m.relay(local, netutil.DoR(remote, do), opts)
 
-		if !r.Replay() {
-			if to := timedOut.Load(); to != 0 {
-				for to == 1 {
-					runtime.Gosched()
-					to = timedOut.Load()
-				}
-
+		if !t.Stop() {
+			if <-c; timedOut {
 				var noDeadline time.Time
 				_ = local.SetReadDeadline(noDeadline)
 				_ = remote.SetReadDeadline(noDeadline)
+			}
+		}
 
-				if cc.Err() == nil {
-					m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
-				}
+		if !r.Replay() {
+			if timedOut && cc.Err() == nil {
+				m.relay(local, remote, opts) // Try to rescue from cancellation caused by Timeout.
 			}
 
 			return
