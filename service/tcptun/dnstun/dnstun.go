@@ -16,6 +16,7 @@ import (
 	"path"
 	"reflect"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -469,11 +470,11 @@ func (Service) Run(ctx chrome.Context) {
 						if server.Name == "" && len(server.IP) == 0 {
 							if routeIndex >= 0 {
 								logger.Errorf("route #%v: server #%v: invalid", routeIndex+1, i+1)
-								panic(nil)
+								runtime.Goexit()
 							}
 
 							logger.Errorf("server #%v: invalid", i+1)
-							panic(nil)
+							runtime.Goexit()
 						}
 
 						server.Over = strings.ToUpper(server.Over)
@@ -481,11 +482,11 @@ func (Service) Run(ctx chrome.Context) {
 						if server.Over == "TLS" && server.Name == "" {
 							if routeIndex >= 0 {
 								logger.Errorf("route #%v: server #%v: DNS-over-TLS requires a server name", routeIndex+1, i+1)
-								panic(nil)
+								runtime.Goexit()
 							}
 
 							logger.Errorf("server #%v: DNS-over-TLS requires a server name", i+1)
-							panic(nil)
+							runtime.Goexit()
 						}
 					}
 				}
