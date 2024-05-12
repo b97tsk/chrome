@@ -32,7 +32,7 @@ type Service interface {
 	// The returned value is sent to Context.Load later after unmarshaling.
 	Options() any
 	// Run starts a job.
-	Run(Context)
+	Run(ctx Context)
 }
 
 // Event is the interface of events.
