@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -32,7 +33,7 @@ type Service interface {
 	// The returned value is sent to Context.Load later after unmarshaling.
 	Options() any
 	// Run starts a job.
-	Run(Context)
+	Run(ctx Context)
 }
 
 // Event is the interface of events.
@@ -165,9 +166,9 @@ func (m *Manager) StartService(ctx context.Context, service Service) (Job, error
 
 	go func() {
 		defer func() {
-			if err := recover(); err != nil {
+			if v := recover(); v != nil && !isPanicNil(v) {
 				logger := m.Logger("manager")
-				logger.Errorf("panic: %v\n%v", err, string(debug.Stack()))
+				logger.Errorf("panic: %v\n%v", v, string(debug.Stack()))
 			}
 
 			cancel()
@@ -397,4 +398,9 @@ func (lv *logLevel) UnmarshalYAML(v *yaml.Node) error {
 	}
 
 	return nil
+}
+
+func isPanicNil(v any) bool {
+	_, ok := v.(*runtime.PanicNilError)
+	return ok
 }
