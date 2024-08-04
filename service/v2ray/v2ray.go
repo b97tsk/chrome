@@ -58,6 +58,10 @@ type TransportOptions struct {
 	GRPC struct {
 		ServiceName string `json:"serviceName"`
 	}
+	HTTPUPGRADE struct {
+		Path string `json:"path,omitempty"`
+		Host string `json:"host,omitempty"`
+	}
 	TCP struct{}
 	WS  struct {
 		Path   string `json:"path,omitempty"`
@@ -324,7 +328,7 @@ func parseOptions(opts Options) ([]byte, error) {
 		switch t {
 		case "SHADOWSOCKS", "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
-		case "GRPC", "TCP", "WS":
+		case "GRPC", "HTTPUPGRADE", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
 			opts.Security = t

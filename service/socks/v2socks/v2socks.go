@@ -75,6 +75,10 @@ type TransportOptions struct {
 	GRPC struct {
 		ServiceName string `json:"serviceName"`
 	}
+	HTTPUPGRADE struct {
+		Path string `json:"path,omitempty"`
+		Host string `json:"host,omitempty"`
+	}
 	TCP struct{}
 	WS  struct {
 		Path   string       `json:"path,omitempty"`
@@ -383,7 +387,7 @@ func parseOptions(opts Options) ([]byte, error) {
 		switch t {
 		case "SHADOWSOCKS", "SHADOWSOCKS2022", "TROJAN", "VLESS", "VMESS":
 			opts.Protocol = t
-		case "GRPC", "TCP", "WS":
+		case "GRPC", "HTTPUPGRADE", "TCP", "WS":
 			opts.Transport = t
 		case "TLS":
 			opts.Security = t
@@ -551,6 +555,21 @@ func parseVLessURL(opts *Options, prefix string) error {
 	case "GRPC":
 		transport = "GRPC+TLS"
 		opts.GRPC.ServiceName = q.Get("serviceName")
+	case "HTTPUPGRADE":
+		transport = "HTTPUPGRADE"
+
+		var sni string
+
+		if strings.EqualFold(q.Get("security"), "TLS") {
+			transport = "HTTPUPGRADE+TLS"
+			sni = q.Get("sni")
+		}
+
+		opts.HTTPUPGRADE.Path = q.Get("path")
+
+		if host := q.Get("host"); host != "" && host != sni && host != u.Hostname() {
+			opts.HTTPUPGRADE.Host = host
+		}
 	case "TCP":
 		transport = "TCP"
 		if strings.EqualFold(q.Get("security"), "TLS") {
@@ -576,7 +595,7 @@ func parseVLessURL(opts *Options, prefix string) error {
 	}
 
 	switch transport {
-	case "GRPC+TLS", "TCP+TLS", "WS+TLS":
+	case "GRPC+TLS", "HTTPUPGRADE+TLS", "TCP+TLS", "WS+TLS":
 		if sni := q.Get("sni"); sni != "" && sni != u.Hostname() {
 			opts.TLS.ServerName = sni
 		} else if host := q.Get("host"); host != "" && host != u.Hostname() {
@@ -635,15 +654,25 @@ func parseVMessURL(opts *Options) error {
 	case "GRPC":
 		transport = "GRPC+TLS"
 		opts.GRPC.ServiceName = config.Path
+	case "HTTPUPGRADE":
+		transport = "HTTPUPGRADE"
+		if isTLS(unquote(string(config.TLS))) {
+			transport = "HTTPUPGRADE+TLS"
+		}
+
+		opts.HTTPUPGRADE.Path = config.Path
+
+		if config.Host != "" && config.Host != config.Address {
+			opts.HTTPUPGRADE.Host = config.Host
+		}
 	case "TCP":
 		transport = "TCP"
+		if isTLS(unquote(string(config.TLS))) {
+			transport = "TCP+TLS"
+		}
 
 		if config.Type != "" && config.Type != "none" {
 			return fmt.Errorf("unknown type field in vmess url %v: %v", opts.URL, config.Type)
-		}
-
-		if isTLS(unquote(string(config.TLS))) {
-			transport = "TCP+TLS"
 		}
 	case "WS":
 		transport = "WS"
@@ -653,7 +682,7 @@ func parseVMessURL(opts *Options) error {
 
 		opts.WS.Path = config.Path
 
-		if transport == "WS" && config.Host != "" && config.Host != config.Address {
+		if config.Host != "" && config.Host != config.Address {
 			opts.WS.Header = append(opts.WS.Header, HeaderItem{"Host", config.Host})
 		}
 	default:
@@ -661,7 +690,7 @@ func parseVMessURL(opts *Options) error {
 	}
 
 	switch transport {
-	case "GRPC+TLS", "TCP+TLS", "WS+TLS":
+	case "GRPC+TLS", "HTTPUPGRADE+TLS", "TCP+TLS", "WS+TLS":
 		if config.Host != "" && config.Host != config.Address {
 			opts.TLS.ServerName = config.Host
 		}

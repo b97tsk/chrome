@@ -49,6 +49,9 @@ const v2socksTemplateBody = `
 {{- if eq $transport "GRPC" }}
 				"transport": "grpc",
 				"transportSettings": {{ .GRPC | json }},
+{{- else if eq $transport "HTTPUPGRADE" }}
+				"transport": "httpupgrade",
+				"transportSettings": {{ .HTTPUPGRADE | json }},
 {{- else if eq $transport "TCP" }}
 				"transport": "tcp",
 				"transportSettings": {{ .TCP | json }},
