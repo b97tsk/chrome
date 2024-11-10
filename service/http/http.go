@@ -620,75 +620,74 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	_, _ = io.Copy(rw, resp.Body)
 }
 
-func (h *handler) hijack(rw http.ResponseWriter, handle func(net.Conn)) {
+func (h *handler) hijack(rw http.ResponseWriter) net.Conn {
 	if _, ok := rw.(http.Hijacker); !ok {
 		h.ctx.Manager.Logger(ServiceName).Debug("hijack: impossible")
 		panic(http.ErrAbortHandler)
 	}
 
-	conn, _, err := rw.(http.Hijacker).Hijack()
+	conn, buf, err := rw.(http.Hijacker).Hijack()
 	if err != nil {
 		h.ctx.Manager.Logger(ServiceName).Debugf("hijack: %v", err)
 		panic(http.ErrAbortHandler)
 	}
 
-	go handle(conn)
+	return mixin(conn, buf.Reader)
 }
 
 func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
-	h.hijack(rw, func(conn net.Conn) {
-		remoteAddr := h.rewriteHost(req.RequestURI)
+	conn := h.hijack(rw)
+	remoteAddr := h.rewriteHost(req.RequestURI)
 
-		getopts := func() (chrome.RelayOptions, bool) {
-			opts, ok := <-h.opts
-			return opts.Relay, ok
+	getopts := func() (chrome.RelayOptions, bool) {
+		opts, ok := <-h.opts
+		return opts.Relay, ok
+	}
+
+	getRemote := func(localCtx context.Context) net.Conn {
+		remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
+		return remote
+	}
+
+	sendResponse := func(w io.Writer) bool {
+		const response = "HTTP/1.1 200 OK\r\n\r\n"
+		if _, err := w.Write([]byte(response)); err != nil {
+			h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
+			return false
 		}
 
-		getRemote := func(localCtx context.Context) net.Conn {
-			remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-			return remote
-		}
+		return true
+	}
 
-		sendResponse := func(w io.Writer) bool {
-			const response = "HTTP/1.1 200 OK\r\n\r\n"
-			if _, err := w.Write([]byte(response)); err != nil {
-				h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
-				return false
-			}
+	logger := h.ctx.Manager.Logger(ServiceName)
 
-			return true
-		}
-
-		logger := h.ctx.Manager.Logger(ServiceName)
-
-		h.ctx.Manager.Relay(conn, getopts, getRemote, sendResponse, logger)
-	})
+	h.ctx.Manager.Relay(conn, getopts, getRemote, sendResponse, logger)
 }
 
 func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
-	h.hijack(rw, func(conn net.Conn) {
-		var b bytes.Buffer
-		if err := req.Write(&b); err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write request to buffer: %v", err)
-			return
-		}
+	var b bytes.Buffer
+	if err := req.Write(&b); err != nil {
+		h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write request to buffer: %v", err)
+		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 
-		remoteAddr := h.rewriteHost(req.Host)
+	conn := h.hijack(rw)
+	remoteAddr := h.rewriteHost(req.Host)
 
-		getopts := func() (chrome.RelayOptions, bool) {
-			opts, ok := <-h.opts
-			return opts.Relay, ok
-		}
+	getopts := func() (chrome.RelayOptions, bool) {
+		opts, ok := <-h.opts
+		return opts.Relay, ok
+	}
 
-		getRemote := func(localCtx context.Context) net.Conn {
-			remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-			return remote
-		}
+	getRemote := func(localCtx context.Context) net.Conn {
+		remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
+		return remote
+	}
 
-		logger := h.ctx.Manager.Logger(ServiceName)
+	logger := h.ctx.Manager.Logger(ServiceName)
 
-		h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getopts, getRemote, nil, logger)
-	})
+	h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getopts, getRemote, nil, logger)
 }
 
 func (h *handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool {
@@ -765,6 +764,18 @@ Again:
 	}
 
 	return start, token, nil
+}
+
+func mixin(c net.Conn, r io.Reader) net.Conn {
+	type A = struct {
+		net.Conn
+		io.Reader
+	}
+	type B = struct {
+		A
+		io.Reader
+	}
+	return &B{A{c, nil}, r}
 }
 
 var rePortSuffix = regexp.MustCompile(`:\d+$`)
