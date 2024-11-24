@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/b97tsk/chrome"
@@ -34,7 +35,6 @@ type Options struct {
 
 		Query struct {
 			Type chrome.StringList
-			All  bool
 		}
 		TTL struct {
 			Min, Max time.Duration
@@ -145,6 +145,9 @@ func (Service) Run(ctx chrome.Context) {
 					return nil
 				}
 
+				getaddr1 := func() string { return remoteAddr }
+				getaddr2 := (func() string)(nil)
+
 				if len(opts.DNS.Servers) != 0 {
 					if host, port, _ := net.SplitHostPort(remoteAddr); net.ParseIP(host) == nil {
 						var result *dnsQueryResult
@@ -153,7 +156,7 @@ func (Service) Run(ctx chrome.Context) {
 							r := cache.(*dnsQueryResult)
 							if r.Deadline.After(time.Now()) {
 								result = r
-								logger.Tracef("[dns] (from cache) %v: %v TTL=%v", host, r.IPList, r.TTL())
+								logger.Tracef("[dns] (from cache) %v: %v %v TTL=%v", host, r.IPv4, r.IPv6, r.TTL())
 							}
 						}
 
@@ -182,8 +185,21 @@ func (Service) Run(ctx chrome.Context) {
 						}
 
 						if result != nil {
-							ip := result.IPList[rand.Intn(len(result.IPList))]
-							remoteAddr = net.JoinHostPort(ip.String(), port)
+							getaddr1, getaddr2 = nil, nil
+
+							if ips := result.IPv4; len(ips) != 0 {
+								getaddr1 = func() string {
+									ip := ips[rand.Intn(len(ips))]
+									return net.JoinHostPort(ip.String(), port)
+								}
+							}
+
+							if ips := result.IPv6; len(ips) != 0 {
+								getaddr2 = func() string {
+									ip := ips[rand.Intn(len(ips))]
+									return net.JoinHostPort(ip.String(), port)
+								}
+							}
 						}
 					}
 				}
@@ -193,9 +209,71 @@ func (Service) Run(ctx chrome.Context) {
 					return opts.Proxy, opts.Dial, ok
 				}
 
-				remote, _ := ctx.Manager.Dial(localCtx, "tcp", remoteAddr, getopts, logger)
+				if getaddr1 != nil && getaddr2 != nil {
+					const N = 2
 
-				return remote
+					type Context struct {
+						Context context.Context
+						Cancel  context.CancelFunc
+					}
+
+					var contexts [N]Context
+
+					for i := range contexts {
+						ctx, cancel := context.WithCancel(localCtx)
+						contexts[i] = Context{ctx, cancel}
+					}
+
+					type Winner struct {
+						Index int
+						Conn  net.Conn
+					}
+
+					c := make(chan Winner)
+
+					var n atomic.Uint32
+
+					for i, getaddr := range []func() string{getaddr1, getaddr2} {
+						lctx := contexts[i].Context
+						go func() {
+							conn, _ := ctx.Manager.Dialv2(lctx, "tcp", getaddr, getopts, logger)
+							if conn != nil {
+								select {
+								case c <- Winner{i, conn}:
+								case <-lctx.Done():
+									_ = conn.Close()
+								}
+							}
+							if n.Add(1) == N {
+								close(c)
+							}
+						}()
+					}
+
+					winner, ok := <-c
+					if !ok {
+						winner.Index = -1
+					}
+
+					for i := range contexts {
+						if i != winner.Index {
+							contexts[i].Cancel()
+						}
+					}
+
+					return winner.Conn
+				}
+
+				var conn net.Conn
+
+				switch {
+				case getaddr1 != nil:
+					conn, _ = ctx.Manager.Dialv2(localCtx, "tcp", getaddr1, getopts, logger)
+				case getaddr2 != nil:
+					conn, _ = ctx.Manager.Dialv2(localCtx, "tcp", getaddr2, getopts, logger)
+				}
+
+				return conn
 			}
 
 			sendResponse := func(w io.Writer) bool {
@@ -252,7 +330,7 @@ func (Service) Run(ctx chrome.Context) {
 				if len(new.DNS.Servers) != 0 {
 					new.DNS.Query.Type = normalizeQueryTypes(new.DNS.Query.Type)
 					if len(new.DNS.Query.Type) == 0 {
-						new.DNS.Query.Type = chrome.StringList{"A"}
+						new.DNS.Query.Type = chrome.StringList{"A", "AAAA"}
 					}
 
 					for i := range new.DNS.Servers {
@@ -292,8 +370,8 @@ type dnsQuery struct {
 }
 
 type dnsQueryResult struct {
-	IPList   []net.IP
-	Deadline time.Time
+	IPv4, IPv6 []net.IP
+	Deadline   time.Time
 }
 
 func (r *dnsQueryResult) TTL() time.Duration {
@@ -361,7 +439,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 				r := cache.(*dnsQueryResult)
 				if r.Deadline.After(time.Now()) {
 					result = r
-					logger.Tracef("[dns] (from cache) %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+					logger.Tracef("[dns] (from cache) %v: %v %v TTL=%v", q.Domain, r.IPv4, r.IPv6, r.TTL())
 				}
 			}
 
@@ -508,9 +586,9 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 								switch ans := ans.(type) {
 								case *dns.A:
-									r.IPList = append(r.IPList, ans.A)
+									r.IPv4 = append(r.IPv4, ans.A)
 								case *dns.AAAA:
-									r.IPList = append(r.IPList, ans.AAAA)
+									r.IPv6 = append(r.IPv6, ans.AAAA)
 								}
 							}
 
@@ -522,10 +600,6 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 							}
 
 							qtypes = qtypes[1:]
-
-							if !opts.DNS.Query.All && len(r.IPList) != 0 {
-								break
-							}
 						} else {
 							logger.Tracef("[dns] read msg: %v", err)
 						}
@@ -557,14 +631,14 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 					}
 				}
 
-				if len(r.IPList) != 0 {
+				if len(r.IPv4)+len(r.IPv6) != 0 {
 					result = r
 
 					if !r.Deadline.IsZero() {
 						opts.dnsCache.Store(q.Domain, r)
 					}
 
-					logger.Debugf("[dns] %v: %v TTL=%v", q.Domain, r.IPList, r.TTL())
+					logger.Debugf("[dns] %v: %v %v TTL=%v", q.Domain, r.IPv4, r.IPv6, r.TTL())
 				}
 			}
 

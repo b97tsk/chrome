@@ -50,6 +50,24 @@ func (m *dialingService) Dial(
 	getopts func() (Proxy, DialOptions, bool),
 	logger *log.Logger,
 ) (c net.Conn, err error) {
+	getaddr := func() string { return address }
+	return m.Dialv2(ctx, network, getaddr, getopts, logger)
+}
+
+// Dialv2 connects an address returned by getaddr() repeatedly until success
+// or ctx is canceled.
+//
+// For each attempt, Dialv2 calls getaddr to obtain an address, and getopts
+// to obtain a Proxy and a DialOptions.
+// Dialv2 uses the Proxy to connect the address, and the DialOptions for
+// custom behavior.
+func (m *dialingService) Dialv2(
+	ctx context.Context,
+	network string,
+	getaddr func() string,
+	getopts func() (Proxy, DialOptions, bool),
+	logger *log.Logger,
+) (c net.Conn, err error) {
 	attempts := 0
 	es, esc := "", 0
 
@@ -105,6 +123,7 @@ func (m *dialingService) Dial(
 		startTime := time.Now()
 		dialCtx, cancel := context.WithCancel(ctx)
 		timer := time.AfterFunc(opts.Timeout, cancel)
+		address := getaddr()
 		c, err = proxy.Dial(dialCtx, dialer, network, address)
 		timerStopped := timer.Stop()
 
