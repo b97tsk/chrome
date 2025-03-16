@@ -99,7 +99,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ServiceName)
+	logger := ctx.Manager.Logger(ctx.JobName)
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)

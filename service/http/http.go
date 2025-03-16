@@ -319,7 +319,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ServiceName)
+	logger := ctx.Manager.Logger(ctx.JobName)
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -504,7 +504,7 @@ type handler struct {
 func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 	h := &handler{ctx: ctx, opts: opts}
 
-	logger := ctx.Manager.Logger(ServiceName)
+	logger := ctx.Manager.Logger(ctx.JobName)
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
@@ -622,13 +622,13 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (h *handler) hijack(rw http.ResponseWriter) net.Conn {
 	if _, ok := rw.(http.Hijacker); !ok {
-		h.ctx.Manager.Logger(ServiceName).Debug("hijack: impossible")
+		h.ctx.Manager.Logger(h.ctx.JobName).Debug("hijack: impossible")
 		panic(http.ErrAbortHandler)
 	}
 
 	conn, buf, err := rw.(http.Hijacker).Hijack()
 	if err != nil {
-		h.ctx.Manager.Logger(ServiceName).Debugf("hijack: %v", err)
+		h.ctx.Manager.Logger(h.ctx.JobName).Debugf("hijack: %v", err)
 		panic(http.ErrAbortHandler)
 	}
 
@@ -652,14 +652,14 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 	sendResponse := func(w io.Writer) bool {
 		const response = "HTTP/1.1 200 OK\r\n\r\n"
 		if _, err := w.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(ServiceName).Tracef("connect: write response to local: %v", err)
+			h.ctx.Manager.Logger(h.ctx.JobName).Tracef("connect: write response to local: %v", err)
 			return false
 		}
 
 		return true
 	}
 
-	logger := h.ctx.Manager.Logger(ServiceName)
+	logger := h.ctx.Manager.Logger(h.ctx.JobName)
 
 	h.ctx.Manager.Relay(conn, getopts, getRemote, sendResponse, logger)
 }
@@ -667,7 +667,7 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	var b bytes.Buffer
 	if err := req.Write(&b); err != nil {
-		h.ctx.Manager.Logger(ServiceName).Tracef("upgrade: write request to buffer: %v", err)
+		h.ctx.Manager.Logger(h.ctx.JobName).Tracef("upgrade: write request to buffer: %v", err)
 		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -685,7 +685,7 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 		return remote
 	}
 
-	logger := h.ctx.Manager.Logger(ServiceName)
+	logger := h.ctx.Manager.Logger(h.ctx.JobName)
 
 	h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getopts, getRemote, nil, logger)
 }

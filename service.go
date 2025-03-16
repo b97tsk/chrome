@@ -56,21 +56,23 @@ type LoadedEvent struct{}
 
 // A Context provides contextual values for a job.
 type Context struct {
-	// Context is for cancellation. It is canceled when the job cancels.
+	// The Context for cancellation. It is canceled when the job gets canceled.
 	context.Context
-	// Manager is the Manager that starts the job.
+	// The name of the job.
+	JobName string
+	// The Manager that starts the job.
 	Manager *Manager
-	// Event is for receiving events sent to the job.
+	// The channel for receiving events sent to the job.
 	Event <-chan Event
 }
 
 // A Job provides mechanism to control the job started by a Service.
 type Job struct {
-	// Context is for cancellation. It is canceled when the job stops.
+	// The Context for cancellation. It is canceled when the job stops.
 	context.Context
 	// Cancel cancels the job and later cancels Context after Service.Run returns.
 	Cancel context.CancelFunc
-	// Event is for sending events to the job.
+	// The channel for sending events to the job.
 	Event chan<- Event
 }
 
@@ -154,7 +156,7 @@ func (m *Manager) AddService(service Service) {
 // StartService starts a Service. Jobs started by StartService are not managed
 // but they should be stopped manually before you Shutdown the Manager since
 // somehow they are connected to the Manager.
-func (m *Manager) StartService(ctx context.Context, service Service) (Job, error) {
+func (m *Manager) StartService(ctx context.Context, service Service, name string) (Job, error) {
 	if service == nil || service == Dummy {
 		return Job{}, os.ErrInvalid
 	}
@@ -174,7 +176,7 @@ func (m *Manager) StartService(ctx context.Context, service Service) (Job, error
 			done()
 		}()
 
-		service.Run(Context{ctx, m, event})
+		service.Run(Context{ctx, name, m, event})
 	}()
 
 	return Job{job, cancel, event}, nil
@@ -326,7 +328,7 @@ func (m *Manager) setOptions(name string, data any) error {
 
 	job, ok := m.jobs[name]
 	if !ok || job.Err() != nil {
-		job, _ = m.StartService(context.Background(), service)
+		job, _ = m.StartService(context.Background(), service, name)
 
 		if m.jobs == nil {
 			m.jobs = make(map[string]Job)

@@ -75,7 +75,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ServiceName)
+	logger := ctx.Manager.Logger(ctx.JobName)
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -404,7 +404,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 	dnsConnReadTimeout := defaultReadTimeout
 	dnsConnWriteTimeout := defaultWriteTimeout
 
-	logger := ctx.Manager.Logger(ServiceName)
+	logger := ctx.Manager.Logger(ctx.JobName)
 
 	for {
 		if dnsConn != nil {
