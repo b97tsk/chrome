@@ -5,8 +5,8 @@ go 1.22
 require (
 	github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1
 	github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d
-	github.com/fsnotify/fsnotify v1.7.0
-	github.com/miekg/dns v1.1.64
+	github.com/fsnotify/fsnotify v1.9.0
+	github.com/miekg/dns v1.1.65
 	github.com/shadowsocks/go-shadowsocks2 v0.1.5
 	github.com/v2fly/v2ray-core/v5 v5.30.0
 	golang.org/x/net v0.38.0
