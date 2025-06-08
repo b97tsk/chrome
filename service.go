@@ -107,8 +107,8 @@ type Manager struct {
 	fsys     atomic.Value
 
 	loggingService
-	dialingService
 	servingService
+	connService
 	relayService
 }
 
@@ -262,7 +262,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 			File  EnvString
 			Level logLevel
 		}
-		Dial  DialOptions
+		Conn  ConnOptions
 		Relay RelayOptions
 		Jobs  map[string]any `yaml:",inline"`
 	}
@@ -279,7 +279,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 	}
 
 	m.SetLogLevel(config.Log.Level.Level)
-	m.SetDialOptions(config.Dial)
+	m.SetConnOptions(config.Conn)
 	m.SetRelayOptions(config.Relay)
 
 	for name, job := range m.jobs {
