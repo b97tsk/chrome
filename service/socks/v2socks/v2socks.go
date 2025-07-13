@@ -17,6 +17,7 @@ import (
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
 	"github.com/b97tsk/chrome/internal/v2ray"
+	"github.com/b97tsk/proxy"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -43,7 +44,7 @@ type Options struct {
 		Concurrency int  `json:"concurrency,omitempty"`
 	}
 
-	Dial  chrome.DialOptions
+	Conn  chrome.ConnOptions
 	Relay chrome.RelayOptions
 
 	ins *v2ray.Instance
@@ -158,47 +159,44 @@ func (Service) Run(ctx chrome.Context) {
 
 		server = ln
 
-		go ctx.Manager.Serve(ln, func(c net.Conn) {
+		go ctx.Manager.Serve(ln, func(local net.Conn) {
 			var reply bytes.Buffer
 
 			rw := &struct {
 				io.Reader
 				io.Writer
-			}{c, ioutil.LimitWriter(c, 2, &reply)}
+			}{local, ioutil.LimitWriter(local, 2, &reply)}
 
 			addr, err := socks.Handshake(rw)
 			if err != nil {
 				return
 			}
 
+			opts, ok := <-optsOut
+			if !ok {
+				return
+			}
+
+			if _, err := reply.WriteTo(local); err != nil {
+				logger.Tracef("write response to local: %v", err)
+				return
+			}
+
 			remoteAddr := addr.String()
 
-			getopts := func() (chrome.RelayOptions, bool) {
-				opts, ok := <-optsOut
-				return opts.Relay, ok
-			}
-
-			getRemote := func(localCtx context.Context) net.Conn {
-				getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
-					opts, ok := <-optsOut
-					return chrome.ProxyFromDialer(opts.ins), opts.Dial, ok && opts.ins != nil
+			getRemote := func(ctx context.Context) (net.Conn, error) {
+				opts := <-optsOut
+				if opts.ins == nil {
+					return nil, chrome.CloseConn
 				}
 
-				remote, _ := ctx.Manager.Dial(localCtx, "tcp", remoteAddr, getopts, logger)
-
-				return remote
+				return proxy.Dial(ctx, opts.ins, "tcp", remoteAddr)
 			}
 
-			sendResponse := func(w io.Writer) bool {
-				if _, err := reply.WriteTo(w); err != nil {
-					logger.Tracef("write response to local: %v", err)
-					return false
-				}
+			remote := ctx.Manager.NewConn(remoteAddr, getRemote, opts.Conn, opts.Relay, logger, nil)
+			defer remote.Close()
 
-				return true
-			}
-
-			ctx.Manager.Relay(c, getopts, getRemote, sendResponse, logger)
+			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
 
 		return nil
@@ -295,47 +293,44 @@ func (Service) Run(ctx chrome.Context) {
 
 						forwardListener = ln
 
-						go ctx.Manager.Serve(ln, func(c net.Conn) {
+						go ctx.Manager.Serve(ln, func(local net.Conn) {
 							var reply bytes.Buffer
 
 							rw := &struct {
 								io.Reader
 								io.Writer
-							}{c, ioutil.LimitWriter(c, 2, &reply)}
+							}{local, ioutil.LimitWriter(local, 2, &reply)}
 
 							addr, err := socks.Handshake(rw)
 							if err != nil {
 								return
 							}
 
+							opts, ok := <-optsOut
+							if !ok {
+								return
+							}
+
+							if _, err := reply.WriteTo(local); err != nil {
+								logger.Tracef("write response to local: %v", err)
+								return
+							}
+
 							remoteAddr := addr.String()
 
-							getopts := func() (chrome.RelayOptions, bool) {
+							getRemote := func(ctx context.Context) (net.Conn, error) {
 								opts, ok := <-optsOut
-								return opts.Relay, ok
-							}
-
-							getRemote := func(localCtx context.Context) net.Conn {
-								getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
-									opts, ok := <-optsOut
-									return opts.Proxy, opts.Dial, ok
+								if !ok {
+									return nil, chrome.CloseConn
 								}
 
-								remote, _ := ctx.Manager.Dial(localCtx, "tcp", remoteAddr, getopts, logger)
-
-								return remote
+								return proxy.Dial(ctx, opts.Proxy.Dialer(), "tcp", remoteAddr)
 							}
 
-							sendResponse := func(w io.Writer) bool {
-								if _, err := reply.WriteTo(w); err != nil {
-									logger.Tracef("write response to local: %v", err)
-									return false
-								}
+							remote := ctx.Manager.NewConn(remoteAddr, getRemote, opts.Conn, opts.Relay, logger, nil)
+							defer remote.Close()
 
-								return true
-							}
-
-							ctx.Manager.Relay(c, getopts, getRemote, sendResponse, logger)
+							ctx.Manager.Relay(local, remote, opts.Relay)
 						})
 					}
 
@@ -367,7 +362,7 @@ func shouldRestart(x, y Options) bool {
 
 	var z Options
 	x.Proxy, y.Proxy = z.Proxy, z.Proxy
-	x.Dial, y.Dial = z.Dial, z.Dial
+	x.Conn, y.Conn = z.Conn, z.Conn
 	x.Relay, y.Relay = z.Relay, z.Relay
 	x.ins, y.ins = z.ins, z.ins
 
