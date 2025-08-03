@@ -28,6 +28,7 @@ import (
 	"github.com/b97tsk/chrome/internal/netiputil"
 	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/b97tsk/log"
+	"github.com/b97tsk/proxy"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -40,7 +41,7 @@ type Options struct {
 	Redirects    map[string]string
 	RewriteHosts map[string]string
 
-	Dial  chrome.DialOptions
+	Conn  chrome.ConnOptions
 	Relay chrome.RelayOptions
 
 	routes       []route
@@ -496,49 +497,33 @@ func (Service) Run(ctx chrome.Context) {
 type handler struct {
 	ctx       chrome.Context
 	opts      <-chan Options
+	logger    *log.Logger
 	tr        *http.Transport
 	redirects atomic.Value
 	rwhosts   atomic.Value
 }
 
 func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
-	h := &handler{ctx: ctx, opts: opts}
-
 	logger := ctx.Manager.Logger(ctx.JobName)
 
+	h := &handler{ctx: ctx, opts: opts, logger: logger}
+
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
-			opts, ok := <-h.opts
-
-			if opts.routeCache != nil {
-				if r, ok := opts.routeCache.Load(addr); ok {
-					opts.Proxy = r.(*route).Proxy
-				} else {
-					host, port, _ := net.SplitHostPort(addr)
-
-					addr1, _ := netip.ParseAddr(host)
-					if addr1.IsValid() {
-						addr1 = addr1.Unmap()
-						host = addr1.String()
-					}
-
-					for i := range opts.routes {
-						if r := &opts.routes[i]; r.AllowList.Allow(host, port, addr1) {
-							logger.Infof("%v matches %v", r.Name, addr)
-
-							opts.Proxy = r.Proxy
-							opts.routeCache.Store(addr, r)
-
-							break
-						}
-					}
-				}
-			}
-
-			return opts.Proxy, opts.Dial, ok
+		opts, ok := h.getopts(addr)
+		if !ok {
+			return nil, chrome.CloseConn
 		}
 
-		return h.ctx.Manager.Dial(ctx, network, addr, getopts, logger)
+		getRemote := func(ctx context.Context) (net.Conn, error) {
+			opts, ok := h.getopts(addr)
+			if !ok {
+				return nil, chrome.CloseConn
+			}
+
+			return proxy.Dial(ctx, opts.Proxy.Dialer(), network, addr)
+		}
+
+		return h.ctx.Manager.NewConn(addr, getRemote, opts.Conn, opts.Relay, logger, nil), nil
 	}
 
 	h.tr = &http.Transport{
@@ -551,6 +536,37 @@ func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
 	}
 
 	return h
+}
+
+func (h *handler) getopts(addr string) (Options, bool) {
+	opts, ok := <-h.opts
+
+	if opts.routeCache != nil {
+		if r, ok := opts.routeCache.Load(addr); ok {
+			opts.Proxy = r.(*route).Proxy
+		} else {
+			host, port, _ := net.SplitHostPort(addr)
+
+			addr1, _ := netip.ParseAddr(host)
+			if addr1.IsValid() {
+				addr1 = addr1.Unmap()
+				host = addr1.String()
+			}
+
+			for i := range opts.routes {
+				if r := &opts.routes[i]; r.AllowList.Allow(host, port, addr1) {
+					h.logger.Infof("%v matches %v", r.Name, addr)
+
+					opts.Proxy = r.Proxy
+					opts.routeCache.Store(addr, r)
+
+					break
+				}
+			}
+		}
+	}
+
+	return opts, ok
 }
 
 func (h *handler) CloseIdleConnections() {
@@ -622,13 +638,13 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (h *handler) hijack(rw http.ResponseWriter) net.Conn {
 	if _, ok := rw.(http.Hijacker); !ok {
-		h.ctx.Manager.Logger(h.ctx.JobName).Debug("hijack: impossible")
+		h.logger.Debug("hijack: impossible")
 		panic(http.ErrAbortHandler)
 	}
 
 	conn, buf, err := rw.(http.Hijacker).Hijack()
 	if err != nil {
-		h.ctx.Manager.Logger(h.ctx.JobName).Debugf("hijack: %v", err)
+		h.logger.Debugf("hijack: %v", err)
 		panic(http.ErrAbortHandler)
 	}
 
@@ -636,58 +652,68 @@ func (h *handler) hijack(rw http.ResponseWriter) net.Conn {
 }
 
 func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
-	conn := h.hijack(rw)
+	local := h.hijack(rw)
+	defer local.Close()
+
+	opts, ok := <-h.opts
+	if !ok {
+		return
+	}
+
+	const response = "HTTP/1.1 200 OK\r\n\r\n"
+	if _, err := local.Write([]byte(response)); err != nil {
+		h.logger.Tracef("connect: write response to local: %v", err)
+		return
+	}
+
 	remoteAddr := h.rewriteHost(req.RequestURI)
 
-	getopts := func() (chrome.RelayOptions, bool) {
-		opts, ok := <-h.opts
-		return opts.Relay, ok
-	}
-
-	getRemote := func(localCtx context.Context) net.Conn {
-		remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-		return remote
-	}
-
-	sendResponse := func(w io.Writer) bool {
-		const response = "HTTP/1.1 200 OK\r\n\r\n"
-		if _, err := w.Write([]byte(response)); err != nil {
-			h.ctx.Manager.Logger(h.ctx.JobName).Tracef("connect: write response to local: %v", err)
-			return false
+	getRemote := func(ctx context.Context) (net.Conn, error) {
+		opts, ok := h.getopts(remoteAddr)
+		if !ok {
+			return nil, chrome.CloseConn
 		}
 
-		return true
+		return proxy.Dial(ctx, opts.Proxy.Dialer(), "tcp", remoteAddr)
 	}
 
-	logger := h.ctx.Manager.Logger(h.ctx.JobName)
+	remote := h.ctx.Manager.NewConn(remoteAddr, getRemote, opts.Conn, opts.Relay, h.logger, nil)
+	defer remote.Close()
 
-	h.ctx.Manager.Relay(conn, getopts, getRemote, sendResponse, logger)
+	h.ctx.Manager.Relay(local, remote, opts.Relay)
 }
 
 func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	var b bytes.Buffer
 	if err := req.Write(&b); err != nil {
-		h.ctx.Manager.Logger(h.ctx.JobName).Tracef("upgrade: write request to buffer: %v", err)
+		h.logger.Tracef("upgrade: write request to buffer: %v", err)
 		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
-	conn := h.hijack(rw)
+	local := h.hijack(rw)
+	defer local.Close()
+
+	opts, ok := <-h.opts
+	if !ok {
+		return
+	}
+
 	remoteAddr := h.rewriteHost(req.Host)
 
-	getopts := func() (chrome.RelayOptions, bool) {
-		opts, ok := <-h.opts
-		return opts.Relay, ok
+	getRemote := func(ctx context.Context) (net.Conn, error) {
+		opts, ok := h.getopts(remoteAddr)
+		if !ok {
+			return nil, chrome.CloseConn
+		}
+
+		return proxy.Dial(ctx, opts.Proxy.Dialer(), "tcp", remoteAddr)
 	}
 
-	getRemote := func(localCtx context.Context) net.Conn {
-		remote, _ := h.tr.DialContext(localCtx, "tcp", remoteAddr)
-		return remote
-	}
+	remote := h.ctx.Manager.NewConn(remoteAddr, getRemote, opts.Conn, opts.Relay, h.logger, nil)
+	defer remote.Close()
 
-	logger := h.ctx.Manager.Logger(h.ctx.JobName)
-
-	h.ctx.Manager.Relay(netutil.Unread(conn, b.Bytes()), getopts, getRemote, nil, logger)
+	h.ctx.Manager.Relay(netutil.Unread(local, b.Bytes()), remote, opts.Relay)
 }
 
 func (h *handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool {
