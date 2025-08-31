@@ -101,7 +101,7 @@ func (m *Manager) NewConn(
 
 	var myState struct {
 		rr struct { // read request
-			async.WaitGroup
+			done async.State[bool]
 			stop async.State[bool]
 			req  struct {
 				async.Signal
@@ -109,7 +109,7 @@ func (m *Manager) NewConn(
 			}
 		}
 		cl struct { // conn loop
-			async.WaitGroup
+			done        async.State[bool]
 			stop        async.State[bool]
 			newconn     async.State[bool]
 			connections struct {
@@ -129,7 +129,9 @@ func (m *Manager) NewConn(
 		return co.End()
 	}
 
-	awaitConnLoop := myState.cl.Await()
+	untilTrue := func(v bool) bool { return v }
+
+	awaitConnLoop := myState.cl.done.Await(untilTrue)
 
 	stopReadingRequest := func(co *async.Coroutine) async.Result {
 		aLongTimeAgo := time.Unix(1, 0)
@@ -138,7 +140,7 @@ func (m *Manager) NewConn(
 		return co.End()
 	}
 
-	awaitReadingRequest := myState.rr.Await()
+	awaitReadingRequest := myState.rr.done.Await(untilTrue)
 
 	hasWinner := false
 
@@ -170,8 +172,7 @@ func (m *Manager) NewConn(
 					sig.Notify()
 				}),
 			))
-			co.Watch(&sig)
-			return co.Yield(async.End())
+			return co.Await(&sig).End()
 		})
 		myExecutor.Spawn(func(co *async.Coroutine) async.Result {
 			timer := time.AfterFunc(connOpts.Timeout, cancel)
@@ -202,13 +203,13 @@ func (m *Manager) NewConn(
 					myState.cl.connections.Notify()
 				}),
 			)
-			return co.Transition(async.Await(&remote).Then(
+			return co.Await(&remote).Then(
 				func(co *async.Coroutine) async.Result {
 					if remote.Get() == nil {
 						return co.End()
 					}
 					var sr struct { // send request
-						async.WaitGroup
+						done async.State[bool]
 						stop async.State[bool]
 						sent int
 					}
@@ -218,9 +219,8 @@ func (m *Manager) NewConn(
 							n   int
 							err error
 						}
-						sr.Add(1)
 						myExecutor.Spawn(async.Block(
-							async.Defer(async.Do(sr.Done)),
+							async.Defer(async.Do(func() { sr.done.Set(true) })),
 							async.Loop(async.Block(
 								func(co *async.Coroutine) async.Result {
 									if sr.stop.Get() {
@@ -228,7 +228,7 @@ func (m *Manager) NewConn(
 									}
 									co.Watch(&sr.stop)
 									if sr.sent == len(myState.rr.req.data) {
-										return co.Await(&myState.rr.req)
+										return co.Yield(&myState.rr.req)
 									}
 									wg.Add(1)
 									go func(bytesToSend []byte) {
@@ -260,7 +260,7 @@ func (m *Manager) NewConn(
 						sr.stop.Set(true)
 						return co.End()
 					}
-					awaitSendingRequest := sr.Await()
+					awaitSendingRequest := sr.done.Await(untilTrue)
 					sendRequest()
 					var wgAfterFunc async.WaitGroup
 					wg.Add(1)
@@ -307,7 +307,7 @@ func (m *Manager) NewConn(
 						stopAfterFunc,
 						awaitAfterFunc,
 					))
-					return co.Transition(async.Await(&resp).Then(
+					return co.Await(&resp).Then(
 						func(co *async.Coroutine) async.Result {
 							if resp.err != nil {
 								return co.End()
@@ -325,12 +325,12 @@ func (m *Manager) NewConn(
 							}
 							return co.Transition(async.Block(
 								stopConnLoop,
-								awaitConnLoop,
 								stopReadingRequest,
-								awaitReadingRequest,
 								stopSendingRequest,
-								awaitSendingRequest,
 								stopAfterFunc,
+								awaitConnLoop,
+								awaitReadingRequest,
+								awaitSendingRequest,
 								awaitAfterFunc,
 								func(co *async.Coroutine) async.Result {
 									l, r := pipeLeft, remote.Get()
@@ -348,13 +348,13 @@ func (m *Manager) NewConn(
 										m.Relay(l, r, relayOpts)
 										myExecutor.Spawn(async.Do(sig.Notify))
 									}()
-									return co.Transition(async.Await(&sig))
+									return co.Await(&sig).End()
 								},
 							))
 						},
-					))
+					)
 				},
-			))
+			)
 		})
 		return co.End()
 	}
@@ -389,17 +389,16 @@ func (m *Manager) NewConn(
 		}
 		awaitTimer := func(co *async.Coroutine) async.Result {
 			if timerRunning.Get() {
-				return co.Await(timerRunning)
+				return co.Yield(timerRunning)
 			}
 			return co.End()
 		}
-		myState.cl.Add(1)
 		myState.cl.newconn.Set(true)
 		myExecutor.Spawn(async.Block(
 			async.Defer(async.Block(
 				stopTimer,
 				awaitTimer,
-				async.Do(myState.cl.Done),
+				async.Do(func() { myState.cl.done.Set(true) }),
 			)),
 			async.Loop(async.Block(
 				func(co *async.Coroutine) async.Result {
@@ -408,14 +407,14 @@ func (m *Manager) NewConn(
 					}
 					co.Watch(&myState.cl.stop)
 					if !myState.cl.newconn.Get() {
-						return co.Await(&myState.cl.newconn)
+						return co.Yield(&myState.cl.newconn)
 					}
 					if myState.cl.connections.n >= connOpts.Parallel {
-						return co.Await(&myState.cl.connections)
+						return co.Yield(&myState.cl.connections)
 					}
 					if myState.cl.attempts >= connOpts.MaxAttempts {
 						if myState.cl.connections.n != 0 {
-							return co.Await(&myState.cl.connections)
+							return co.Yield(&myState.cl.connections)
 						}
 						if lifeCycleCh != nil {
 							lifeCycleCh <- ConnEventMaxAttempts{}
@@ -439,11 +438,10 @@ func (m *Manager) NewConn(
 			n   int
 			err error
 		}
-		myState.rr.Add(1)
 		myExecutor.Spawn(async.Block(
 			async.Defer(async.Block(
 				stopConnLoop,
-				async.Do(myState.rr.Done),
+				async.Do(func() { myState.rr.done.Set(true) }),
 			)),
 			async.Loop(async.Block(
 				func(co *async.Coroutine) async.Result {
@@ -456,7 +454,7 @@ func (m *Manager) NewConn(
 							result.Notify()
 						}))
 					}()
-					return co.Transition(async.Await(&result))
+					return co.Await(&result).End()
 				},
 				func(co *async.Coroutine) async.Result {
 					n, err := result.n, result.err
