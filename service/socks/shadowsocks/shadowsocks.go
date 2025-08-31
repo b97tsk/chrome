@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/b97tsk/chrome"
+	"github.com/b97tsk/proxy"
 	"github.com/shadowsocks/go-shadowsocks2/core"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
@@ -17,7 +18,7 @@ type Options struct {
 	Method   string
 	Password string
 
-	Dial  chrome.DialOptions
+	Conn  chrome.ConnOptions
 	Relay chrome.RelayOptions
 
 	cipher core.Cipher
@@ -72,38 +73,39 @@ func (Service) Run(ctx chrome.Context) {
 
 		server = ln
 
-		go ctx.Manager.Serve(ln, func(c net.Conn) {
+		go ctx.Manager.Serve(ln, func(local net.Conn) {
 			cipher := (<-optsOut).cipher
 			if cipher == nil {
 				return
 			}
 
-			c = cipher.StreamConn(c)
-			addr, err := socks.ReadAddr(c)
+			local = cipher.StreamConn(local)
+			addr, err := socks.ReadAddr(local)
 			if err != nil {
 				logger.Debugf("read addr: %v", err)
 				return
 			}
 
+			opts, ok := <-optsOut
+			if !ok {
+				return
+			}
+
 			remoteAddr := addr.String()
 
-			getopts := func() (chrome.RelayOptions, bool) {
+			getRemote := func(ctx context.Context) (net.Conn, error) {
 				opts, ok := <-optsOut
-				return opts.Relay, ok
-			}
-
-			getRemote := func(localCtx context.Context) net.Conn {
-				getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
-					opts, ok := <-optsOut
-					return opts.Proxy, opts.Dial, ok
+				if !ok {
+					return nil, chrome.CloseConn
 				}
 
-				remote, _ := ctx.Manager.Dial(localCtx, "tcp", remoteAddr, getopts, logger)
-
-				return remote
+				return proxy.Dial(ctx, opts.Proxy.Dialer(), "tcp", remoteAddr)
 			}
 
-			ctx.Manager.Relay(c, getopts, getRemote, nil, logger)
+			remote := ctx.Manager.NewConn(remoteAddr, getRemote, opts.Conn, opts.Relay, logger, nil)
+			defer remote.Close()
+
+			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
 
 		return nil

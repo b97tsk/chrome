@@ -26,6 +26,7 @@ import (
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/b97tsk/log"
+	"github.com/b97tsk/proxy"
 	"github.com/miekg/dns"
 )
 
@@ -46,8 +47,10 @@ type Options struct {
 		Only bool
 	}
 
-	Dial chrome.DialOptions
-	TTL  struct {
+	Conn  chrome.ConnOptions
+	Relay chrome.RelayOptions
+
+	TTL struct {
 		Min, Max time.Duration
 	}
 	Idle struct {
@@ -605,7 +608,7 @@ func (r *dnsQueryResult) TTL() time.Duration {
 }
 
 func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dnsQuery) {
-	var transactions []*transaction
+	var sex []*dnsExchange
 
 	logger := ctx.Manager.Logger(ctx.JobName)
 Loop:
@@ -632,7 +635,6 @@ Loop:
 							return
 						case <-q.Context.Done():
 						case q.Result <- r:
-						default:
 						}
 
 						close(q.Result)
@@ -668,63 +670,65 @@ Loop:
 				}
 			}
 
-			for i, tr := range transactions {
-				if tr.Route == route1 {
+			for i, ex := range sex {
+				if ex.Route == route1 {
 					select {
-					case <-tr.Done():
-					case tr.Chan <- q:
+					case <-ex.Done():
+					case <-q.Context.Done():
+						continue Loop
+					case ex.Chan <- q:
 						continue Loop
 					}
 
-					j := len(transactions) - 1
-					transactions[i] = transactions[j]
-					transactions[j] = nil
-					transactions = transactions[:j]
+					j := len(sex) - 1
+					sex[i] = sex[j]
+					sex[j] = nil
+					sex = sex[:j]
 
 					break
 				}
 			}
 
-			// Remove inactive transactions.
-			{
-				slice := transactions
-				transactions = slice[:0]
+			{ // Remove inactive exchanges.
+				s := sex
+				sex = s[:0]
 
-				for _, tr := range slice {
+				for _, ex := range s {
 					select {
-					case <-tr.Done():
+					case <-ex.Done():
 					default:
-						transactions = append(transactions, tr)
+						sex = append(sex, ex)
 					}
 				}
 
-				slice = slice[len(transactions):]
+				s = s[len(sex):]
 
-				for i := range slice {
-					slice[i] = nil
+				for i := range s {
+					s[i] = nil
 				}
 			}
 
-			tr := newTransaction(ctx, options, route1)
-			transactions = append(transactions, tr)
+			ex := newExchange(ctx, options, route1)
+			sex = append(sex, ex)
 
 			select {
-			case <-tr.Done():
-			case tr.Chan <- q:
+			case <-ex.Done():
+			case <-q.Context.Done():
+			case ex.Chan <- q:
 			}
 		}
 	}
 }
 
-type transaction struct {
+type dnsExchange struct {
 	context.Context
 	Route *route
 	Chan  chan dnsQuery
 }
 
-func newTransaction(ctx chrome.Context, options <-chan Options, route *route) *transaction {
+func newExchange(ctx chrome.Context, options <-chan Options, route *route) *dnsExchange {
 	ctx1, cancel := context.WithCancel(ctx.Context)
-	tr := &transaction{
+	ex := &dnsExchange{
 		Context: ctx1,
 		Route:   route,
 		Chan:    make(chan dnsQuery),
@@ -732,26 +736,50 @@ func newTransaction(ctx chrome.Context, options <-chan Options, route *route) *t
 
 	go func() {
 		defer cancel()
-		startTransaction(ctx, options, tr)
+		startExchange(ctx, options, ex)
 	}()
 
-	return tr
+	return ex
 }
 
-func startTransaction(ctx chrome.Context, options <-chan Options, tr *transaction) {
-	var dnsConn *dns.Conn
-
-	defer func() {
-		if dnsConn != nil {
-			dnsConn.Close()
-		}
-	}()
+func startExchange(ctx chrome.Context, options <-chan Options, ex *dnsExchange) {
+	var dnsConn struct {
+		*dns.Conn
+		sync.Mutex
+		sync.WaitGroup
+		Timeout     time.Duration
+		Deadline    time.Time
+		GotResponse bool
+	}
 
 	var tlsConfig *tls.Config
 
 	var tlsConfigCache map[string]*tls.Config
 
-	logger := ctx.Manager.Logger(ctx.JobName)
+	setTimeout := func(d time.Duration) {
+		dnsConn.Lock()
+		dnsConn.Timeout = d
+		dnsConn.Deadline = time.Now().Add(d)
+		if dnsConn.GotResponse {
+			dnsConn.SetDeadline(dnsConn.Deadline)
+		}
+		dnsConn.Unlock()
+	}
+
+	closeConnection := func() {
+		dnsConn.Close()
+		dnsConn.Wait()
+		dnsConn.Conn = nil
+		dnsConn.Timeout = 0
+		dnsConn.Deadline = time.Time{}
+		dnsConn.GotResponse = false
+	}
+
+	defer func() {
+		if dnsConn.Conn != nil {
+			closeConnection()
+		}
+	}()
 
 	dnsConnIdleTimeout := defaultIdleTimeout
 	dnsConnReadTimeout := defaultReadTimeout
@@ -761,6 +789,8 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 	defer idleTimer.Stop()
 
 	idleTimerC := idleTimer.C
+
+	logger := ctx.Manager.Logger(ctx.JobName)
 
 	for {
 		if !idleTimer.Stop() {
@@ -774,7 +804,7 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 			return
 		case <-idleTimerC:
 			return
-		case q := <-tr.Chan:
+		case q := <-ex.Chan:
 			opts, ok := <-options
 			if !ok {
 				return
@@ -804,15 +834,15 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					break
 				}
 
-				if dnsConn == nil {
+				if dnsConn.Conn == nil {
 					opts, ok = <-options
 					if !ok {
 						return
 					}
 
 					servers := opts.Servers
-					if tr.Route != nil {
-						servers = tr.Route.Servers
+					if ex.Route != nil {
+						servers = ex.Route.Servers
 					}
 
 					if len(servers) == 0 {
@@ -840,20 +870,50 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 
 					hostport := net.JoinHostPort(host, strconv.Itoa(port))
 
-					getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
-						opts, ok := <-options
-
-						if tr.Route != nil {
-							opts.Proxy = tr.Route.Proxy
+					getRemote := func(ctx context.Context) (net.Conn, error) {
+						if q.Context.Err() != nil {
+							return nil, chrome.CloseConn
 						}
 
-						return opts.Proxy, opts.Dial, ok
+						opts, ok := <-options
+						if !ok {
+							return nil, chrome.CloseConn
+						}
+
+						if ex.Route != nil {
+							opts.Proxy = ex.Route.Proxy
+						}
+
+						ctx, cancel := context.WithCancel(ctx)
+						defer cancel()
+
+						stop := context.AfterFunc(q.Context, cancel)
+						defer stop()
+
+						return proxy.Dial(ctx, opts.Proxy.Dialer(), "tcp", hostport)
 					}
 
-					conn, err := ctx.Manager.Dial(q.Context, "tcp", hostport, getopts, logger)
-					if err != nil {
-						break
-					}
+					dnsConn.Lock()
+					dnsConn.Add(1)
+
+					conn := ctx.Manager.NewConn(hostport, getRemote, opts.Conn, opts.Relay, logger, func(c <-chan chrome.ConnEvent) {
+						defer dnsConn.Done()
+						for ev := range c {
+							switch ev.(type) {
+							case chrome.ConnEventResponse:
+								dnsConn.Lock()
+								dnsConn.GotResponse = true
+								if dnsConn.Timeout != 0 {
+									dnsConn.Deadline = time.Now().Add(dnsConn.Timeout)
+									dnsConn.SetDeadline(dnsConn.Deadline)
+								}
+								dnsConn.Unlock()
+							case chrome.ConnEventMaxAttempts:
+								aLongTimeAgo := time.Unix(1, 0)
+								dnsConn.SetDeadline(aLongTimeAgo)
+							}
+						}
+					})
 
 					if server.Over == "TLS" {
 						if tlsConfig == nil || tlsConfig.ServerName != server.Name {
@@ -875,7 +935,7 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 						conn = tls.Client(conn, tlsConfig)
 					}
 
-					dnsConn = &dns.Conn{Conn: conn}
+					dnsConn.Conn = &dns.Conn{Conn: conn}
 
 					dnsConnIdleTimeout = defaultIdleTimeout
 					dnsConnReadTimeout = defaultReadTimeout
@@ -892,10 +952,11 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					if opts.Write.Timeout > 0 {
 						dnsConnWriteTimeout = opts.Write.Timeout
 					}
+
+					dnsConn.Unlock()
 				}
 
-				deadline := time.Now().Add(dnsConnWriteTimeout)
-				_ = dnsConn.SetDeadline(deadline)
+				setTimeout(dnsConnWriteTimeout)
 
 				qm := q.Message
 
@@ -908,8 +969,7 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 				if err == nil {
 					var msg *dns.Msg
 
-					deadline = time.Now().Add(dnsConnReadTimeout)
-					_ = dnsConn.SetDeadline(deadline)
+					setTimeout(dnsConnReadTimeout)
 
 					msg, err = dnsConn.ReadMsg()
 					if err == nil {
@@ -1002,20 +1062,7 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					logger.Tracef("(remote) write msg: %v", err)
 				}
 
-				dnsConn.Close()
-				dnsConn = nil
-
-				if d := time.Until(deadline); d > 0 {
-					if max := 2 * time.Second; d > max {
-						d = max
-					}
-
-					select {
-					case <-time.After(d):
-					case <-ctx.Done():
-					case <-q.Context.Done():
-					}
-				}
+				closeConnection()
 			}
 
 			if result != nil {
@@ -1024,7 +1071,6 @@ func startTransaction(ctx chrome.Context, options <-chan Options, tr *transactio
 					return
 				case <-q.Context.Done():
 				case q.Result <- result:
-				default:
 				}
 			}
 

@@ -87,8 +87,13 @@ func (blockOrReset) Dial(network, addr string) (net.Conn, error) {
 	panic("not implemented")
 }
 
-func (blockOrReset) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	panic("not implemented")
+func (block blockOrReset) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	if block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	return nil, CloseConn
 }
 
 // MakeProxyUsing creates a load balancing Proxy from multiple proxies with

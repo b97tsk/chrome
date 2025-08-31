@@ -27,7 +27,7 @@ log:
   file: chrome.log # Write log messages to this file.
   level: INFO # Log level, alternatives are ERROR, WARN, DEBUG, TRACE and NONE.
 
-dial:
+conn:
   timeout: 10s # Default connect timeout.
 
 alias#1: # Field names start with word `alias` are ignored.

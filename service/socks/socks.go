@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"math"
 	"math/rand"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/ioutil"
+	"github.com/b97tsk/proxy"
 	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
@@ -26,7 +28,7 @@ type Options struct {
 
 	Proxy chrome.Proxy `yaml:"over"`
 
-	Dial  chrome.DialOptions
+	Conn  chrome.ConnOptions
 	Relay chrome.RelayOptions
 
 	DNS struct {
@@ -119,30 +121,35 @@ func (Service) Run(ctx chrome.Context) {
 			go startWorker(ctx, optsOut, dnsQueryIn)
 		}
 
-		go ctx.Manager.Serve(ln, func(c net.Conn) {
+		go ctx.Manager.Serve(ln, func(local net.Conn) {
 			var reply bytes.Buffer
 
 			rw := &struct {
 				io.Reader
 				io.Writer
-			}{c, ioutil.LimitWriter(c, 2, &reply)}
+			}{local, ioutil.LimitWriter(local, 2, &reply)}
 
 			addr, err := socks.Handshake(rw)
 			if err != nil {
 				return
 			}
 
-			remoteAddr := addr.String()
-
-			getopts := func() (chrome.RelayOptions, bool) {
-				opts, ok := <-optsOut
-				return opts.Relay, ok
+			opts, ok := <-optsOut
+			if !ok {
+				return
 			}
 
-			getRemote := func(localCtx context.Context) net.Conn {
+			if _, err := reply.WriteTo(local); err != nil {
+				logger.Tracef("write response to local: %v", err)
+				return
+			}
+
+			remoteAddr := addr.String()
+
+			getRemote := func(localCtx context.Context) (net.Conn, error) {
 				opts, ok := <-optsOut
 				if !ok {
-					return nil
+					return nil, chrome.CloseConn
 				}
 
 				getaddr1 := func() string { return remoteAddr }
@@ -165,22 +172,22 @@ func (Service) Run(ctx chrome.Context) {
 
 							select {
 							case <-ctx.Done():
-								return nil
+								return nil, ctx.Err()
 							case <-localCtx.Done():
-								return nil
+								return nil, localCtx.Err()
 							case dnsQueryIn <- dnsQuery{host, r, localCtx}:
 							}
 
 							select {
 							case <-ctx.Done():
-								return nil
+								return nil, ctx.Err()
 							case <-localCtx.Done():
-								return nil
+								return nil, localCtx.Err()
 							case result = <-r:
 							}
 
 							if result == nil {
-								return nil
+								return nil, errNoResult
 							}
 						}
 
@@ -204,11 +211,6 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
-				getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
-					opts, ok := <-optsOut
-					return opts.Proxy, opts.Dial, ok
-				}
-
 				if getaddr1 != nil && getaddr2 != nil {
 					const N = 2
 
@@ -230,13 +232,20 @@ func (Service) Run(ctx chrome.Context) {
 					}
 
 					c := make(chan Winner)
+					errCh := make(chan error, 1)
 
 					var n atomic.Uint32
 
 					for i, getaddr := range []func() string{getaddr1, getaddr2} {
 						lctx := contexts[i].Context
 						go func() {
-							conn, _ := ctx.Manager.Dialv2(lctx, "tcp", getaddr, getopts, logger)
+							conn, err := proxy.Dial(lctx, opts.Proxy.Dialer(), "tcp", getaddr())
+							if err != nil {
+								select {
+								case errCh <- err:
+								default:
+								}
+							}
 							if conn != nil {
 								select {
 								case c <- Winner{i, conn}:
@@ -261,31 +270,27 @@ func (Service) Run(ctx chrome.Context) {
 						}
 					}
 
-					return winner.Conn
-				}
+					if winner.Conn != nil {
+						return winner.Conn, nil
+					}
 
-				var conn net.Conn
+					return nil, <-errCh
+				}
 
 				switch {
 				case getaddr1 != nil:
-					conn, _ = ctx.Manager.Dialv2(localCtx, "tcp", getaddr1, getopts, logger)
+					return proxy.Dial(localCtx, opts.Proxy.Dialer(), "tcp", getaddr1())
 				case getaddr2 != nil:
-					conn, _ = ctx.Manager.Dialv2(localCtx, "tcp", getaddr2, getopts, logger)
+					return proxy.Dial(localCtx, opts.Proxy.Dialer(), "tcp", getaddr2())
 				}
 
-				return conn
+				return nil, errNoAddress
 			}
 
-			sendResponse := func(w io.Writer) bool {
-				if _, err := reply.WriteTo(w); err != nil {
-					logger.Tracef("write response to local: %v", err)
-					return false
-				}
+			remote := ctx.Manager.NewConn(remoteAddr, getRemote, opts.Conn, opts.Relay, logger, nil)
+			defer remote.Close()
 
-				return true
-			}
-
-			ctx.Manager.Relay(c, getopts, getRemote, sendResponse, logger)
+			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
 
 		return nil
@@ -379,26 +384,50 @@ func (r *dnsQueryResult) TTL() time.Duration {
 }
 
 func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dnsQuery) {
-	var dnsConn *dns.Conn
-
-	var dnsConnIdle struct {
-		Timer  *time.Timer
-		TimerC <-chan time.Time
+	var dnsConn struct {
+		*dns.Conn
+		sync.Mutex
+		sync.WaitGroup
+		Timeout     time.Duration
+		Deadline    time.Time
+		GotResponse bool
+		IdleTimer   *time.Timer
+		IdleTimerC  <-chan time.Time
 	}
-
-	defer func() {
-		if dnsConnIdle.Timer != nil {
-			dnsConnIdle.Timer.Stop()
-		}
-
-		if dnsConn != nil {
-			dnsConn.Close()
-		}
-	}()
 
 	var tlsConfig *tls.Config
 
 	var tlsConfigCache map[string]*tls.Config
+
+	setTimeout := func(d time.Duration) {
+		dnsConn.Lock()
+		dnsConn.Timeout = d
+		dnsConn.Deadline = time.Now().Add(d)
+		if dnsConn.GotResponse {
+			dnsConn.SetDeadline(dnsConn.Deadline)
+		}
+		dnsConn.Unlock()
+	}
+
+	closeConnection := func() {
+		dnsConn.Close()
+		dnsConn.Wait()
+		dnsConn.Conn = nil
+		dnsConn.Timeout = 0
+		dnsConn.Deadline = time.Time{}
+		dnsConn.GotResponse = false
+		if dnsConn.IdleTimer != nil {
+			dnsConn.IdleTimer.Stop()
+			dnsConn.IdleTimer = nil
+			dnsConn.IdleTimerC = nil
+		}
+	}
+
+	defer func() {
+		if dnsConn.Conn != nil {
+			closeConnection()
+		}
+	}()
 
 	dnsConnIdleTimeout := defaultIdleTimeout
 	dnsConnReadTimeout := defaultReadTimeout
@@ -407,26 +436,22 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 	logger := ctx.Manager.Logger(ctx.JobName)
 
 	for {
-		if dnsConn != nil {
-			if dnsConnIdle.Timer == nil {
-				dnsConnIdle.Timer = time.NewTimer(dnsConnIdleTimeout)
-				dnsConnIdle.TimerC = dnsConnIdle.Timer.C
+		if dnsConn.Conn != nil {
+			if dnsConn.IdleTimer == nil {
+				dnsConn.IdleTimer = time.NewTimer(dnsConnIdleTimeout)
+				dnsConn.IdleTimerC = dnsConn.IdleTimer.C
 			} else {
-				if !dnsConnIdle.Timer.Stop() {
-					<-dnsConnIdle.TimerC
+				if !dnsConn.IdleTimer.Stop() {
+					<-dnsConn.IdleTimerC
 				}
-				dnsConnIdle.Timer.Reset(dnsConnIdleTimeout)
+				dnsConn.IdleTimer.Reset(dnsConnIdleTimeout)
 			}
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-dnsConnIdle.TimerC:
-			dnsConnIdle.Timer = nil
-			dnsConnIdle.TimerC = nil
-
-			dnsConn.Close()
-			dnsConn = nil
+		case <-dnsConn.IdleTimerC:
+			closeConnection()
 		case q := <-incoming:
 			opts, ok := <-options
 			if !ok {
@@ -458,7 +483,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 						break
 					}
 
-					if dnsConn == nil {
+					if dnsConn.Conn == nil {
 						opts, ok = <-options
 						if !ok {
 							return
@@ -484,20 +509,50 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
 
-						getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
+						getRemote := func(ctx context.Context) (net.Conn, error) {
+							if q.Context.Err() != nil {
+								return nil, chrome.CloseConn
+							}
+
 							opts, ok := <-options
+							if !ok {
+								return nil, chrome.CloseConn
+							}
 
 							if opts.DNS.Proxy != nil {
 								opts.Proxy = *opts.DNS.Proxy
 							}
 
-							return opts.Proxy, opts.Dial, ok
+							ctx, cancel := context.WithCancel(ctx)
+							defer cancel()
+
+							stop := context.AfterFunc(q.Context, cancel)
+							defer stop()
+
+							return proxy.Dial(ctx, opts.Proxy.Dialer(), "tcp", hostport)
 						}
 
-						conn, err := ctx.Manager.Dial(q.Context, "tcp", hostport, getopts, logger)
-						if err != nil {
-							break
-						}
+						dnsConn.Lock()
+						dnsConn.Add(1)
+
+						conn := ctx.Manager.NewConn(hostport, getRemote, opts.Conn, opts.Relay, logger, func(c <-chan chrome.ConnEvent) {
+							defer dnsConn.Done()
+							for ev := range c {
+								switch ev.(type) {
+								case chrome.ConnEventResponse:
+									dnsConn.Lock()
+									dnsConn.GotResponse = true
+									if dnsConn.Timeout != 0 {
+										dnsConn.Deadline = time.Now().Add(dnsConn.Timeout)
+										dnsConn.SetDeadline(dnsConn.Deadline)
+									}
+									dnsConn.Unlock()
+								case chrome.ConnEventMaxAttempts:
+									aLongTimeAgo := time.Unix(1, 0)
+									dnsConn.SetDeadline(aLongTimeAgo)
+								}
+							}
+						})
 
 						if server.Over == "TLS" {
 							if tlsConfig == nil || tlsConfig.ServerName != server.Name {
@@ -519,7 +574,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 							conn = tls.Client(conn, tlsConfig)
 						}
 
-						dnsConn = &dns.Conn{Conn: conn}
+						dnsConn.Conn = &dns.Conn{Conn: conn}
 
 						dnsConnIdleTimeout = defaultIdleTimeout
 						dnsConnReadTimeout = defaultReadTimeout
@@ -536,6 +591,8 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 						if opts.DNS.Write.Timeout > 0 {
 							dnsConnWriteTimeout = opts.DNS.Write.Timeout
 						}
+
+						dnsConn.Unlock()
 					}
 
 					var m dns.Msg
@@ -547,15 +604,13 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 						m.SetQuestion(fqDomain, dns.TypeAAAA)
 					}
 
-					deadline := time.Now().Add(dnsConnWriteTimeout)
-					_ = dnsConn.SetDeadline(deadline)
+					setTimeout(dnsConnWriteTimeout)
 
 					err := dnsConn.WriteMsg(&m)
 					if err == nil {
 						var msg *dns.Msg
 
-						deadline = time.Now().Add(dnsConnReadTimeout)
-						_ = dnsConn.SetDeadline(deadline)
+						setTimeout(dnsConnReadTimeout)
 
 						msg, err = dnsConn.ReadMsg()
 						if err == nil {
@@ -608,26 +663,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 					}
 
 					if err != nil {
-						if dnsConnIdle.Timer != nil {
-							dnsConnIdle.Timer.Stop()
-							dnsConnIdle.Timer = nil
-							dnsConnIdle.TimerC = nil
-						}
-
-						dnsConn.Close()
-						dnsConn = nil
-
-						if d := time.Until(deadline); d > 0 {
-							if max := 2 * time.Second; d > max {
-								d = max
-							}
-
-							select {
-							case <-time.After(d):
-							case <-ctx.Done():
-							case <-q.Context.Done():
-							}
-						}
+						closeConnection()
 					}
 				}
 
@@ -648,7 +684,6 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 					return
 				case <-q.Context.Done():
 				case q.Result <- result:
-				default:
 				}
 			}
 
@@ -692,4 +727,9 @@ const (
 	defaultIdleTimeout  = 10 * time.Second
 	defaultReadTimeout  = 2 * time.Second
 	defaultWriteTimeout = 3 * time.Second
+)
+
+var (
+	errNoAddress = errors.New("no address")
+	errNoResult  = errors.New("no result")
 )

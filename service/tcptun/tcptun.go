@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/b97tsk/chrome"
+	"github.com/b97tsk/proxy"
 )
 
 type Options struct {
@@ -13,7 +14,7 @@ type Options struct {
 
 	Proxy chrome.Proxy `yaml:"over"`
 
-	Dial  chrome.DialOptions
+	Conn  chrome.ConnOptions
 	Relay chrome.RelayOptions
 }
 
@@ -66,29 +67,25 @@ func (Service) Run(ctx chrome.Context) {
 
 		server = ln
 
-		go ctx.Manager.Serve(ln, func(c net.Conn) {
-			getopts := func() (chrome.RelayOptions, bool) {
-				opts, ok := <-optsOut
-				return opts.Relay, ok
+		go ctx.Manager.Serve(ln, func(local net.Conn) {
+			opts, ok := <-optsOut
+			if !ok {
+				return
 			}
 
-			getRemote := func(localCtx context.Context) net.Conn {
+			getRemote := func(ctx context.Context) (net.Conn, error) {
 				opts := <-optsOut
 				if opts.ForwardAddr == "" {
-					return nil
+					return nil, chrome.CloseConn
 				}
 
-				getopts := func() (chrome.Proxy, chrome.DialOptions, bool) {
-					opts, ok := <-optsOut
-					return opts.Proxy, opts.Dial, ok
-				}
-
-				remote, _ := ctx.Manager.Dial(localCtx, "tcp", opts.ForwardAddr, getopts, logger)
-
-				return remote
+				return proxy.Dial(ctx, opts.Proxy.Dialer(), "tcp", opts.ForwardAddr)
 			}
 
-			ctx.Manager.Relay(c, getopts, getRemote, nil, logger)
+			remote := ctx.Manager.NewConn(opts.ForwardAddr, getRemote, opts.Conn, opts.Relay, logger, nil)
+			defer remote.Close()
+
+			ctx.Manager.Relay(local, remote, opts.Relay)
 		})
 
 		return nil
