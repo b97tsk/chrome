@@ -6,8 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/b97tsk/chrome/internal/netutil"
 )
 
 // RelayOptions provides options for Relay.
@@ -95,8 +93,8 @@ func (m *relayService) Relay(l, r net.Conn, opts RelayOptions) {
 		}
 	}
 
-	go copy(l, netutil.DoR(r, do), opts.UplinkIdle)
-	go copy(r, netutil.DoR(l, do), opts.DownlinkIdle)
+	go copy(l, doOnRead(r, do), opts.UplinkIdle)
+	go copy(r, doOnRead(l, do), opts.DownlinkIdle)
 
 	expired := false
 	td := opts.ConnIdle
@@ -126,6 +124,23 @@ func (m *relayService) Relay(l, r net.Conn, opts RelayOptions) {
 			}
 		}
 	}
+}
+
+func doOnRead(c net.Conn, do func(int)) net.Conn {
+	return &doOnReadConn{c, do}
+}
+
+type doOnReadConn struct {
+	net.Conn
+	do func(int)
+}
+
+func (c *doOnReadConn) Read(p []byte) (n int, err error) {
+	n, err = c.Conn.Read(p)
+	if n > 0 {
+		c.do(n)
+	}
+	return
 }
 
 type relayBuffer [32 * 1024]byte

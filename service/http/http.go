@@ -26,7 +26,6 @@ import (
 	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/netiputil"
-	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/b97tsk/log"
 	"github.com/b97tsk/proxy"
 	"golang.org/x/net/http/httpguts"
@@ -713,7 +712,7 @@ func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	remote := h.ctx.Manager.NewConn(remoteAddr, getRemote, opts.Conn, opts.Relay, h.logger, nil)
 	defer remote.Close()
 
-	h.ctx.Manager.Relay(netutil.Unread(local, b.Bytes()), remote, opts.Relay)
+	h.ctx.Manager.Relay(prefix(local, &b), remote, opts.Relay)
 }
 
 func (h *handler) handleRedirect(rw http.ResponseWriter, req *http.Request) bool {
@@ -802,6 +801,10 @@ func mixin(c net.Conn, r io.Reader) net.Conn {
 		io.Reader
 	}
 	return &B{A{c, nil}, r}
+}
+
+func prefix(c net.Conn, r io.Reader) net.Conn {
+	return mixin(c, io.MultiReader(r, c))
 }
 
 var rePortSuffix = regexp.MustCompile(`:\d+$`)
