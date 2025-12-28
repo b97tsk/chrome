@@ -120,7 +120,13 @@ func (m *Manager) NewConn(
 		}
 	}
 
+	var reqBuf *connBuf
+
 	var lifeCycleCh chan ConnEvent
+
+	if lifeCycle != nil {
+		lifeCycleCh = make(chan ConnEvent)
+	}
 
 	pipeLeft, pipeRight := net.Pipe()
 
@@ -433,16 +439,19 @@ func (m *Manager) NewConn(
 	}
 
 	readRequest := func() {
-		var buf [4 << 10]byte
 		var result struct {
 			async.Signal
 			n   int
 			err error
 		}
+		buf := connBufPool.Get().(*connBuf)
 		myExecutor.Spawn(async.Block(
 			async.Defer(async.Block(
 				stopConnLoop,
-				async.Do(func() { myState.rr.done.Set(true) }),
+				async.Do(func() {
+					myState.rr.done.Set(true)
+					connBufPool.Put(buf)
+				}),
 			)),
 			async.Loop(async.Block(
 				func(co *async.Coroutine) async.Result {
@@ -460,15 +469,23 @@ func (m *Manager) NewConn(
 				func(co *async.Coroutine) async.Result {
 					n, err := result.n, result.err
 					if n > 0 {
+						if myState.rr.req.data == nil {
+							reqBuf = connBufPool.Get().(*connBuf)
+							myState.rr.req.data = reqBuf[:0]
+						}
 						myState.rr.req.data = append(myState.rr.req.data, buf[:n]...)
 						myState.rr.req.Notify()
 					}
 					if err != nil {
+						return co.Return()
+					}
+					if len(myState.rr.req.data) >= maxRequestSize {
 						return co.Break()
 					}
 					return co.End()
 				},
 			)),
+			myState.rr.stop.Await(untilTrue),
 		))
 	}
 
@@ -476,8 +493,7 @@ func (m *Manager) NewConn(
 		logger.Tracef("connect(%p): %v", &wg, remoteAddr)
 	}
 
-	if lifeCycle != nil {
-		lifeCycleCh = make(chan ConnEvent)
+	if lifeCycleCh != nil {
 		go lifeCycle(lifeCycleCh)
 	}
 
@@ -489,6 +505,9 @@ func (m *Manager) NewConn(
 		pipeLeft.Close()
 		if lifeCycleCh != nil {
 			close(lifeCycleCh)
+		}
+		if reqBuf != nil {
+			connBufPool.Put(reqBuf)
 		}
 		if logger != nil {
 			logger.Tracef("connect(%p): %v (CLOSED)", &wg, remoteAddr)
@@ -518,9 +537,16 @@ func (closeConnError) Is(err error) bool { return err == context.Canceled }
 
 var CloseConn error = closeConnError{}
 
+type connBuf = [4 << 10]byte
+
+var connBufPool = sync.Pool{
+	New: func() any { return new(connBuf) },
+}
+
 const (
 	defaultConnTimeout     = 10 * time.Second
 	defaultConnInterval    = 2 * time.Second
 	defaultConnParallel    = 1
 	defaultConnMaxAttempts = 30
+	maxRequestSize         = 32 << 10
 )
