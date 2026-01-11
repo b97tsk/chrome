@@ -42,8 +42,8 @@ github.com/aryann/difflib v0.0.0-20170710044230-e206f873d14a/go.mod h1:DAHtR1m6l
 github.com/aws/aws-lambda-go v1.13.3/go.mod h1:4UKl9IzQMoD+QF79YdCuzCwp8VbmG4VAQwij/eHl5CU=
 github.com/aws/aws-sdk-go v1.27.0/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=
 github.com/aws/aws-sdk-go-v2 v0.18.0/go.mod h1:JWVYvqSMppoMJC0x5wdwiImzgXTI9FuZwxzkQq9wy+g=
-github.com/b97tsk/async v0.12.0 h1:tv/BSWv8dvH17h9qXqQAjbeP74Aq1l6xzKBGsiVgvLo=
-github.com/b97tsk/async v0.12.0/go.mod h1:6zrPhQEwjLRmDIigXXH5rNVVXEj6JzF0XI6I3B7AQQc=
+github.com/b97tsk/async v0.17.0 h1:SuHhfz5ocaAWLImnLH+aq0C6DcSFFPv+6lokfEx5AnM=
+github.com/b97tsk/async v0.17.0/go.mod h1:cO78NJamBk0WdejvzxR50LS0EXibgSOM84uWWsGR0o0=
 github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1 h1:rLk3BFYzpX2uIw9ek0f42yqO2k1LTYDJ6VCiHt/hgVA=
 github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1/go.mod h1:WYjdsAU8i5C+dJ/OGm5gjb0y6Gk8k3jrQoKCEpaM6eg=
 github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d h1:vLz8JeNJvZL1iN6OT1U59uaV848yqVIGnUWt6wMk/YU=
