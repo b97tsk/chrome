@@ -87,17 +87,12 @@ func (m *Manager) NewConn(
 		}
 	}
 
-	var wg sync.WaitGroup
+	var myRuntime struct {
+		sync.WaitGroup
+		async.Executor
+	}
 
-	var myExecutor async.Executor
-
-	myExecutor.Autorun(func() {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			myExecutor.Run()
-		}()
-	})
+	myRuntime.Autorun(func() { myRuntime.Go(myRuntime.Run) })
 
 	var myState struct {
 		rr struct { // read request
@@ -120,7 +115,13 @@ func (m *Manager) NewConn(
 		}
 	}
 
+	var reqBuf *connBuf
+
 	var lifeCycleCh chan ConnEvent
+
+	if lifeCycle != nil {
+		lifeCycleCh = make(chan ConnEvent)
+	}
 
 	pipeLeft, pipeRight := net.Pipe()
 
@@ -149,17 +150,17 @@ func (m *Manager) NewConn(
 		myState.cl.attempts++
 		thisIsTheWinner := false
 		ctx, cancel := context.WithCancel(context.Background())
-		myExecutor.Spawn(async.Select(
+		myRuntime.Spawn(async.Select(
 			func(co *async.Coroutine) async.Result {
 				var sig async.Signal
-				wg.Add(1)
+				myRuntime.Add(1)
 				stop := context.AfterFunc(ctx, func() {
-					defer wg.Done()
-					myExecutor.Spawn(async.Do(sig.Notify))
+					defer myRuntime.Done()
+					myRuntime.Spawn(async.Do(sig.Notify))
 				})
 				co.CleanupFunc(func() {
 					if stop() {
-						wg.Done()
+						myRuntime.Done()
 					}
 				})
 				return co.Await(&sig).End()
@@ -173,14 +174,12 @@ func (m *Manager) NewConn(
 				}),
 			),
 		))
-		myExecutor.Spawn(func(co *async.Coroutine) async.Result {
+		myRuntime.Spawn(func(co *async.Coroutine) async.Result {
 			timer := time.AfterFunc(connOpts.Timeout, cancel)
 			var remote async.State[net.Conn]
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			myRuntime.Go(func() {
 				conn, err := getRemote(ctx)
-				myExecutor.Spawn(func(co *async.Coroutine) async.Result {
+				myRuntime.Spawn(func(co *async.Coroutine) async.Result {
 					remote.Set(conn)
 					if errors.Is(err, CloseConn) {
 						return co.Transition(stopReadingRequest)
@@ -188,9 +187,9 @@ func (m *Manager) NewConn(
 					return co.End()
 				})
 				if err != nil && !errors.Is(err, context.Canceled) && logger != nil {
-					logger.Tracef("connect(%p): %v", &wg, err)
+					logger.Tracef("connect(%p): %v", &myRuntime, err)
 				}
-			}()
+			})
 			co.Defer(
 				async.Do(func() {
 					if conn := remote.Get(); conn != nil {
@@ -218,7 +217,7 @@ func (m *Manager) NewConn(
 							n   int
 							err error
 						}
-						myExecutor.Spawn(async.Block(
+						myRuntime.Spawn(async.Block(
 							async.Defer(async.Do(func() { sr.done.Set(true) })),
 							async.Loop(async.Block(
 								func(co *async.Coroutine) async.Result {
@@ -232,15 +231,14 @@ func (m *Manager) NewConn(
 									return co.End()
 								},
 								func(co *async.Coroutine) async.Result {
-									wg.Add(1)
-									go func(bytesToSend []byte) {
-										defer wg.Done()
+									bytesToSend := myState.rr.req.data[sr.sent:]
+									myRuntime.Go(func() {
 										n, err := remote.Get().Write(bytesToSend)
-										myExecutor.Spawn(async.Do(func() {
+										myRuntime.Spawn(async.Do(func() {
 											result.n, result.err = n, err
 											result.Notify()
 										}))
-									}(myState.rr.req.data[sr.sent:])
+									})
 									return co.Await(&result).End()
 								},
 								func(co *async.Coroutine) async.Result {
@@ -265,19 +263,19 @@ func (m *Manager) NewConn(
 					awaitSendingRequest := sr.done.Await(untilTrue)
 					sendRequest()
 					var wgAfterFunc async.WaitGroup
-					wg.Add(1)
+					myRuntime.Add(1)
 					wgAfterFunc.Add(1)
 					stop := context.AfterFunc(ctx, func() {
 						aLongTimeAgo := time.Unix(1, 0)
 						remote.Get().SetReadDeadline(aLongTimeAgo)
-						myExecutor.Spawn(async.Do(func() {
-							wg.Done()
+						myRuntime.Spawn(async.Do(func() {
+							myRuntime.Done()
 							wgAfterFunc.Done()
 						}))
 					})
 					stopAfterFunc := func(co *async.Coroutine) async.Result {
 						if stop() {
-							wg.Done()
+							myRuntime.Done()
 							wgAfterFunc.Done()
 						}
 						return co.End()
@@ -288,20 +286,18 @@ func (m *Manager) NewConn(
 						buf [1]byte
 						err error
 					}
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
+					myRuntime.Go(func() {
 						for {
 							n, err := remote.Get().Read(resp.buf[:])
 							if n > 0 || err != nil {
-								myExecutor.Spawn(async.Do(func() {
+								myRuntime.Spawn(async.Do(func() {
 									resp.err = err
 									resp.Notify()
 								}))
 								return
 							}
 						}
-					}()
+					})
 					co.Defer(async.Block(
 						stopSendingRequest,
 						stopAfterFunc,
@@ -343,12 +339,10 @@ func (m *Manager) NewConn(
 									}
 									r = prefix(r, bytes.NewReader(resp.buf[:]))
 									var sig async.Signal
-									wg.Add(1)
-									go func() {
-										defer wg.Done()
+									myRuntime.Go(func() {
 										m.Relay(l, r, relayOpts)
-										myExecutor.Spawn(async.Do(sig.Notify))
-									}()
+										myRuntime.Spawn(async.Do(sig.Notify))
+									})
 									return co.Await(&sig).End()
 								},
 							))
@@ -366,13 +360,13 @@ func (m *Manager) NewConn(
 		startTimer := func(co *async.Coroutine) async.Result {
 			myState.cl.newconn.Set(false)
 			timerRunning.Set(true)
-			wg.Add(1)
+			myRuntime.Add(1)
 			if timer == nil {
 				timer = time.AfterFunc(connOpts.Interval, func() {
-					myExecutor.Spawn(async.Do(func() {
+					myRuntime.Spawn(async.Do(func() {
 						myState.cl.newconn.Set(true)
 						timerRunning.Set(false)
-						wg.Done()
+						myRuntime.Done()
 					}))
 				})
 			} else {
@@ -384,7 +378,7 @@ func (m *Manager) NewConn(
 			if timer != nil && timer.Stop() {
 				myState.cl.newconn.Set(true)
 				timerRunning.Set(false)
-				wg.Done()
+				myRuntime.Done()
 			}
 			return co.End()
 		}
@@ -395,7 +389,7 @@ func (m *Manager) NewConn(
 			return co.End()
 		}
 		myState.cl.newconn.Set(true)
-		myExecutor.Spawn(async.Block(
+		myRuntime.Spawn(async.Block(
 			async.Defer(async.Block(
 				stopTimer,
 				awaitTimer,
@@ -433,37 +427,42 @@ func (m *Manager) NewConn(
 	}
 
 	readRequest := func() {
-		var buf [4 << 10]byte
 		var result struct {
 			async.Signal
 			n   int
 			err error
 		}
-		myExecutor.Spawn(async.Block(
+		buf := connBufPool.Get().(*connBuf)
+		myRuntime.Spawn(async.Block(
 			async.Defer(async.Block(
 				stopConnLoop,
-				async.Do(func() { myState.rr.done.Set(true) }),
+				async.Do(func() {
+					myState.rr.done.Set(true)
+					connBufPool.Put(buf)
+				}),
 			)),
 			async.Loop(async.Block(
 				func(co *async.Coroutine) async.Result {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
+					myRuntime.Go(func() {
 						n, err := pipeLeft.Read(buf[:])
-						myExecutor.Spawn(async.Do(func() {
+						myRuntime.Spawn(async.Do(func() {
 							result.n, result.err = n, err
 							result.Notify()
 						}))
-					}()
+					})
 					return co.Await(&result).End()
 				},
 				func(co *async.Coroutine) async.Result {
 					n, err := result.n, result.err
 					if n > 0 {
+						if myState.rr.req.data == nil {
+							reqBuf = connBufPool.Get().(*connBuf)
+							myState.rr.req.data = reqBuf[:0]
+						}
 						myState.rr.req.data = append(myState.rr.req.data, buf[:n]...)
 						myState.rr.req.Notify()
 					}
-					if err != nil {
+					if err != nil || len(myState.rr.req.data) >= maxRequestSize {
 						return co.Break()
 					}
 					return co.End()
@@ -473,11 +472,10 @@ func (m *Manager) NewConn(
 	}
 
 	if logger != nil {
-		logger.Tracef("connect(%p): %v", &wg, remoteAddr)
+		logger.Tracef("connect(%p): %v", &myRuntime, remoteAddr)
 	}
 
-	if lifeCycle != nil {
-		lifeCycleCh = make(chan ConnEvent)
+	if lifeCycleCh != nil {
 		go lifeCycle(lifeCycleCh)
 	}
 
@@ -485,13 +483,16 @@ func (m *Manager) NewConn(
 	startConnLoop()
 
 	go func() {
-		wg.Wait()
+		myRuntime.Wait()
 		pipeLeft.Close()
 		if lifeCycleCh != nil {
 			close(lifeCycleCh)
 		}
+		if reqBuf != nil {
+			connBufPool.Put(reqBuf)
+		}
 		if logger != nil {
-			logger.Tracef("connect(%p): %v (CLOSED)", &wg, remoteAddr)
+			logger.Tracef("connect(%p): %v (CLOSED)", &myRuntime, remoteAddr)
 		}
 	}()
 
@@ -518,9 +519,16 @@ func (closeConnError) Is(err error) bool { return err == context.Canceled }
 
 var CloseConn error = closeConnError{}
 
+type connBuf = [4 << 10]byte
+
+var connBufPool = sync.Pool{
+	New: func() any { return new(connBuf) },
+}
+
 const (
 	defaultConnTimeout     = 10 * time.Second
 	defaultConnInterval    = 2 * time.Second
 	defaultConnParallel    = 1
 	defaultConnMaxAttempts = 30
+	maxRequestSize         = 32 << 10
 )
