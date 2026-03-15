@@ -1,11 +1,9 @@
 package socks
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
-	"io"
 	"math"
 	"math/rand"
 	"net"
@@ -17,7 +15,6 @@ import (
 	"time"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/chrome/internal/ioutil"
 	"github.com/b97tsk/proxy"
 	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
@@ -122,25 +119,13 @@ func (Service) Run(ctx chrome.Context) {
 		}
 
 		go ctx.Manager.Serve(ln, func(local net.Conn) {
-			var reply bytes.Buffer
-
-			rw := &struct {
-				io.Reader
-				io.Writer
-			}{local, ioutil.LimitWriter(local, 2, &reply)}
-
-			addr, err := socks.Handshake(rw)
+			addr, err := socks.Handshake(local)
 			if err != nil {
 				return
 			}
 
 			opts, ok := <-optsOut
 			if !ok {
-				return
-			}
-
-			if _, err := reply.WriteTo(local); err != nil {
-				logger.Tracef("write response to local: %v", err)
 				return
 			}
 
