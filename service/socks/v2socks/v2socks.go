@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
+	"net/netip"
 	"net/url"
 	"reflect"
 	"strconv"
@@ -437,7 +437,7 @@ func parseURL(opts *Options) error {
 	case strings.HasPrefix(opts.URL, "vless://"):
 		return parseVLessURL(opts, "vless://")
 	case strings.HasPrefix(opts.URL, "vmess://"):
-		return parseVMessURL(opts)
+		return parseVLessURL(opts, "vmess://")
 	}
 
 	return fmt.Errorf("unknown scheme in url %v", opts.URL)
@@ -519,8 +519,6 @@ func parseVLessURL(opts *Options, prefix string) error {
 	var transport string
 
 	switch typ := strings.ToUpper(q.Get("type")); typ {
-	case "":
-		transport = "TCP+TLS"
 	case "GRPC":
 		transport = "GRPC+TLS"
 		opts.GRPC.ServiceName = q.Get("serviceName")
@@ -539,24 +537,20 @@ func parseVLessURL(opts *Options, prefix string) error {
 		if host := q.Get("host"); host != "" && host != sni && host != u.Hostname() {
 			opts.HTTPUPGRADE.Host = host
 		}
-	case "TCP":
+	case "TCP", "":
 		transport = "TCP"
 		if strings.EqualFold(q.Get("security"), "TLS") {
 			transport = "TCP+TLS"
 		}
 	case "WS":
 		transport = "WS"
-
-		var sni string
-
 		if strings.EqualFold(q.Get("security"), "TLS") {
 			transport = "WS+TLS"
-			sni = q.Get("sni")
 		}
 
 		opts.WS.Path = q.Get("path")
 
-		if host := q.Get("host"); host != "" && host != sni && host != u.Hostname() {
+		if host := q.Get("host"); host != "" {
 			opts.WS.Header = append(opts.WS.Header, HeaderItem{"Host", host})
 		}
 	default:
@@ -567,7 +561,7 @@ func parseVLessURL(opts *Options, prefix string) error {
 	case "GRPC+TLS", "HTTPUPGRADE+TLS", "TCP+TLS", "WS+TLS":
 		if sni := q.Get("sni"); sni != "" && sni != u.Hostname() {
 			opts.TLS.ServerName = sni
-		} else if host := q.Get("host"); host != "" && host != u.Hostname() {
+		} else if host := q.Get("host"); host != "" && isIPAddress(u.Hostname()) {
 			opts.TLS.ServerName = host
 		}
 	}
@@ -590,100 +584,6 @@ func parseVLessURL(opts *Options, prefix string) error {
 	return nil
 }
 
-func parseVMessURL(opts *Options) error {
-	if strings.Contains(opts.URL, "@") {
-		return parseVLessURL(opts, "vmess://")
-	}
-
-	data, err := decodeBase64String(strings.TrimPrefix(opts.URL, "vmess://"))
-	if err != nil {
-		return fmt.Errorf("invalid url: %v", opts.URL)
-	}
-
-	var config struct {
-		Net  string          `json:"net"`
-		TLS  json.RawMessage `json:"tls"`
-		Type string          `json:"type"`
-
-		Address string          `json:"add"`
-		Port    json.RawMessage `json:"port"`
-		UUID    string          `json:"id"`
-
-		Path string `json:"path"`
-		Host string `json:"host"`
-	}
-
-	if err := json.Unmarshal(data, &config); err != nil {
-		return fmt.Errorf("unmarshal decoded vmess url %v: %w", opts.URL, err)
-	}
-
-	var transport string
-
-	switch strings.ToUpper(config.Net) {
-	case "GRPC":
-		transport = "GRPC+TLS"
-		opts.GRPC.ServiceName = config.Path
-	case "HTTPUPGRADE":
-		transport = "HTTPUPGRADE"
-		if isTLS(unquote(string(config.TLS))) {
-			transport = "HTTPUPGRADE+TLS"
-		}
-
-		opts.HTTPUPGRADE.Path = config.Path
-
-		if config.Host != "" && config.Host != config.Address {
-			opts.HTTPUPGRADE.Host = config.Host
-		}
-	case "TCP":
-		transport = "TCP"
-		if isTLS(unquote(string(config.TLS))) {
-			transport = "TCP+TLS"
-		}
-
-		if config.Type != "" && config.Type != "none" {
-			return fmt.Errorf("unknown type field in vmess url %v: %v", opts.URL, config.Type)
-		}
-	case "WS":
-		transport = "WS"
-		if isTLS(unquote(string(config.TLS))) {
-			transport = "WS+TLS"
-		}
-
-		opts.WS.Path = config.Path
-
-		if config.Host != "" && config.Host != config.Address {
-			opts.WS.Header = append(opts.WS.Header, HeaderItem{"Host", config.Host})
-		}
-	default:
-		return fmt.Errorf("unknown net field in vmess url %v: %v", opts.URL, config.Net)
-	}
-
-	switch transport {
-	case "GRPC+TLS", "HTTPUPGRADE+TLS", "TCP+TLS", "WS+TLS":
-		if config.Host != "" && config.Host != config.Address {
-			opts.TLS.ServerName = config.Host
-		}
-	}
-
-	opts.Type = "VMESS+" + transport
-	opts.VMESS.Address = net.JoinHostPort(config.Address, unquote(string(config.Port)))
-	opts.VMESS.UUID = config.UUID
-
-	return nil
-}
-
-func isTLS(s string) bool {
-	return len(s) != 0 && (s[0] == 't' || s[0] == 'T')
-}
-
-func unquote(s string) string {
-	if s, err := strconv.Unquote(s); err == nil {
-		return s
-	}
-
-	return s
-}
-
 func decodeBase64String(s string) ([]byte, error) {
 	s = strings.ReplaceAll(s, "-", "+")
 	s = strings.ReplaceAll(s, "_", "/")
@@ -694,6 +594,11 @@ func decodeBase64String(s string) ([]byte, error) {
 	}
 
 	return enc.DecodeString(s)
+}
+
+func isIPAddress(hostname string) bool {
+	_, err := netip.ParseAddr(hostname)
+	return err == nil
 }
 
 func normalizeMethod(s string) string {
