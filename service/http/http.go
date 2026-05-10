@@ -11,12 +11,14 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -186,10 +188,8 @@ func (p *allowListParser) parseLine(fsys fs.FS, name, line string) error {
 
 	port := portSuffix[1:]
 
-	for _, p := range config.ports {
-		if p == port {
-			return nil
-		}
+	if slices.Contains(config.ports, port) {
+		return nil
 	}
 
 	config.ports = append(config.ports, port)
@@ -291,15 +291,8 @@ func match(patterns *matchset.MatchSet, ipranges netiputil.AddrRangeSet, host, p
 	}
 
 	for _, v := range patterns.MatchAll(host) {
-		config := v.(*patternConfig)
-		if config == nil {
+		if config := v.(*patternConfig); config == nil || slices.Contains(config.ports, port) {
 			return true
-		}
-
-		for _, p := range config.ports {
-			if p == port {
-				return true
-			}
 		}
 	}
 
@@ -620,9 +613,7 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	httputil.RemoveHopbyhopHeaders(resp.Header)
 
 	header := rw.Header()
-	for key, values := range resp.Header {
-		header[key] = values
-	}
+	maps.Copy(header, resp.Header)
 
 	if _, ok := header["Content-Length"]; !ok && resp.ContentLength >= 0 {
 		header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))

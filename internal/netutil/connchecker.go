@@ -38,10 +38,10 @@ type ConnChecker struct {
 // no longer readable (closed or lost); if yes, it cancels cc.Context.
 //
 // c must not be used afterward (use cc instead).
-func NewConnChecker(c net.Conn) (cc *ConnChecker) {
+func NewConnChecker(c net.Conn) *ConnChecker {
 	ctx, cancel := context.WithCancelCause(context.Background())
 
-	cc = &ConnChecker{
+	cc := &ConnChecker{
 		Conn:     c,
 		Context:  ctx,
 		cancel:   cancel,
@@ -54,7 +54,7 @@ func NewConnChecker(c net.Conn) (cc *ConnChecker) {
 
 	go func() { _ = cc.start(ctx) }()
 
-	return
+	return cc
 }
 
 func (c *ConnChecker) start(ctx context.Context) (cause error) {

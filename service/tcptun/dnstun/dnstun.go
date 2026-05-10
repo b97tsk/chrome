@@ -12,7 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"path"
 	"reflect"
@@ -867,12 +867,12 @@ func startExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Optio
 						return
 					}
 
-					server := servers[rand.Intn(len(servers))]
+					server := servers[rand.IntN(len(servers))]
 					dnsAttrs = append(dnsAttrs[:0], slog.String("name", server.Name))
 
 					host := server.Name
 					if len(server.IP) != 0 {
-						host = server.IP[rand.Intn(len(server.IP))]
+						host = server.IP[rand.IntN(len(server.IP))]
 						dnsAttrs = append(dnsAttrs, slog.String("ip", host))
 					}
 
