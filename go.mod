@@ -4,12 +4,13 @@ go 1.25.0
 
 require (
 	github.com/b97tsk/async v0.17.0
-	github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/miekg/dns v1.1.69
 	github.com/shadowsocks/go-shadowsocks2 v0.1.5
 	github.com/v2fly/v2ray-core/v5 v5.43.0
 	golang.org/x/net v0.48.0
+	golang.org/x/time v0.5.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -31,7 +32,6 @@ require (
 	github.com/google/btree v1.1.2 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/pprof v0.0.0-20240320155624-b11c3daa6f07 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/improbable-eng/grpc-web v0.15.0 // indirect
 	github.com/jhump/protoreflect v1.17.0 // indirect
 	github.com/klauspost/compress v1.17.4 // indirect
@@ -76,7 +76,6 @@ require (
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
-	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251029180050-ab9386a59fda // indirect
 	google.golang.org/grpc v1.78.0 // indirect

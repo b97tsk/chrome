@@ -6,7 +6,7 @@ import (
 	"net"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/proxy"
+	"github.com/b97tsk/chrome/proxy"
 )
 
 type Options struct {

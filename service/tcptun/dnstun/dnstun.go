@@ -26,7 +26,7 @@ import (
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/netutil"
-	"github.com/b97tsk/proxy"
+	"github.com/b97tsk/chrome/proxy"
 	"github.com/miekg/dns"
 )
 

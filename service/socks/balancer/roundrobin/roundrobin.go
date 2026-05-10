@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/proxy"
+	"github.com/b97tsk/chrome/proxy"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
