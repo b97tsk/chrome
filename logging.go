@@ -69,7 +69,7 @@ func (m *loggingService) SetLogFile(name string) error {
 	return nil
 }
 
-// SetLogOutput sets a io.Writer that each logging message would write to.
+// SetLogOutput sets a [io.Writer] that each logging message would write to.
 func (m *loggingService) SetLogOutput(w io.Writer) {
 	m.mu.Lock()
 	m.output = w

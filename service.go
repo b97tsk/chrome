@@ -181,7 +181,7 @@ func (m *Manager) StartService(ctx context.Context, service Service, name string
 	return Job{job, cancel, event}, nil
 }
 
-// Open implements fs.FS. Open is available for jobs started by Load(File|FS)
+// Open implements [fs.FS]. Open is available for jobs started by Load(File|FS)
 // methods when they are handling options.
 func (m *Manager) Open(name string) (fs.File, error) {
 	fsys, _ := m.fsys.Load().(*fs.FS)

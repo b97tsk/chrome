@@ -7,7 +7,7 @@ import (
 )
 
 // EnvString is a helper type for unmarshaling a string from YAML.
-// When unmarshaling, it calls os.ExpandEnv on the original string and
+// When unmarshaling, it calls [os.ExpandEnv] on the original string and
 // stores the result.
 type EnvString string
 

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"reflect"
 	"strconv"
@@ -187,14 +187,14 @@ func (Service) Run(ctx chrome.Context) {
 
 							if ips := result.IPv4; len(ips) != 0 {
 								getaddr1 = func() string {
-									ip := ips[rand.Intn(len(ips))]
+									ip := ips[rand.IntN(len(ips))]
 									return net.JoinHostPort(ip.String(), port)
 								}
 							}
 
 							if ips := result.IPv6; len(ips) != 0 {
 								getaddr2 = func() string {
-									ip := ips[rand.Intn(len(ips))]
+									ip := ips[rand.IntN(len(ips))]
 									return net.JoinHostPort(ip.String(), port)
 								}
 							}
@@ -489,12 +489,12 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 							return
 						}
 
-						server := opts.DNS.Servers[rand.Intn(len(opts.DNS.Servers))]
+						server := opts.DNS.Servers[rand.IntN(len(opts.DNS.Servers))]
 						dnsAttrs = append(dnsAttrs[:0], slog.String("name", server.Name))
 
 						host := server.Name
 						if len(server.IP) != 0 {
-							host = server.IP[rand.Intn(len(server.IP))]
+							host = server.IP[rand.IntN(len(server.IP))]
 							dnsAttrs = append(dnsAttrs, slog.String("ip", host))
 						}
 

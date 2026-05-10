@@ -2,6 +2,7 @@ package v2ray
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
@@ -336,7 +337,7 @@ func parseOptions(opts Options) ([]byte, error) {
 		case "chacha20-poly1305", "chacha20-ietf-poly1305":
 			opts.SHADOWSOCKS.Method = "CHACHA20_POLY1305"
 		default:
-			return nil, fmt.Errorf("unknown method: %v", orEmpty(opts.SHADOWSOCKS.Method))
+			return nil, fmt.Errorf("unknown method: %v", cmp.Or(opts.SHADOWSOCKS.Method, "(empty)"))
 		}
 	}
 
@@ -350,11 +351,4 @@ func parseOptions(opts Options) ([]byte, error) {
 
 func normalizeMethod(s string) string {
 	return strings.ReplaceAll(strings.ToLower(s), "_", "-")
-}
-
-func orEmpty(s string) string {
-	if s == "" {
-		return "(empty)"
-	}
-	return s
 }

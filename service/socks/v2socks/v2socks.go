@@ -2,6 +2,7 @@ package v2socks
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -408,14 +409,14 @@ func parseOptions(opts Options) ([]byte, error) {
 		case "chacha20-poly1305", "chacha20-ietf-poly1305":
 			opts.SHADOWSOCKS.Method = "CHACHA20_POLY1305"
 		default:
-			return nil, fmt.Errorf("unknown method: %v", orEmpty(opts.SHADOWSOCKS.Method))
+			return nil, fmt.Errorf("unknown method: %v", cmp.Or(opts.SHADOWSOCKS.Method, "(empty)"))
 		}
 	case "SHADOWSOCKS2022":
 		switch method := normalizeMethod(opts.SHADOWSOCKS2022.Method); method {
 		case "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm":
 			opts.SHADOWSOCKS2022.Method = method
 		default:
-			return nil, fmt.Errorf("unknown method: %v", orEmpty(opts.SHADOWSOCKS2022.Method))
+			return nil, fmt.Errorf("unknown method: %v", cmp.Or(opts.SHADOWSOCKS2022.Method, "(empty)"))
 		}
 	}
 
@@ -606,11 +607,4 @@ func isIPAddress(hostname string) bool {
 
 func normalizeMethod(s string) string {
 	return strings.ReplaceAll(strings.ToLower(s), "_", "-")
-}
-
-func orEmpty(s string) string {
-	if s == "" {
-		return "(empty)"
-	}
-	return s
 }
