@@ -5,19 +5,11 @@ import (
 	"context"
 	"crypto/sha1"
 	"errors"
-	"math/rand"
 	"net"
 	"net/url"
 	"strings"
 
 	"github.com/b97tsk/proxy"
-	"github.com/b97tsk/proxy/loadbalance"
-
-	// Import load balancing strategies.
-	_ "github.com/b97tsk/proxy/loadbalance/strategy/failover"
-	_ "github.com/b97tsk/proxy/loadbalance/strategy/random"
-	_ "github.com/b97tsk/proxy/loadbalance/strategy/roundrobin"
-
 	"gopkg.in/yaml.v3"
 )
 
@@ -26,11 +18,6 @@ import (
 type Proxy struct {
 	d   proxy.Dialer
 	sum []byte
-
-	b struct {
-		Strategy string
-		Proxies  []Proxy
-	}
 }
 
 // MakeProxy chains one or more proxies (parsed from urls) together, using
@@ -96,43 +83,6 @@ func (block blockOrReset) DialContext(ctx context.Context, network, addr string)
 	return nil, CloseConn
 }
 
-// MakeProxyUsing creates a load balancing Proxy from multiple proxies with
-// specified strategy.
-func MakeProxyUsing(strategy string, proxies []Proxy) (Proxy, error) {
-	return makeProxyUsing(strategy, proxies, false)
-}
-
-func makeProxyUsing(strategy string, proxies []Proxy, shuffle bool) (Proxy, error) {
-	if len(proxies) == 0 {
-		return Proxy{}, errNoProxies
-	}
-
-	s := loadbalance.Get(strategy)
-	if s == nil {
-		return Proxy{}, errors.New("unknown strategy: " + strategy)
-	}
-
-	dialers := make([]proxy.Dialer, len(proxies))
-
-	for i := range dialers {
-		dialers[i] = proxies[i].Dialer()
-	}
-
-	if shuffle {
-		rand.Shuffle(len(dialers), func(i, j int) {
-			dialers[i], dialers[j] = dialers[j], dialers[i]
-		})
-	}
-
-	var p Proxy
-
-	p.d = s(dialers)
-	p.b.Strategy = strategy
-	p.b.Proxies = proxies
-
-	return p, nil
-}
-
 // ProxyFromDialer creates a Proxy from a Dialer.
 // The Dialer returned shouldn't be used for comparison.
 func ProxyFromDialer(d proxy.Dialer) Proxy { return Proxy{d: d} }
@@ -149,9 +99,7 @@ func (p Proxy) IsZero() bool {
 
 // Equal reports whether p and other are the same proxy.
 func (p Proxy) Equal(other Proxy) bool {
-	return bytes.Equal(p.sum, other.sum) &&
-		p.b.Strategy == other.b.Strategy &&
-		proxySliceEqual(p.b.Proxies, other.b.Proxies)
+	return bytes.Equal(p.sum, other.sum)
 }
 
 // Dialer gets the proxy.Dialer.
@@ -168,7 +116,7 @@ func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
 	if err := v.Decode(&urls); err != nil {
 		var s string
 		if err := v.Decode(&s); err != nil {
-			return p.unmarshalYAML(v)
+			return errInvalidProxy
 		}
 
 		urls = []string{s}
@@ -186,47 +134,4 @@ func (p *Proxy) UnmarshalYAML(v *yaml.Node) error {
 	return err
 }
 
-func (p *Proxy) unmarshalYAML(v *yaml.Node) error {
-	var b struct {
-		Strategy string
-		Proxies  []Proxy
-		Shuffle  bool
-	}
-
-	if err := v.Decode(&b); err != nil {
-		return errInvalidProxy
-	}
-
-	if b.Strategy == "" {
-		return errStrategyNotSpecified
-	}
-
-	tmp, err := makeProxyUsing(b.Strategy, b.Proxies, b.Shuffle)
-	if err != nil {
-		return err
-	}
-
-	*p = tmp
-
-	return nil
-}
-
-func proxySliceEqual(a, b []Proxy) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i, p := range a {
-		if !p.Equal(b[i]) {
-			return false
-		}
-	}
-
-	return true
-}
-
-var (
-	errNoProxies            = errors.New("no proxies")
-	errInvalidProxy         = errors.New("invalid proxy")
-	errStrategyNotSpecified = errors.New("strategy not specified")
-)
+var errInvalidProxy = errors.New("invalid proxy")
