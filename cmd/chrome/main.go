@@ -16,6 +16,9 @@ import (
 	"github.com/b97tsk/chrome/service/http/httpfs"
 	"github.com/b97tsk/chrome/service/http/pprof"
 	"github.com/b97tsk/chrome/service/socks"
+	"github.com/b97tsk/chrome/service/socks/balancer/failover"
+	"github.com/b97tsk/chrome/service/socks/balancer/random"
+	"github.com/b97tsk/chrome/service/socks/balancer/roundrobin"
 	"github.com/b97tsk/chrome/service/socks/shadowsocks"
 	"github.com/b97tsk/chrome/service/socks/v2socks"
 	"github.com/b97tsk/chrome/service/tcptun"
@@ -129,9 +132,12 @@ func newManager() *chrome.Manager {
 	var m chrome.Manager
 
 	m.AddService(dnstun.Service{})
+	m.AddService(failover.Service{})
 	m.AddService(http.Service{})
 	m.AddService(httpfs.Service{})
 	m.AddService(pprof.Service{})
+	m.AddService(random.Service{})
+	m.AddService(roundrobin.Service{})
 	m.AddService(shadowsocks.Service{})
 	m.AddService(socks.Service{})
 	m.AddService(tcptun.Service{})
