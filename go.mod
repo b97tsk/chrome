@@ -4,7 +4,6 @@ go 1.25.0
 
 require (
 	github.com/b97tsk/async v0.17.0
-	github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1
 	github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/miekg/dns v1.1.69

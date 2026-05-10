@@ -4,14 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/b97tsk/async"
-	"github.com/b97tsk/log"
 )
 
 // ConnOptions provides options for NewConn.
@@ -59,7 +61,7 @@ func (m *Manager) NewConn(
 	getRemote func(context.Context) (net.Conn, error),
 	connOpts ConnOptions,
 	relayOpts RelayOptions,
-	logger *log.Logger,
+	logger *slog.Logger,
 	lifeCycle func(c <-chan ConnEvent),
 ) net.Conn {
 	if connOpts.Timeout <= 0 {
@@ -94,6 +96,10 @@ func (m *Manager) NewConn(
 
 	myRuntime.Autorun(func() { myRuntime.Go(myRuntime.Run) })
 
+	logger = logger.With(slog.GroupAttrs("conn",
+		slog.String("id", fmt.Sprintf("%p", &myRuntime)),
+		slog.String("dest", remoteAddr)))
+
 	var myState struct {
 		rr struct { // read request
 			done async.State[bool]
@@ -113,6 +119,9 @@ func (m *Manager) NewConn(
 			}
 			attempts int
 		}
+		hasWinner  bool
+		sent, recv int64
+		remoteAddr net.Addr
 	}
 
 	var reqBuf *connBuf
@@ -142,8 +151,6 @@ func (m *Manager) NewConn(
 	}
 
 	awaitReadingRequest := myState.rr.done.Await(untilTrue)
-
-	hasWinner := false
 
 	newConn := func(co *async.Coroutine) async.Result {
 		myState.cl.connections.n++
@@ -176,24 +183,28 @@ func (m *Manager) NewConn(
 		))
 		myRuntime.Spawn(func(co *async.Coroutine) async.Result {
 			timer := time.AfterFunc(connOpts.Timeout, cancel)
-			var remote async.State[net.Conn]
+			var remote async.State[*conn]
 			myRuntime.Go(func() {
-				conn, err := getRemote(ctx)
+				c, err := getRemote(ctx)
 				myRuntime.Spawn(func(co *async.Coroutine) async.Result {
-					remote.Set(conn)
+					var rc *conn
+					if c != nil {
+						rc = &conn{Conn: c}
+					}
+					remote.Set(rc)
 					if errors.Is(err, CloseConn) {
 						return co.Transition(stopReadingRequest)
 					}
 					return co.End()
 				})
-				if err != nil && !errors.Is(err, context.Canceled) && logger != nil {
-					logger.Tracef("connect(%p): %v", &myRuntime, err)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					logger.Debug("conn:attempt", slog.Any("error", err))
 				}
 			})
 			co.Defer(
 				async.Do(func() {
-					if conn := remote.Get(); conn != nil {
-						conn.Close()
+					if c := remote.Get(); c != nil {
+						c.Close()
 					}
 					timer.Stop()
 					cancel()
@@ -312,10 +323,10 @@ func (m *Manager) NewConn(
 							if !timer.Stop() {
 								return co.End()
 							}
-							if hasWinner {
+							if myState.hasWinner {
 								return co.End()
 							}
-							hasWinner = true
+							myState.hasWinner = true
 							thisIsTheWinner = true
 							if lifeCycleCh != nil {
 								lifeCycleCh <- ConnEventResponse{}
@@ -330,7 +341,7 @@ func (m *Manager) NewConn(
 								awaitSendingRequest,
 								awaitAfterFunc,
 								func(co *async.Coroutine) async.Result {
-									l, r := pipeLeft, remote.Get()
+									l, r := pipeLeft, net.Conn(remote.Get())
 									var noDeadline time.Time
 									l.SetDeadline(noDeadline)
 									r.SetDeadline(noDeadline)
@@ -343,7 +354,11 @@ func (m *Manager) NewConn(
 										m.Relay(l, r, relayOpts)
 										myRuntime.Spawn(async.Do(sig.Notify))
 									})
-									return co.Await(&sig).End()
+									return co.Await(&sig).Then(async.Do(func() {
+										myState.sent = remote.Get().sent.Load()
+										myState.recv = remote.Get().recv.Load()
+										myState.remoteAddr = remote.Get().RemoteAddr()
+									}))
 								},
 							))
 						},
@@ -462,7 +477,14 @@ func (m *Manager) NewConn(
 						myState.rr.req.data = append(myState.rr.req.data, buf[:n]...)
 						myState.rr.req.Notify()
 					}
-					if err != nil || len(myState.rr.req.data) >= maxRequestSize {
+					if err != nil {
+						if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrDeadlineExceeded) {
+							logger.Debug("conn:readreq", slog.Any("error", err))
+						}
+						return co.Break()
+					}
+					if len(myState.rr.req.data) >= maxRequestSize {
+						logger.Debug("conn:readreq", slog.String("error", "request too large"))
 						return co.Break()
 					}
 					return co.End()
@@ -471,9 +493,7 @@ func (m *Manager) NewConn(
 		))
 	}
 
-	if logger != nil {
-		logger.Tracef("connect(%p): %v", &myRuntime, remoteAddr)
-	}
+	logger.Debug("conn:open")
 
 	if lifeCycleCh != nil {
 		go lifeCycle(lifeCycleCh)
@@ -491,8 +511,13 @@ func (m *Manager) NewConn(
 		if reqBuf != nil {
 			connBufPool.Put(reqBuf)
 		}
-		if logger != nil {
-			logger.Tracef("connect(%p): %v (CLOSED)", &myRuntime, remoteAddr)
+		if myState.hasWinner {
+			logger.Debug("conn:close",
+				slog.Int64("sent", myState.sent),
+				slog.Int64("recv", myState.recv),
+				slog.String("from", myState.remoteAddr.String()))
+		} else {
+			logger.Debug("conn:close", slog.Int64("sent", myState.sent), slog.Int64("recv", myState.recv))
 		}
 	}()
 
@@ -509,6 +534,27 @@ func prefix(c net.Conn, r io.Reader) net.Conn {
 		io.Reader
 	}
 	return &B{A{c, nil}, io.MultiReader(r, c)}
+}
+
+type conn struct {
+	net.Conn
+	sent, recv atomic.Int64
+}
+
+func (c *conn) Read(b []byte) (n int, err error) {
+	n, err = c.Conn.Read(b)
+	if n > 0 {
+		c.recv.Add(int64(n))
+	}
+	return
+}
+
+func (c *conn) Write(b []byte) (n int, err error) {
+	n, err = c.Conn.Write(b)
+	if n > 0 {
+		c.sent.Add(int64(n))
+	}
+	return
 }
 
 type closeConnError struct{}

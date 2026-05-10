@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 	"math"
 	"math/rand"
 	"net"
@@ -74,7 +75,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ctx.JobName)
+	logger := ctx.Manager.Logger().With(slog.String("job", ctx.JobName))
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -104,18 +105,18 @@ func (Service) Run(ctx chrome.Context) {
 
 		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
-			logger.Error(err)
+			logger.Error("net:listen", slog.Any("error", err))
 			return err
 		}
 
-		defer logger.Infof("listening on %v", ln.Addr())
+		defer logger.Info("net:listening", slog.Any("addr", ln.Addr()))
 
 		server = ln
 
 		if dnsQueryIn == nil {
 			dnsQueryIn = make(chan dnsQuery)
 
-			go startWorker(ctx, optsOut, dnsQueryIn)
+			go startWorker(ctx, logger, optsOut, dnsQueryIn)
 		}
 
 		go ctx.Manager.Serve(ln, func(local net.Conn) {
@@ -148,7 +149,12 @@ func (Service) Run(ctx chrome.Context) {
 							r := cache.(*dnsQueryResult)
 							if r.Deadline.After(time.Now()) {
 								result = r
-								logger.Tracef("[dns] (from cache) %v: %v %v TTL=%v", host, r.IPv4, r.IPv6, r.TTL())
+								logger.Debug("dnsquery",
+									slog.String("host", host),
+									slog.Any("ipv4", r.IPv4),
+									slog.Any("ipv6", r.IPv6),
+									slog.Duration("ttl", r.TTL()),
+									slog.String("from", "cache"))
 							}
 						}
 
@@ -286,7 +292,7 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		}
 
-		defer logger.Infof("stopped listening on %v", server.Addr())
+		defer logger.Info("net:listen:close", slog.Any("addr", server.Addr()))
 
 		_ = server.Close()
 		server = nil
@@ -305,7 +311,7 @@ func (Service) Run(ctx chrome.Context) {
 				new.dnsCache = old.dnsCache
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
-					logger.Error(err)
+					logger.Error("loading", slog.Any("error", err))
 					return
 				}
 
@@ -326,14 +332,18 @@ func (Service) Run(ctx chrome.Context) {
 					for i := range new.DNS.Servers {
 						server := &new.DNS.Servers[i]
 						if server.Name == "" && len(server.IP) == 0 {
-							logger.Errorf("[dns] server #%v: invalid", i+1)
+							logger.Error("loading:dns:checkservers",
+								slog.Int("index", i),
+								slog.String("error", "missing name or IP address"))
 							return
 						}
 
 						server.Over = strings.ToUpper(server.Over)
 
 						if server.Over == "TLS" && server.Name == "" {
-							logger.Errorf("[dns] server #%v: DNS-over-TLS requires a server name", i+1)
+							logger.Error("loading:dns:checkservers",
+								slog.Int("index", i),
+								slog.String("error", "DNS-over-TLS requires a server name"))
 							return
 						}
 					}
@@ -368,7 +378,7 @@ func (r *dnsQueryResult) TTL() time.Duration {
 	return time.Until(r.Deadline).Truncate(time.Second)
 }
 
-func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dnsQuery) {
+func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options, incoming <-chan dnsQuery) {
 	var dnsConn struct {
 		*dns.Conn
 		sync.Mutex
@@ -418,7 +428,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 	dnsConnReadTimeout := defaultReadTimeout
 	dnsConnWriteTimeout := defaultWriteTimeout
 
-	logger := ctx.Manager.Logger(ctx.JobName)
+	var dnsAttrs []slog.Attr
 
 	for {
 		if dnsConn.Conn != nil {
@@ -449,7 +459,12 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 				r := cache.(*dnsQueryResult)
 				if r.Deadline.After(time.Now()) {
 					result = r
-					logger.Tracef("[dns] (from cache) %v: %v %v TTL=%v", q.Domain, r.IPv4, r.IPv6, r.TTL())
+					logger.Debug("dnsquery",
+						slog.String("host", q.Domain),
+						slog.Any("ipv4", r.IPv4),
+						slog.Any("ipv6", r.IPv6),
+						slog.Duration("ttl", r.TTL()),
+						slog.String("from", "cache"))
 				}
 			}
 
@@ -475,24 +490,24 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 						}
 
 						server := opts.DNS.Servers[rand.Intn(len(opts.DNS.Servers))]
+						dnsAttrs = append(dnsAttrs[:0], slog.String("name", server.Name))
 
 						host := server.Name
-
 						if len(server.IP) != 0 {
 							host = server.IP[rand.Intn(len(server.IP))]
+							dnsAttrs = append(dnsAttrs, slog.String("ip", host))
 						}
 
 						port := 53
-
 						if server.Over == "TLS" {
 							port = 853
 						}
-
 						if server.Port != 0 {
 							port = int(server.Port)
 						}
 
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
+						dnsAttrs = append(dnsAttrs, slog.Int("port", port))
 
 						getRemote := func(ctx context.Context) (net.Conn, error) {
 							if q.Context.Err() != nil {
@@ -557,6 +572,7 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 							}
 
 							conn = tls.Client(conn, tlsConfig)
+							dnsAttrs = append(dnsAttrs, slog.String("over", "TLS"))
 						}
 
 						dnsConn.Conn = &dns.Conn{Conn: conn}
@@ -641,10 +657,16 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 
 							qtypes = qtypes[1:]
 						} else {
-							logger.Tracef("[dns] read msg: %v", err)
+							logger.Debug("dnsquery:readmsg",
+								slog.String("host", q.Domain),
+								slog.GroupAttrs("dns", dnsAttrs...),
+								slog.Any("error", err))
 						}
 					} else {
-						logger.Tracef("[dns] write msg: %v", err)
+						logger.Debug("dnsquery:writemsg",
+							slog.String("host", q.Domain),
+							slog.GroupAttrs("dns", dnsAttrs...),
+							slog.Any("error", err))
 					}
 
 					if err != nil {
@@ -659,7 +681,11 @@ func startWorker(ctx chrome.Context, options <-chan Options, incoming <-chan dns
 						opts.dnsCache.Store(q.Domain, r)
 					}
 
-					logger.Debugf("[dns] %v: %v %v TTL=%v", q.Domain, r.IPv4, r.IPv6, r.TTL())
+					logger.Debug("dnsquery",
+						slog.String("host", q.Domain),
+						slog.Any("ipv4", r.IPv4),
+						slog.Any("ipv6", r.IPv6),
+						slog.Duration("ttl", r.TTL()))
 				}
 			}
 

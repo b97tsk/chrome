@@ -6,10 +6,10 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"unicode"
 
-	"github.com/b97tsk/log"
 	"gopkg.in/yaml.v3"
 )
 
@@ -167,9 +166,9 @@ func (m *Manager) StartService(ctx context.Context, service Service, name string
 
 	go func() {
 		defer func() {
-			if err := recover(); err != nil {
-				logger := m.Logger("manager")
-				logger.Errorf("panic: %v\n%v", err, string(debug.Stack()))
+			if v := recover(); v != nil {
+				logger := m.Logger()
+				logger.Error("panic", slog.Any("v", v), slog.String("stacktrace", string(debug.Stack())))
 			}
 
 			cancel()
@@ -260,7 +259,7 @@ func (m *Manager) loadConfig(r io.Reader) error {
 	var config struct {
 		Log struct {
 			File  EnvString
-			Level logLevel
+			Level slog.Level
 		}
 		Conn  ConnOptions
 		Relay RelayOptions
@@ -272,13 +271,13 @@ func (m *Manager) loadConfig(r io.Reader) error {
 		return err
 	}
 
-	logger := m.Logger("manager")
+	logger := m.Logger()
 
 	if err := m.SetLogFile(string(config.Log.File)); err != nil {
-		logger.Errorf("load config: %v", err)
+		logger.Error("manager:setlogfile", slog.String("path", string(config.Log.File)), slog.Any("error", err))
 	}
 
-	m.SetLogLevel(config.Log.Level.Level)
+	m.SetLogLevel(config.Log.Level)
 	m.SetConnOptions(config.Conn)
 	m.SetRelayOptions(config.Relay)
 
@@ -294,12 +293,16 @@ func (m *Manager) loadConfig(r io.Reader) error {
 
 	for name, data := range config.Jobs {
 		if err := m.setOptions(name, data); err != nil {
-			logger.Errorf("load config: %v", err)
+			logger.Error("manager:setoptions", slog.String("job", name), slog.Any("error", err))
 		}
 	}
 
 	for _, job := range m.jobs {
 		job.SendEvent(LoadedEvent{})
+	}
+
+	for _, job := range m.jobs {
+		job.SendEvent(nil) // Make sure all events have been handled.
 	}
 
 	return nil
@@ -339,9 +342,6 @@ func (m *Manager) setOptions(name string, data any) error {
 
 	if opts != nil {
 		job.SendEvent(LoadEvent{opts})
-		// m.fsys is not always available for jobs.
-		// Jobs can only access m.fsys (via m.Open) while handling opts.
-		job.SendEvent(nil) // Make sure opts is handled.
 	}
 
 	return nil
@@ -368,35 +368,4 @@ func (m *Manager) Shutdown() {
 	_ = m.SetLogFile("")
 	m.SetLogOutput(nil)
 	m.CloseConnections()
-}
-
-type logLevel struct {
-	log.Level
-}
-
-func (lv *logLevel) UnmarshalYAML(v *yaml.Node) error {
-	var s string
-
-	if err := v.Decode(&s); err != nil {
-		return err
-	}
-
-	switch {
-	case strings.EqualFold(s, log.LevelNone.String()):
-		lv.Level = log.LevelNone
-	case strings.EqualFold(s, log.LevelError.String()):
-		lv.Level = log.LevelError
-	case strings.EqualFold(s, log.LevelWarn.String()):
-		lv.Level = log.LevelWarn
-	case strings.EqualFold(s, log.LevelInfo.String()):
-		lv.Level = log.LevelInfo
-	case strings.EqualFold(s, log.LevelDebug.String()):
-		lv.Level = log.LevelDebug
-	case strings.EqualFold(s, log.LevelTrace.String()):
-		lv.Level = log.LevelTrace
-	default:
-		return errors.New("unknown logging level: " + s)
-	}
-
-	return nil
 }
