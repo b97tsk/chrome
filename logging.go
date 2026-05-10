@@ -2,41 +2,49 @@ package chrome
 
 import (
 	"io"
-	stdlog "log"
+	"log/slog"
 	"os"
 	"sync"
 	"sync/atomic"
-
-	"github.com/b97tsk/log"
+	"time"
 )
 
 type loggingService struct {
-	mu      sync.Mutex
-	level   atomic.Int32
-	file    *os.File
-	output  io.Writer
-	loggers sync.Map
+	mu     sync.Mutex
+	level  slog.LevelVar
+	logger atomic.Pointer[slog.Logger]
+	file   *os.File
+	output io.Writer
 }
 
-// Logger gets a Logger with name quoted with square brackets as the prefix.
-func (m *loggingService) Logger(name string) *log.Logger {
-	logger, ok := m.loggers.Load(name)
-	if !ok {
-		logger = log.New(loggingWriter{m}, "["+name+"] ", stdlog.LstdFlags|stdlog.Lmsgprefix)
-		logger, _ = m.loggers.LoadOrStore(name, logger)
+// Logger returns the Logger of m.
+func (m *loggingService) Logger() *slog.Logger {
+	logger := m.logger.Load()
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(loggingWriter{m}, &slog.HandlerOptions{
+			Level: &m.level,
+			ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+				if a.Key == slog.TimeKey {
+					return slog.String(slog.TimeKey, a.Value.Time().Format(time.RFC3339))
+				}
+				return a
+			},
+		}))
+		if !m.logger.CompareAndSwap(nil, logger) {
+			logger = m.logger.Load()
+		}
 	}
-
-	return logger.(*log.Logger)
+	return logger
 }
 
 // LogLevel gets the logging level.
-func (m *loggingService) LogLevel() log.Level {
-	return log.Level(m.level.Load())
+func (m *loggingService) LogLevel() slog.Level {
+	return m.level.Level()
 }
 
 // SetLogLevel sets the logging level.
-func (m *loggingService) SetLogLevel(level log.Level) {
-	m.level.Store(int32(level))
+func (m *loggingService) SetLogLevel(level slog.Level) {
+	m.level.Set(level)
 }
 
 // SetLogFile sets the file that each logging message would write to.
@@ -90,8 +98,4 @@ func (m loggingWriter) Write(p []byte) (n int, err error) {
 	}
 
 	return len(p), nil
-}
-
-func (m loggingWriter) Writable(lv log.Level) bool {
-	return lv >= m.LogLevel()
 }

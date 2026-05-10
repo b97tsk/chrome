@@ -25,7 +25,7 @@ If config file is `-`, chrome will try to load config from standard input.
 ```yaml
 log:
   file: chrome.log # Write log messages to this file.
-  level: INFO # Log level, alternatives are ERROR, WARN, DEBUG, TRACE and NONE.
+  level: INFO # Log level, alternatives are ERROR, WARN and DEBUG.
 
 conn:
   timeout: 10s # Default connect timeout.

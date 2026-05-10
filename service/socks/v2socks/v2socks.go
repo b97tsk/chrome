@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/netip"
 	"net/url"
@@ -121,7 +122,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ctx.JobName)
+	logger := ctx.Manager.Logger().With(slog.String("job", ctx.JobName))
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -149,11 +150,11 @@ func (Service) Run(ctx chrome.Context) {
 
 		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
-			logger.Error(err)
+			logger.Error("net:listen", slog.Any("error", err))
 			return err
 		}
 
-		defer logger.Infof("listening on %v", ln.Addr())
+		defer logger.Info("net:listening", slog.Any("addr", ln.Addr()))
 
 		server = ln
 
@@ -193,7 +194,7 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		}
 
-		defer logger.Infof("stopped listening on %v", server.Addr())
+		defer logger.Info("net:listen:close", slog.Any("addr", server.Addr()))
 
 		_ = server.Close()
 		server = nil
@@ -205,13 +206,13 @@ func (Service) Run(ctx chrome.Context) {
 	startInstance := func(opts Options) {
 		data, err := parseOptions(opts)
 		if err != nil {
-			logger.Errorf("parse options: %v", err)
+			logger.Error("parseoptions", slog.Any("error", err))
 			return
 		}
 
 		ins, err = v2ray.StartInstance(data)
 		if err != nil {
-			logger.Errorf("start instance: %v", err)
+			logger.Error("v2ray:start", slog.Any("error", err))
 			return
 		}
 	}
@@ -219,7 +220,7 @@ func (Service) Run(ctx chrome.Context) {
 	stopInstance := func() {
 		if ins != nil {
 			if err := ins.Close(); err != nil {
-				logger.Debugf("close instance: %v", err)
+				logger.Debug("v2ray:close", slog.Any("error", err))
 			}
 
 			ins = nil
@@ -246,7 +247,7 @@ func (Service) Run(ctx chrome.Context) {
 				new.ins = old.ins
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
-					logger.Error(err)
+					logger.Error("loading", slog.Any("error", err))
 					return
 				}
 
@@ -255,14 +256,16 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if new.TLS.CertFile != "" {
-					certData, err := fs.ReadFile(ctx.Manager, new.TLS.CertFile.String())
+					certData, err := fs.ReadFile(ctx.Manager, string(new.TLS.CertFile))
 					if err != nil {
-						logger.Errorf("read cert file: %v", err)
+						logger.Error("loading:readcertfile", slog.Any("error", err))
 						return
 					}
 
 					if len(certData) == 0 {
-						logger.Errorf("empty file: %v", new.TLS.CertFile)
+						logger.Error("loading:readcertfile",
+							slog.String("path", string(new.TLS.CertFile)),
+							slog.String("error", "empty file"))
 						return
 					}
 
@@ -273,7 +276,7 @@ func (Service) Run(ctx chrome.Context) {
 					if forwardListener == nil {
 						ln, err := net.Listen("tcp", "localhost:")
 						if err != nil {
-							logger.Errorf("start forward server: %v", err)
+							logger.Error("loading:startforwardserver", slog.Any("error", err))
 							return
 						}
 

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -26,7 +27,6 @@ import (
 	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/netiputil"
-	"github.com/b97tsk/log"
 	"github.com/b97tsk/proxy"
 	"golang.org/x/net/http/httpguts"
 )
@@ -79,7 +79,7 @@ type patternConfig struct {
 	ports []string
 }
 
-func (l *allowList) Init(fsys fs.FS, logger *log.Logger) error {
+func (l *allowList) Init(fsys fs.FS, logger *slog.Logger) error {
 	p := &allowListParser{logger: logger}
 
 	s := bufio.NewScanner(strings.NewReader(l.What))
@@ -106,7 +106,7 @@ func (l *allowList) Init(fsys fs.FS, logger *log.Logger) error {
 }
 
 type allowListParser struct {
-	logger *log.Logger
+	logger *slog.Logger
 
 	includes, excludes struct {
 		patterns map[string]*patternConfig
@@ -218,7 +218,7 @@ func (p *allowListParser) parseFile(fsys fs.FS, name string) error {
 	}
 
 	if p.logger != nil {
-		p.logger.Infof("loaded %v", name)
+		p.logger.Info("parsefile", slog.String("path", name))
 	}
 
 	return nil
@@ -319,7 +319,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ctx.JobName)
+	logger := ctx.Manager.Logger().With(slog.String("job", ctx.JobName))
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -338,7 +338,7 @@ func (Service) Run(ctx chrome.Context) {
 		close(optsOut)
 	}()
 
-	handler := newHandler(ctx, optsOut)
+	handler := newHandler(ctx, logger, optsOut)
 	defer handler.CloseIdleConnections()
 
 	var (
@@ -354,16 +354,15 @@ func (Service) Run(ctx chrome.Context) {
 
 		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
-			logger.Error(err)
+			logger.Error("net:listen", slog.Any("error", err))
 			return err
 		}
 
-		defer logger.Infof("listening on %v", ln.Addr())
+		defer logger.Info("net:listening", slog.Any("addr", ln.Addr()))
 
 		server = &http.Server{
 			Handler:      handler,
 			TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)), // Disable HTTP/2.
-			ErrorLog:     logger.Get(log.LevelDebug),
 		}
 		serverDown = make(chan struct{})
 		serverListener = ln
@@ -382,7 +381,7 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		}
 
-		defer logger.Infof("stopped listening on %v", serverListener.Addr())
+		defer logger.Info("net:listen:close", slog.Any("addr", serverListener.Addr()))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
@@ -411,7 +410,7 @@ func (Service) Run(ctx chrome.Context) {
 				new.allowListMap = old.allowListMap
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
-					logger.Error(err)
+					logger.Error("loading", slog.Any("error", err))
 					return
 				}
 
@@ -429,12 +428,12 @@ func (Service) Run(ctx chrome.Context) {
 					}
 
 					if r.Name == "" {
-						r.Name = fmt.Sprintf("#%v", i+1)
+						r.Name = fmt.Sprintf("#%v", i)
 					}
 
 					sum, err := checksum(ctx.Manager, r.What)
 					if err != nil {
-						logger.Error(err)
+						logger.Error("loading:checksum", slog.String("route", r.Name), slog.Any("error", err))
 						return
 					}
 
@@ -457,7 +456,7 @@ func (Service) Run(ctx chrome.Context) {
 							}
 
 							if err := l.Init(ctx.Manager, logger); err != nil {
-								logger.Error(err)
+								logger.Error("loading:initroute", slog.String("route", r.Name), slog.Any("error", err))
 								return
 							}
 						}
@@ -496,15 +495,13 @@ func (Service) Run(ctx chrome.Context) {
 type handler struct {
 	ctx       chrome.Context
 	opts      <-chan Options
-	logger    *log.Logger
+	logger    *slog.Logger
 	tr        *http.Transport
 	redirects atomic.Value
 	rwhosts   atomic.Value
 }
 
-func newHandler(ctx chrome.Context, opts <-chan Options) *handler {
-	logger := ctx.Manager.Logger(ctx.JobName)
-
+func newHandler(ctx chrome.Context, logger *slog.Logger, opts <-chan Options) *handler {
 	h := &handler{ctx: ctx, opts: opts, logger: logger}
 
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -554,7 +551,7 @@ func (h *handler) getopts(addr string) (Options, bool) {
 
 			for i := range opts.routes {
 				if r := &opts.routes[i]; r.AllowList.Allow(host, port, addr1) {
-					h.logger.Infof("%v matches %v", r.Name, addr)
+					h.logger.Info("route:match", slog.String("route", r.Name), slog.String("matches", addr))
 
 					opts.Proxy = r.Proxy
 					opts.routeCache.Store(addr, r)
@@ -637,13 +634,13 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (h *handler) hijack(rw http.ResponseWriter) net.Conn {
 	if _, ok := rw.(http.Hijacker); !ok {
-		h.logger.Debug("hijack: impossible")
+		h.logger.Debug("hijack", slog.String("error", "impossible"))
 		panic(http.ErrAbortHandler)
 	}
 
 	conn, buf, err := rw.(http.Hijacker).Hijack()
 	if err != nil {
-		h.logger.Debugf("hijack: %v", err)
+		h.logger.Debug("hijack", slog.Any("error", err))
 		panic(http.ErrAbortHandler)
 	}
 
@@ -661,7 +658,7 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 
 	const response = "HTTP/1.1 200 OK\r\n\r\n"
 	if _, err := local.Write([]byte(response)); err != nil {
-		h.logger.Tracef("connect: write response to local: %v", err)
+		h.logger.Debug("http:connect", slog.Any("error", err))
 		return
 	}
 
@@ -685,7 +682,7 @@ func (h *handler) handleConnect(rw http.ResponseWriter, req *http.Request) {
 func (h *handler) handleUpgrade(rw http.ResponseWriter, req *http.Request) {
 	var b bytes.Buffer
 	if err := req.Write(&b); err != nil {
-		h.logger.Tracef("upgrade: write request to buffer: %v", err)
+		h.logger.Debug("http:upgrade", slog.Any("error", err))
 		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -99,7 +100,7 @@ func Main() (code int) {
 
 	var reload <-chan time.Time
 
-	logger := man.Logger("main")
+	logger := man.Logger()
 
 	for {
 		select {
@@ -109,12 +110,12 @@ func Main() (code int) {
 				reload = time.After(1 * time.Second)
 			}
 		case err := <-watcher.Errors:
-			logger.Warn(err)
+			logger.Warn("fsnotify", slog.Any("error", err))
 		case <-reload:
 			if err := man.LoadFile(configFile); err != nil {
-				logger.Warn(err)
+				logger.Error("loadfile", slog.String("path", configFile), slog.Any("error", err))
 			} else {
-				logger.Info("reloaded")
+				logger.Info("loadfile", slog.String("path", configFile))
 			}
 
 			reload = nil

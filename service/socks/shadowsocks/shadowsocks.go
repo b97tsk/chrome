@@ -2,6 +2,7 @@ package shadowsocks
 
 import (
 	"context"
+	"log/slog"
 	"net"
 
 	"github.com/b97tsk/chrome"
@@ -37,7 +38,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ctx.JobName)
+	logger := ctx.Manager.Logger().With(slog.String("job", ctx.JobName))
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -65,11 +66,11 @@ func (Service) Run(ctx chrome.Context) {
 
 		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
-			logger.Error(err)
+			logger.Error("net:listen", slog.Any("error", err))
 			return err
 		}
 
-		defer logger.Infof("listening on %v", ln.Addr())
+		defer logger.Info("net:listening", slog.Any("addr", ln.Addr()))
 
 		server = ln
 
@@ -82,7 +83,7 @@ func (Service) Run(ctx chrome.Context) {
 			local = cipher.StreamConn(local)
 			addr, err := socks.ReadAddr(local)
 			if err != nil {
-				logger.Debugf("read addr: %v", err)
+				logger.Debug("socks:readaddr", slog.Any("error", err))
 				return
 			}
 
@@ -116,7 +117,7 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		}
 
-		defer logger.Infof("stopped listening on %v", server.Addr())
+		defer logger.Info("net:listen:close", slog.Any("addr", server.Addr()))
 
 		_ = server.Close()
 		server = nil
@@ -135,7 +136,7 @@ func (Service) Run(ctx chrome.Context) {
 				new.cipher = old.cipher
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
-					logger.Error(err)
+					logger.Error("loading", slog.Any("error", err))
 					return
 				}
 
@@ -146,7 +147,7 @@ func (Service) Run(ctx chrome.Context) {
 				if new.Method != old.Method || new.Password != old.Password {
 					cipher, err := core.PickCipher(new.Method, nil, new.Password)
 					if err != nil {
-						logger.Errorf("pick cipher: %v", err)
+						logger.Error("loading:pickcipher", slog.Any("error", err))
 						return
 					}
 

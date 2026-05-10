@@ -44,8 +44,6 @@ github.com/aws/aws-sdk-go v1.27.0/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN
 github.com/aws/aws-sdk-go-v2 v0.18.0/go.mod h1:JWVYvqSMppoMJC0x5wdwiImzgXTI9FuZwxzkQq9wy+g=
 github.com/b97tsk/async v0.17.0 h1:SuHhfz5ocaAWLImnLH+aq0C6DcSFFPv+6lokfEx5AnM=
 github.com/b97tsk/async v0.17.0/go.mod h1:cO78NJamBk0WdejvzxR50LS0EXibgSOM84uWWsGR0o0=
-github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1 h1:rLk3BFYzpX2uIw9ek0f42yqO2k1LTYDJ6VCiHt/hgVA=
-github.com/b97tsk/log v0.0.0-20210605064517-931ac1c7c3f1/go.mod h1:WYjdsAU8i5C+dJ/OGm5gjb0y6Gk8k3jrQoKCEpaM6eg=
 github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d h1:vLz8JeNJvZL1iN6OT1U59uaV848yqVIGnUWt6wMk/YU=
 github.com/b97tsk/proxy v0.0.0-20210803125501-5af7f744b99d/go.mod h1:irs6pPO27+Au5tAQAqsGV461DvYE+YpvkOk5Ch1dC8g=
 github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973/go.mod h1:Dwedo/Wpr24TaqPxmxbtue+5NUziq4I4S80YR8gNf3Q=

@@ -2,12 +2,12 @@ package httpfs
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
 
 	"github.com/b97tsk/chrome"
-	"github.com/b97tsk/log"
 )
 
 type Options struct {
@@ -31,7 +31,7 @@ func (Service) Options() any {
 }
 
 func (Service) Run(ctx chrome.Context) {
-	logger := ctx.Manager.Logger(ctx.JobName)
+	logger := ctx.Manager.Logger().With(slog.String("job", ctx.JobName))
 
 	optsIn, optsOut := make(chan Options), make(chan Options)
 	defer close(optsIn)
@@ -74,16 +74,13 @@ func (Service) Run(ctx chrome.Context) {
 
 		ln, err := net.Listen("tcp", (<-optsOut).ListenAddr)
 		if err != nil {
-			logger.Error(err)
+			logger.Error("net:listen", slog.Any("error", err))
 			return err
 		}
 
-		defer logger.Infof("listening on %v", ln.Addr())
+		defer logger.Info("net:listening", slog.Any("addr", ln.Addr()))
 
-		server = &http.Server{
-			Handler:  handler,
-			ErrorLog: logger.Get(log.LevelDebug),
-		}
+		server = &http.Server{Handler: handler}
 		serverDown = make(chan struct{})
 		serverListener = ln
 
@@ -101,7 +98,7 @@ func (Service) Run(ctx chrome.Context) {
 			return
 		}
 
-		defer logger.Infof("stopped listening on %v", serverListener.Addr())
+		defer logger.Info("net:listen:close", slog.Any("addr", serverListener.Addr()))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
@@ -128,7 +125,7 @@ func (Service) Run(ctx chrome.Context) {
 				new.handler = old.handler
 
 				if _, _, err := net.SplitHostPort(new.ListenAddr); err != nil {
-					logger.Error(err)
+					logger.Error("loading", slog.Any("error", err))
 					return
 				}
 
@@ -137,7 +134,7 @@ func (Service) Run(ctx chrome.Context) {
 				}
 
 				if new.Dir != old.Dir {
-					new.handler = http.FileServer(http.Dir(new.Dir.String()))
+					new.handler = http.FileServer(http.Dir(new.Dir))
 				}
 
 				optsIn <- new
