@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/b97tsk/proxy"
+	"github.com/b97tsk/chrome/proxy"
 	"gopkg.in/yaml.v3"
 )
 

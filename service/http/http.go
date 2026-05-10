@@ -27,7 +27,7 @@ import (
 	"github.com/b97tsk/chrome/internal/httputil"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/netiputil"
-	"github.com/b97tsk/proxy"
+	"github.com/b97tsk/chrome/proxy"
 	"golang.org/x/net/http/httpguts"
 )
 
