@@ -3,7 +3,7 @@ module github.com/b97tsk/chrome
 go 1.25.0
 
 require (
-	github.com/b97tsk/async v0.17.0
+	github.com/b97tsk/async v0.20.2
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/miekg/dns v1.1.69

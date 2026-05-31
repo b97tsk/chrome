@@ -156,20 +156,7 @@ func (m *Manager) NewConn(
 		thisIsTheWinner := false
 		ctx, cancel := context.WithCancel(context.Background())
 		myRuntime.Spawn(async.Select(
-			func(co *async.Coroutine) async.Result {
-				var sig async.Signal
-				myRuntime.Add(1)
-				stop := context.AfterFunc(ctx, func() {
-					defer myRuntime.Done()
-					myRuntime.Spawn(async.Do(sig.Notify))
-				})
-				co.CleanupFunc(func() {
-					if stop() {
-						myRuntime.Done()
-					}
-				})
-				return co.Await(&sig).End()
-			},
+			async.AfterContext(ctx, &myRuntime),
 			async.Block(
 				awaitConnLoop,
 				async.Do(func() {
@@ -350,7 +337,7 @@ func (m *Manager) NewConn(
 									var sig async.Signal
 									myRuntime.Go(func() {
 										m.Relay(l, r, relayOpts)
-										myRuntime.Spawn(async.Do(sig.Notify))
+										myRuntime.Spawn(async.Notify(&sig))
 									})
 									return co.Await(&sig).Then(async.Do(func() {
 										myState.sent = remote.Get().sent.Load()
