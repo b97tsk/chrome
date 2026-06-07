@@ -63,7 +63,7 @@ func (m *Manager) NewConn(
 	relayOpts RelayOptions,
 	logger *slog.Logger,
 	lifeCycle func(c <-chan ConnEvent),
-) net.Conn {
+) *Conn {
 	if connOpts.Timeout <= 0 {
 		connOpts.Timeout = time.Duration(m.connOpts.Timeout.Load())
 		if connOpts.Timeout <= 0 {
@@ -133,6 +133,8 @@ func (m *Manager) NewConn(
 	}
 
 	pipeLeft, pipeRight := net.Pipe()
+
+	myConn := &Conn{Conn: pipeRight}
 
 	stopConnLoop := func(co *async.Coroutine) async.Result {
 		myState.cl.stop.Set(true)
@@ -339,7 +341,9 @@ func (m *Manager) NewConn(
 										m.Relay(l, r, relayOpts)
 										myRuntime.Spawn(async.Notify(&sig))
 									})
+									myConn.setOutgoingConn(remote.Get())
 									return co.Await(&sig).Then(async.Do(func() {
+										myConn.setOutgoingConn(nil)
 										myState.sent = remote.Get().sent.Load()
 										myState.recv = remote.Get().recv.Load()
 										myState.remoteAddr = remote.Get().RemoteAddr()
@@ -502,7 +506,42 @@ func (m *Manager) NewConn(
 		}
 	}()
 
-	return pipeRight
+	return myConn
+}
+
+type Conn struct {
+	net.Conn
+
+	mu     sync.Mutex
+	oc     net.Conn
+	tr, tw time.Duration
+}
+
+func toDeadline(d time.Duration) time.Time {
+	if d == 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(d)
+}
+
+func (c *Conn) setOutgoingConn(oc net.Conn) {
+	c.mu.Lock()
+	c.oc = oc
+	if oc != nil {
+		oc.SetReadDeadline(toDeadline(c.tr))
+		oc.SetWriteDeadline(toDeadline(c.tw))
+	}
+	c.mu.Unlock()
+}
+
+func (c *Conn) SetOutgoingTimeout(tr, tw time.Duration) {
+	c.mu.Lock()
+	c.tr, c.tw = tr, tw
+	if oc := c.oc; oc != nil {
+		oc.SetReadDeadline(toDeadline(tr))
+		oc.SetWriteDeadline(toDeadline(tw))
+	}
+	c.mu.Unlock()
 }
 
 func prefix(c net.Conn, r io.Reader) net.Conn {
@@ -550,7 +589,7 @@ func (closeConnError) Is(err error) bool { return err == context.Canceled }
 
 var CloseConn error = closeConnError{}
 
-type connBuf = [4 << 10]byte
+type connBuf = [8 << 10]byte
 
 var connBufPool = sync.Pool{
 	New: func() any { return new(connBuf) },

@@ -12,8 +12,11 @@ import (
 	"math"
 	"math/rand/v2"
 	"net"
+	"net/http"
 	"net/netip"
+	"path"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +24,7 @@ import (
 	"time"
 
 	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/dnshttp"
 	"codeberg.org/miekg/dns/dnsutil"
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/proxy"
@@ -62,10 +66,51 @@ type Options struct {
 }
 
 type DNServer struct {
-	Name string
-	IP   chrome.StringList
-	Over string
-	Port uint16
+	Name   string
+	IP     chrome.StringList
+	Over   string
+	Port   uint16
+	Path   string
+	Method string
+}
+
+func (s *DNServer) method() string {
+	if s.Method == "GET" {
+		return "GET"
+	}
+	return "POST"
+}
+
+func defaultPort(protocol string) int {
+	switch protocol {
+	case "TLS":
+		return 853
+	case "HTTPS":
+		return 443
+	case "HTTP":
+		return 80
+	default:
+		return 53
+	}
+}
+
+func (s *DNServer) port() int {
+	if s.Port != 0 {
+		return int(s.Port)
+	}
+	return defaultPort(s.Over)
+}
+
+func (s *DNServer) url() string {
+	var b strings.Builder
+	b.WriteString(strings.ToLower(cmp.Or(s.Over, "TCP")))
+	b.WriteString("://")
+	b.WriteString(s.Name)
+	if s.Port != 0 && int(s.Port) != defaultPort(s.Over) {
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(int(s.Port)))
+	}
+	return b.String()
 }
 
 type Service struct{}
@@ -337,19 +382,30 @@ func (Service) Run(ctx chrome.Context) {
 
 					for i := range new.DNS.Servers {
 						server := &new.DNS.Servers[i]
+						server.Over = strings.ToUpper(server.Over)
+						server.Method = strings.ToUpper(server.Method)
 						if server.Name == "" && len(server.IP) == 0 {
 							logger.Error("loading:dns:checkservers",
 								slog.Int("index", i),
 								slog.String("error", "missing name or IP address"))
 							return
 						}
-
-						server.Over = strings.ToUpper(server.Over)
-
-						if server.Over == "TLS" && server.Name == "" {
+						if !slices.Contains([]string{"", "TCP", "TLS", "HTTPS", "HTTP"}, server.Over) {
 							logger.Error("loading:dns:checkservers",
 								slog.Int("index", i),
-								slog.String("error", "DNS-over-TLS requires a server name"))
+								slog.String("error", "invalid over field: expects TCP, TLS, HTTPS or HTTP"))
+							return
+						}
+						if !slices.Contains([]string{"", "GET", "POST"}, server.Method) {
+							logger.Error("loading:dns:checkservers",
+								slog.Int("index", i),
+								slog.String("error", "invalid method field: expects GET or POST"))
+							return
+						}
+						if (server.Over == "TLS" || server.Over == "HTTPS") && server.Name == "" {
+							logger.Error("loading:dns:checkservers",
+								slog.Int("index", i),
+								slog.String("error", "DNS-over-TLS/HTTPS requires a server name"))
 							return
 						}
 					}
@@ -385,69 +441,71 @@ func (r *dnsQueryResult) TTL() time.Duration {
 }
 
 func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options, incoming <-chan dnsQuery) {
-	var dnsConn struct {
-		net.Conn
-		sync.Mutex
-		sync.WaitGroup
-		Timeout     time.Duration
-		Deadline    time.Time
-		GotResponse bool
-		IdleTimer   *time.Timer
-		IdleTimerC  <-chan time.Time
-	}
-
-	var dnsMsg dns.Msg
-
-	var tlsConfig *tls.Config
-
-	var tlsConfigCache map[string]*tls.Config
-
-	setTimeout := func(d time.Duration) {
-		dnsConn.Lock()
-		dnsConn.Timeout = d
-		dnsConn.Deadline = time.Now().Add(d)
-		if dnsConn.GotResponse {
-			dnsConn.SetDeadline(dnsConn.Deadline)
+	var (
+		dnsConn struct {
+			sync.Mutex
+			sync.WaitGroup
+			Net          net.Conn
+			Chrome       *chrome.Conn
+			IdleTimeout  time.Duration
+			ReadTimeout  time.Duration
+			WriteTimeout time.Duration
+			GotResponse  bool
+			IdleTimer    *time.Timer
+			IdleTimerC   <-chan time.Time
 		}
-		dnsConn.Unlock()
+		dnsMsg    dns.Msg
+		dnsServer DNServer
+		dnsAttrs  []slog.Attr
+	)
+
+	type keyType struct{ s1, s2 string }
+
+	var (
+		tlsConfig      *tls.Config
+		tlsConfigKey   keyType
+		tlsConfigCache map[keyType]*tls.Config
+	)
+
+	httpProtocols := &http.Protocols{}
+	httpProtocols.SetHTTP1(true)
+	httpProtocols.SetHTTP2(true)
+
+	httpTransport := &http.Transport{
+		DialTLSContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			if dnsConn.Net == nil {
+				return nil, errors.New("internal error: connection wasn't created")
+			}
+			return dnsConn.Net, nil
+		},
+		Protocols: httpProtocols,
 	}
 
 	closeConnection := func() {
-		dnsConn.Close()
-		dnsConn.Wait()
-		dnsConn.Conn = nil
-		dnsConn.Timeout = 0
-		dnsConn.Deadline = time.Time{}
-		dnsConn.GotResponse = false
-		if dnsConn.IdleTimer != nil {
-			dnsConn.IdleTimer.Stop()
-			dnsConn.IdleTimer = nil
-			dnsConn.IdleTimerC = nil
+		if dnsConn.Net != nil {
+			dnsConn.Net.Close()
+			dnsConn.Wait()
+			dnsConn.Net = nil
+			dnsConn.Chrome = nil
+			dnsConn.GotResponse = false
+			if dnsConn.IdleTimer != nil {
+				dnsConn.IdleTimer.Stop()
+				dnsConn.IdleTimer = nil
+				dnsConn.IdleTimerC = nil
+			}
 		}
+		httpTransport.CloseIdleConnections()
 	}
 
-	defer func() {
-		if dnsConn.Conn != nil {
-			closeConnection()
-		}
-	}()
-
-	dnsConnIdleTimeout := defaultIdleTimeout
-	dnsConnReadTimeout := defaultReadTimeout
-	dnsConnWriteTimeout := defaultWriteTimeout
-
-	var dnsAttrs []slog.Attr
+	defer closeConnection()
 
 	for {
-		if dnsConn.Conn != nil {
+		if dnsConn.Net != nil {
 			if dnsConn.IdleTimer == nil {
-				dnsConn.IdleTimer = time.NewTimer(dnsConnIdleTimeout)
+				dnsConn.IdleTimer = time.NewTimer(dnsConn.IdleTimeout)
 				dnsConn.IdleTimerC = dnsConn.IdleTimer.C
 			} else {
-				if !dnsConn.IdleTimer.Stop() {
-					<-dnsConn.IdleTimerC
-				}
-				dnsConn.IdleTimer.Reset(dnsConnIdleTimeout)
+				dnsConn.IdleTimer.Reset(dnsConn.IdleTimeout)
 			}
 		}
 		select {
@@ -489,29 +547,22 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 						break
 					}
 
-					if dnsConn.Conn == nil {
+					if dnsConn.Net == nil {
 						opts, ok = <-options
 						if !ok {
 							return
 						}
 
-						server := opts.DNS.Servers[rand.IntN(len(opts.DNS.Servers))]
-						dnsAttrs = append(dnsAttrs[:0], slog.String("name", server.Name))
+						dnsServer = opts.DNS.Servers[rand.IntN(len(opts.DNS.Servers))]
+						dnsAttrs = append(dnsAttrs[:0], slog.String("name", dnsServer.Name))
 
-						host := server.Name
-						if len(server.IP) != 0 {
-							host = server.IP[rand.IntN(len(server.IP))]
+						host := dnsServer.Name
+						if len(dnsServer.IP) != 0 {
+							host = dnsServer.IP[rand.IntN(len(dnsServer.IP))]
 							dnsAttrs = append(dnsAttrs, slog.String("ip", host))
 						}
 
-						port := 53
-						if server.Over == "TLS" {
-							port = 853
-						}
-						if server.Port != 0 {
-							port = int(server.Port)
-						}
-
+						port := dnsServer.port()
 						hostport := net.JoinHostPort(host, strconv.Itoa(port))
 						dnsAttrs = append(dnsAttrs, slog.Int("port", port))
 
@@ -541,62 +592,54 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 						dnsConn.Lock()
 						dnsConn.Add(1)
 
-						conn := ctx.Manager.NewConn(hostport, getRemote, opts.Conn, opts.Relay, logger, func(c <-chan chrome.ConnEvent) {
+						chromeConn := ctx.Manager.NewConn(hostport, getRemote, opts.Conn, opts.Relay, logger, func(c <-chan chrome.ConnEvent) {
 							defer dnsConn.Done()
 							for ev := range c {
-								switch ev.(type) {
-								case chrome.ConnEventResponse:
-									dnsConn.Lock()
-									dnsConn.GotResponse = true
-									if dnsConn.Timeout != 0 {
-										dnsConn.Deadline = time.Now().Add(dnsConn.Timeout)
-										dnsConn.SetDeadline(dnsConn.Deadline)
-									}
-									dnsConn.Unlock()
-								case chrome.ConnEventMaxAttempts:
+								if _, ok := ev.(chrome.ConnEventMaxAttempts); ok {
 									aLongTimeAgo := time.Unix(1, 0)
-									dnsConn.SetDeadline(aLongTimeAgo)
+									dnsConn.Net.SetDeadline(aLongTimeAgo)
 								}
 							}
 						})
+						netConn := net.Conn(chromeConn)
 
-						if server.Over == "TLS" {
-							if tlsConfig == nil || tlsConfig.ServerName != server.Name {
-								tlsConfig = tlsConfigCache[server.Name]
+						if dnsServer.Over == "TLS" || dnsServer.Over == "HTTPS" {
+							key := keyType{dnsServer.Name, dnsServer.Over}
+							if key != tlsConfigKey {
+								tlsConfig, tlsConfigKey = tlsConfigCache[key], key
 								if tlsConfig == nil {
 									tlsConfig = &tls.Config{
-										ServerName:         server.Name,
+										ServerName:         dnsServer.Name,
 										ClientSessionCache: tls.NewLRUClientSessionCache(1),
 									}
-
-									if tlsConfigCache == nil {
-										tlsConfigCache = make(map[string]*tls.Config)
+									if dnsServer.Over == "HTTPS" {
+										tlsConfig.NextProtos = dnshttp.NextProtos
 									}
-
-									tlsConfigCache[server.Name] = tlsConfig
+									if tlsConfigCache == nil {
+										tlsConfigCache = make(map[keyType]*tls.Config)
+									}
+									tlsConfigCache[key] = tlsConfig
 								}
 							}
-
-							conn = tls.Client(conn, tlsConfig)
-							dnsAttrs = append(dnsAttrs, slog.String("over", "TLS"))
+							netConn = tls.Client(netConn, tlsConfig)
+							dnsAttrs = append(dnsAttrs, slog.String("over", dnsServer.Over))
 						}
 
-						dnsConn.Conn = conn
+						dnsConn.Net = netConn
+						dnsConn.Chrome = chromeConn
 
-						dnsConnIdleTimeout = defaultIdleTimeout
-						dnsConnReadTimeout = defaultReadTimeout
-						dnsConnWriteTimeout = defaultWriteTimeout
+						dnsConn.IdleTimeout = defaultIdleTimeout
+						dnsConn.ReadTimeout = defaultReadTimeout
+						dnsConn.WriteTimeout = defaultWriteTimeout
 
 						if opts.DNS.Idle.Timeout > 0 {
-							dnsConnIdleTimeout = opts.DNS.Idle.Timeout
+							dnsConn.IdleTimeout = opts.DNS.Idle.Timeout
 						}
-
 						if opts.DNS.Read.Timeout > 0 {
-							dnsConnReadTimeout = opts.DNS.Read.Timeout
+							dnsConn.ReadTimeout = opts.DNS.Read.Timeout
 						}
-
 						if opts.DNS.Write.Timeout > 0 {
-							dnsConnWriteTimeout = opts.DNS.Write.Timeout
+							dnsConn.WriteTimeout = opts.DNS.Write.Timeout
 						}
 
 						dnsConn.Unlock()
@@ -613,76 +656,131 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 						dnsutil.SetQuestion(&dnsMsg, dnsutil.Fqdn(q.Domain), dns.TypeAAAA)
 					}
 
-					setTimeout(dnsConnWriteTimeout)
-
-					err := dnsMsg.Pack()
-					if err == nil {
-						err = writeMsgData(dnsConn.Conn, dnsMsg.Data)
-					}
-					if err == nil {
-						setTimeout(dnsConnReadTimeout)
-
-						_, err = dnsMsg.ReadFrom(dnsConn.Conn)
-						if err == nil {
-							err = dnsMsg.Unpack()
-						}
-						if err == nil {
-							var minTTL uint32 = math.MaxUint32
-
-							for rr := range dnsMsg.RRs() {
-								if h := rr.Header(); h != nil {
-									if opts.DNS.TTL.Min > 0 || opts.DNS.TTL.Max > 0 {
-										ttl := time.Duration(h.TTL) * time.Second
-										if opts.DNS.TTL.Min > 0 && ttl < opts.DNS.TTL.Min {
-											ttl = opts.DNS.TTL.Min
-										}
-										if opts.DNS.TTL.Max > 0 && ttl > opts.DNS.TTL.Max {
-											ttl = opts.DNS.TTL.Max
-										}
-										if ttl != time.Duration(h.TTL)*time.Second {
-											h.TTL = uint32(math.Ceil(ttl.Seconds()))
-										}
-									}
-									if minTTL > h.TTL {
-										minTTL = h.TTL
-									}
-								}
-
-								switch rr := rr.(type) {
-								case *dns.A:
-									if rr.Addr.IsValid() {
-										r.IPv4 = append(r.IPv4, rr.Addr)
-									}
-								case *dns.AAAA:
-									if rr.Addr.IsValid() {
-										r.IPv6 = append(r.IPv6, rr.Addr)
-									}
-								}
+					err := func() error {
+						if dnsServer.Over == "HTTPS" || dnsServer.Over == "HTTP" {
+							req, err := dnshttp.NewRequest(dnsServer.method(), dnsServer.url(), &dnsMsg)
+							if err != nil {
+								logger.Debug("dnsquery:newreq",
+									slog.String("host", q.Domain),
+									slog.GroupAttrs("dns", dnsAttrs...),
+									slog.Any("error", err))
+								return err
+							}
+							if dnsServer.Path != "" {
+								req.URL.Path = path.Join("/", dnsServer.Path)
 							}
 
-							if minTTL < math.MaxUint32 {
-								newDeadline := time.Now().Add(time.Duration(minTTL) * time.Second)
-								if r.Deadline.IsZero() || newDeadline.Before(r.Deadline) {
-									r.Deadline = newDeadline
-								}
+							dnsConn.Chrome.SetOutgoingTimeout(dnsConn.ReadTimeout, dnsConn.WriteTimeout)
+
+							resp, err := httpTransport.RoundTrip(req)
+							if err != nil {
+								logger.Debug("dnsquery:roundtrip",
+									slog.String("host", q.Domain),
+									slog.GroupAttrs("dns", dnsAttrs...),
+									slog.Any("error", err))
+								return err
 							}
 
-							qtypes = qtypes[1:]
+							m, err := dnshttp.Response(resp)
+							if err != nil {
+								logger.Debug("dnsquery:unpackresp",
+									slog.String("host", q.Domain),
+									slog.GroupAttrs("dns", dnsAttrs...),
+									slog.Any("error", err))
+								return err
+							}
+
+							if cap(dnsMsg.Data) <= cap(m.Data) {
+								dnsMsg.Data = m.Data
+							} else {
+								dnsMsg.Data = append(dnsMsg.Data[:0], m.Data...)
+							}
 						} else {
-							logger.Debug("dnsquery:readmsg",
+							if err := dnsMsg.Pack(); err != nil {
+								logger.Debug("dnsquery:packmsg",
+									slog.String("host", q.Domain),
+									slog.GroupAttrs("dns", dnsAttrs...),
+									slog.Any("error", err))
+								return err
+							}
+
+							dnsConn.Chrome.SetOutgoingTimeout(dnsConn.ReadTimeout, dnsConn.WriteTimeout)
+
+							if err := writeMsgData(dnsConn.Net, dnsMsg.Data); err != nil {
+								logger.Debug("dnsquery:writemsg",
+									slog.String("host", q.Domain),
+									slog.GroupAttrs("dns", dnsAttrs...),
+									slog.Any("error", err))
+								return err
+							}
+
+							dnsConn.Chrome.SetOutgoingTimeout(dnsConn.ReadTimeout, dnsConn.WriteTimeout)
+
+							if _, err := dnsMsg.ReadFrom(dnsConn.Net); err != nil {
+								logger.Debug("dnsquery:readmsg",
+									slog.String("host", q.Domain),
+									slog.GroupAttrs("dns", dnsAttrs...),
+									slog.Any("error", err))
+								return err
+							}
+						}
+
+						dnsConn.Chrome.SetOutgoingTimeout(0, 0)
+
+						if err := dnsMsg.Unpack(); err != nil {
+							logger.Debug("dnsquery:unpackmsg",
 								slog.String("host", q.Domain),
 								slog.GroupAttrs("dns", dnsAttrs...),
 								slog.Any("error", err))
+							return err
 						}
-					} else {
-						logger.Debug("dnsquery:writemsg",
-							slog.String("host", q.Domain),
-							slog.GroupAttrs("dns", dnsAttrs...),
-							slog.Any("error", err))
-					}
 
+						var minTTL uint32 = math.MaxUint32
+
+						for rr := range dnsMsg.RRs() {
+							if h := rr.Header(); h != nil {
+								if opts.DNS.TTL.Min > 0 || opts.DNS.TTL.Max > 0 {
+									ttl := time.Duration(h.TTL) * time.Second
+									if opts.DNS.TTL.Min > 0 && ttl < opts.DNS.TTL.Min {
+										ttl = opts.DNS.TTL.Min
+									}
+									if opts.DNS.TTL.Max > 0 && ttl > opts.DNS.TTL.Max {
+										ttl = opts.DNS.TTL.Max
+									}
+									if ttl != time.Duration(h.TTL)*time.Second {
+										h.TTL = uint32(math.Ceil(ttl.Seconds()))
+									}
+								}
+								if minTTL > h.TTL {
+									minTTL = h.TTL
+								}
+							}
+
+							switch rr := rr.(type) {
+							case *dns.A:
+								if rr.Addr.IsValid() {
+									r.IPv4 = append(r.IPv4, rr.Addr)
+								}
+							case *dns.AAAA:
+								if rr.Addr.IsValid() {
+									r.IPv6 = append(r.IPv6, rr.Addr)
+								}
+							}
+						}
+
+						if minTTL < math.MaxUint32 {
+							newDeadline := time.Now().Add(time.Duration(minTTL) * time.Second)
+							if r.Deadline.IsZero() || newDeadline.Before(r.Deadline) {
+								r.Deadline = newDeadline
+							}
+						}
+
+						return nil
+					}()
 					if err != nil {
 						closeConnection()
+					} else {
+						qtypes = qtypes[1:]
 					}
 				}
 
