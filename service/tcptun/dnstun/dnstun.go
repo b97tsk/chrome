@@ -3,9 +3,11 @@ package dnstun
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha1"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -14,20 +16,23 @@ import (
 	"math"
 	"math/rand/v2"
 	"net"
+	"net/netip"
 	"path"
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/dnsutil"
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/internal/matchset"
 	"github.com/b97tsk/chrome/internal/netutil"
 	"github.com/b97tsk/chrome/proxy"
-	"github.com/miekg/dns"
 )
 
 type Options struct {
@@ -273,8 +278,8 @@ func (l *allowList) Allow(domain string) bool {
 }
 
 type dnsCacheKey struct {
-	Domain string
-	Qtype  uint16
+	Fqdn  string
+	Qtype uint16
 }
 
 type Service struct{}
@@ -343,40 +348,44 @@ func (Service) Run(ctx chrome.Context) {
 			cc := netutil.NewConnChecker(c)
 			defer cc.Close()
 
-			dnsConn := &dns.Conn{Conn: cc}
+			var dnsMsg dns.Msg
 
 			for {
-				msg, err := dnsConn.ReadMsg()
+				dnsMsg.MsgHeader = dns.MsgHeader{}
+				dnsMsg.Question = nil
+				dnsMsg.Reset()
+
+				_, err := dnsMsg.ReadFrom(cc)
+				if err == nil {
+					err = dnsMsg.Unpack()
+				}
 				if err != nil {
 					if err != io.EOF {
 						logger.Debug("readmsg", slog.Any("error", err))
 					}
-
 					return
 				}
-
-				if len(msg.Question) == 0 {
+				if len(dnsMsg.Question) == 0 {
 					logger.Debug("readmsg", slog.String("error", "0 questions"))
 					return
 				}
 
-				domain := strings.TrimSuffix(msg.Question[0].Name, ".")
-				qtype := msg.Question[0].Qtype
+				z, t := dnsutil.Question(&dnsMsg)
 
 				var qr *dnsQueryResult
 
-				if opts.IPv4.Only && qtype == dns.TypeAAAA {
-					qr = &dnsQueryResult{Message: new(dns.Msg).SetReply(msg)}
+				if opts.IPv4.Only && t == dns.TypeAAAA {
+					qr = &dnsQueryResult{Message: dnsutil.SetReply(new(dns.Msg), &dnsMsg)}
 				}
 
 				if qr == nil && opts.dnsCache != nil {
-					if cache, ok := opts.dnsCache.Load(dnsCacheKey{domain, qtype}); ok {
+					if cache, ok := opts.dnsCache.Load(dnsCacheKey{z, t}); ok {
 						r := cache.(*dnsQueryResult)
 						if r.Deadline.After(time.Now()) {
 							qr = r
 							if len(r.IPList) != 0 {
 								logger.Debug("dnsquery",
-									slog.String("host", domain),
+									slog.String("host", strings.TrimSuffix(z, ".")),
 									slog.Any("ip", r.IPList),
 									slog.Duration("ttl", r.TTL()),
 									slog.String("from", "cache"))
@@ -393,7 +402,7 @@ func (Service) Run(ctx chrome.Context) {
 						return
 					case <-cc.Done():
 						return
-					case dnsQueryIn <- dnsQuery{msg, domain, qtype, r, cc}:
+					case dnsQueryIn <- dnsQuery{&dnsMsg, z, t, r, cc}:
 					}
 
 					select {
@@ -409,23 +418,36 @@ func (Service) Run(ctx chrome.Context) {
 					}
 				}
 
-				msgID := msg.Id
-				qr.Message.CopyTo(msg)
-				msg.Id = msgID
+				m := qr.Message.Copy()
+				m.ID = dnsMsg.ID
+				m.Data = dnsMsg.Data
+				if err := m.Pack(); err != nil {
+					logger.Debug("packmsg", slog.Any("error", err))
+					return
+				}
+				dnsMsg.Data = m.Data
 
 				if n := uint32(time.Since(qr.Time).Seconds()); n > 0 {
-					for _, ans := range msg.Answer {
-						if h := ans.Header(); h != nil && h.Ttl != 0 {
-							if h.Ttl > n {
-								h.Ttl -= n
+					if err := dnsMsg.Unpack(); err != nil {
+						logger.Debug("unpackmsg", slog.Any("error", err))
+						return
+					}
+					for rr := range dnsMsg.RRs() {
+						if h := rr.Header(); h != nil && h.TTL != 0 {
+							if h.TTL > n {
+								h.TTL -= n
 							} else {
-								h.Ttl = 0
+								h.TTL = 0
 							}
 						}
 					}
+					if err := dnsMsg.Pack(); err != nil {
+						logger.Debug("packmsg", slog.Any("error", err))
+						return
+					}
 				}
 
-				if err := dnsConn.WriteMsg(msg); err != nil {
+				if err := writeMsgData(cc, dnsMsg.Data); err != nil {
 					logger.Debug("writemsg", slog.Any("error", err))
 					return
 				}
@@ -601,7 +623,7 @@ func (Service) Run(ctx chrome.Context) {
 
 type dnsQuery struct {
 	Message *dns.Msg
-	Domain  string
+	Fqdn    string
 	Qtype   uint16
 	Result  chan<- *dnsQueryResult
 	Context context.Context
@@ -609,7 +631,7 @@ type dnsQuery struct {
 
 type dnsQueryResult struct {
 	Message  *dns.Msg
-	IPList   []net.IP
+	IPList   []netip.Addr
 	Time     time.Time
 	Deadline time.Time
 }
@@ -631,13 +653,15 @@ Loop:
 				return
 			}
 
+			domain := strings.TrimSuffix(q.Fqdn, ".")
+
 			if opts.dnsCache != nil {
-				if cache, ok := opts.dnsCache.Load(dnsCacheKey{q.Domain, q.Qtype}); ok {
+				if cache, ok := opts.dnsCache.Load(dnsCacheKey{q.Fqdn, q.Qtype}); ok {
 					r := cache.(*dnsQueryResult)
 					if r.Deadline.After(time.Now()) {
 						if len(r.IPList) != 0 {
 							logger.Debug("dnsquery",
-								slog.String("host", q.Domain),
+								slog.String("host", domain),
 								slog.Any("ip", r.IPList),
 								slog.Duration("ttl", r.TTL()),
 								slog.String("from", "cache"))
@@ -660,26 +684,21 @@ Loop:
 			var route1 *route
 
 			if opts.routeCache != nil {
-				if r, ok := opts.routeCache.Load(q.Domain); ok {
+				if r, ok := opts.routeCache.Load(domain); ok {
 					route1 = r.(*route)
 				} else {
-					dm := q.Domain
-
-					if v := opts.Redirects[dm]; v != "" {
-						dm = v
+					dn := domain
+					if v := opts.Redirects[dn]; v != "" {
+						dn = v
 					}
-
 					for i := range opts.routes {
-						if r := &opts.routes[i]; r.AllowList.Allow(dm) {
-							logger.Info("route:match", slog.String("route", r.Name), slog.String("matches", dm))
-
+						if r := &opts.routes[i]; r.AllowList.Allow(dn) {
+							logger.Info("route:match", slog.String("route", r.Name), slog.String("matches", dn))
 							route1 = r
-
 							break
 						}
 					}
-
-					opts.routeCache.Store(q.Domain, route1)
+					opts.routeCache.Store(domain, route1)
 				}
 			}
 
@@ -757,13 +776,15 @@ func newExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 
 func startExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Options, ex *dnsExchange) {
 	var dnsConn struct {
-		*dns.Conn
+		net.Conn
 		sync.Mutex
 		sync.WaitGroup
 		Timeout     time.Duration
 		Deadline    time.Time
 		GotResponse bool
 	}
+
+	var dnsMsgData []byte
 
 	var tlsConfig *tls.Config
 
@@ -825,15 +846,16 @@ func startExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Optio
 
 			var result *dnsQueryResult
 
+			domain := strings.TrimSuffix(q.Fqdn, ".")
+
 			if opts.dnsCache != nil {
-				if cache, ok := opts.dnsCache.Load(dnsCacheKey{q.Domain, q.Qtype}); ok {
+				if cache, ok := opts.dnsCache.Load(dnsCacheKey{q.Fqdn, q.Qtype}); ok {
 					r := cache.(*dnsQueryResult)
 					if r.Deadline.After(time.Now()) {
 						result = r
-
 						if len(r.IPList) != 0 {
 							logger.Debug("dnsquery",
-								slog.String("host", q.Domain),
+								slog.String("host", domain),
 								slog.Any("ip", r.IPList),
 								slog.Duration("ttl", r.TTL()),
 								slog.String("from", "cache"))
@@ -953,7 +975,7 @@ func startExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Optio
 						dnsAttrs = append(dnsAttrs, slog.String("over", "TLS"))
 					}
 
-					dnsConn.Conn = &dns.Conn{Conn: conn}
+					dnsConn.Conn = conn
 
 					dnsConnIdleTimeout = defaultIdleTimeout
 					dnsConnReadTimeout = defaultReadTimeout
@@ -974,86 +996,83 @@ func startExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Optio
 					dnsConn.Unlock()
 				}
 
+				var dnsMsg dns.Msg
+
+				dnsMsg.Data = dnsMsgData
+
+				z := q.Fqdn
+				if v := opts.Redirects[domain]; v != "" {
+					z = dnsutil.Fqdn(v)
+				}
+				dnsutil.SetQuestion(&dnsMsg, z, q.Qtype)
+
 				setTimeout(dnsConnWriteTimeout)
 
-				qm := q.Message
-
-				if v := opts.Redirects[q.Domain]; v != "" {
-					qm = qm.Copy()
-					qm.Question[0].Name = dns.Fqdn(v)
-				}
-
-				err := dnsConn.WriteMsg(qm)
+				err := dnsMsg.Pack()
 				if err == nil {
-					var msg *dns.Msg
-
+					err = writeMsgData(dnsConn.Conn, dnsMsg.Data)
+				}
+				if err == nil {
 					setTimeout(dnsConnReadTimeout)
 
-					msg, err = dnsConn.ReadMsg()
+					_, err = dnsMsg.ReadFrom(dnsConn.Conn)
 					if err == nil {
-						r := &dnsQueryResult{Message: msg}
+						err = dnsMsg.Unpack()
+					}
+					if err == nil {
+						r := &dnsQueryResult{Message: &dnsMsg}
 
-						if qm != q.Message {
-							msg.Question = q.Message.Question
+						if z != q.Fqdn {
+							dnsMsg.Question = q.Message.Question
 						}
 
 						var minTTL uint32 = math.MaxUint32
 
-						var filterOutIPv6 bool
+						var excludeIPv6 bool
 
-						for _, ans := range msg.Answer {
-							if h := ans.Header(); h != nil {
-								if qm != q.Message {
-									h.Name = q.Message.Question[0].Name
+						for rr := range dnsMsg.RRs() {
+							if h := rr.Header(); h != nil {
+								if h.Name == z {
+									h.Name = q.Fqdn
 								}
-
 								if opts.TTL.Min > 0 || opts.TTL.Max > 0 {
-									ttl := time.Duration(h.Ttl) * time.Second
-
+									ttl := time.Duration(h.TTL) * time.Second
 									if opts.TTL.Min > 0 && ttl < opts.TTL.Min {
 										ttl = opts.TTL.Min
 									}
-
 									if opts.TTL.Max > 0 && ttl > opts.TTL.Max {
 										ttl = opts.TTL.Max
 									}
-
-									if ttl != time.Duration(h.Ttl)*time.Second {
-										h.Ttl = uint32(math.Ceil(ttl.Seconds()))
+									if ttl != time.Duration(h.TTL)*time.Second {
+										h.TTL = uint32(math.Ceil(ttl.Seconds()))
 									}
 								}
-
-								if minTTL > h.Ttl {
-									minTTL = h.Ttl
+								if minTTL > h.TTL {
+									minTTL = h.TTL
 								}
 							}
 
-							switch ans := ans.(type) {
+							switch rr := rr.(type) {
 							case *dns.A:
-								r.IPList = append(r.IPList, ans.A)
+								if rr.Addr.IsValid() {
+									r.IPList = append(r.IPList, rr.Addr)
+								}
 							case *dns.AAAA:
 								if opts.IPv4.Only {
-									filterOutIPv6 = true
-								} else {
-									r.IPList = append(r.IPList, ans.AAAA)
+									excludeIPv6 = true
+									break
+								}
+								if rr.Addr.IsValid() {
+									r.IPList = append(r.IPList, rr.Addr)
 								}
 							}
 						}
 
-						if filterOutIPv6 {
-							remains := msg.Answer[:0]
-
-							for _, ans := range msg.Answer {
-								if _, ok := ans.(*dns.AAAA); !ok {
-									remains = append(remains, ans)
-								}
-							}
-
-							for i, j := len(remains), len(msg.Answer); i < j; i++ {
-								msg.Answer[i] = nil
-							}
-
-							msg.Answer = remains
+						if excludeIPv6 {
+							dnsMsg.Answer = slices.DeleteFunc(dnsMsg.Answer, func(rr dns.RR) bool {
+								_, ok := rr.(*dns.AAAA)
+								return ok
+							})
 						}
 
 						r.Time = time.Now()
@@ -1065,12 +1084,12 @@ func startExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Optio
 						result = r
 
 						if opts.dnsCache != nil && !r.Deadline.IsZero() {
-							opts.dnsCache.Store(dnsCacheKey{q.Domain, q.Qtype}, r)
+							opts.dnsCache.Store(dnsCacheKey{q.Fqdn, q.Qtype}, r)
 						}
 
 						if len(r.IPList) != 0 {
 							logger.Debug("dnsquery",
-								slog.String("host", q.Domain),
+								slog.String("host", domain),
 								slog.Any("ip", r.IPList),
 								slog.Duration("ttl", r.TTL()))
 						}
@@ -1079,15 +1098,18 @@ func startExchange(ctx chrome.Context, logger *slog.Logger, options <-chan Optio
 					}
 
 					logger.Debug("dnsquery:readmsg",
-						slog.String("host", q.Domain),
+						slog.String("host", domain),
 						slog.GroupAttrs("dns", dnsAttrs...),
 						slog.Any("error", err))
 				} else {
 					logger.Debug("dnsquery:writemsg",
-						slog.String("host", q.Domain),
+						slog.String("host", domain),
 						slog.GroupAttrs("dns", dnsAttrs...),
 						slog.Any("error", err))
 				}
+
+				dnsMsgData = dnsMsg.Data
+				dnsMsg.Data = nil
 
 				closeConnection()
 			}
@@ -1147,6 +1169,15 @@ Again:
 	}
 
 	return start, token, nil
+}
+
+func writeMsgData(w io.Writer, data []byte) error {
+	s := make([]byte, 2)
+	binary.BigEndian.PutUint16(s, uint16(len(data)))
+	bw := bufio.NewWriter(w)
+	_, err1 := bw.Write(s)
+	_, err2 := bw.Write(data)
+	return cmp.Or(err1, err2, bw.Flush())
 }
 
 const (

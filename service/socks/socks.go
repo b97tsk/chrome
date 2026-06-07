@@ -1,13 +1,18 @@
 package socks
 
 import (
+	"bufio"
+	"cmp"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
+	"io"
 	"log/slog"
 	"math"
 	"math/rand/v2"
 	"net"
+	"net/netip"
 	"reflect"
 	"strconv"
 	"strings"
@@ -15,9 +20,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/dnsutil"
 	"github.com/b97tsk/chrome"
 	"github.com/b97tsk/chrome/proxy"
-	"github.com/miekg/dns"
 	"github.com/shadowsocks/go-shadowsocks2/socks"
 )
 
@@ -370,7 +376,7 @@ type dnsQuery struct {
 }
 
 type dnsQueryResult struct {
-	IPv4, IPv6 []net.IP
+	IPv4, IPv6 []netip.Addr
 	Deadline   time.Time
 }
 
@@ -380,7 +386,7 @@ func (r *dnsQueryResult) TTL() time.Duration {
 
 func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options, incoming <-chan dnsQuery) {
 	var dnsConn struct {
-		*dns.Conn
+		net.Conn
 		sync.Mutex
 		sync.WaitGroup
 		Timeout     time.Duration
@@ -389,6 +395,8 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 		IdleTimer   *time.Timer
 		IdleTimerC  <-chan time.Time
 	}
+
+	var dnsMsg dns.Msg
 
 	var tlsConfig *tls.Config
 
@@ -470,8 +478,6 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 
 			if result == nil {
 				r := &dnsQueryResult{}
-
-				fqDomain := dns.Fqdn(q.Domain)
 
 				qtypes := opts.DNS.Query.Type
 				for len(qtypes) != 0 {
@@ -575,7 +581,7 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 							dnsAttrs = append(dnsAttrs, slog.String("over", "TLS"))
 						}
 
-						dnsConn.Conn = &dns.Conn{Conn: conn}
+						dnsConn.Conn = conn
 
 						dnsConnIdleTimeout = defaultIdleTimeout
 						dnsConnReadTimeout = defaultReadTimeout
@@ -596,55 +602,61 @@ func startWorker(ctx chrome.Context, logger *slog.Logger, options <-chan Options
 						dnsConn.Unlock()
 					}
 
-					var m dns.Msg
+					dnsMsg.MsgHeader = dns.MsgHeader{}
+					dnsMsg.Question = nil
+					dnsMsg.Reset()
 
 					switch qtypes[0] {
 					case "A":
-						m.SetQuestion(fqDomain, dns.TypeA)
+						dnsutil.SetQuestion(&dnsMsg, dnsutil.Fqdn(q.Domain), dns.TypeA)
 					case "AAAA":
-						m.SetQuestion(fqDomain, dns.TypeAAAA)
+						dnsutil.SetQuestion(&dnsMsg, dnsutil.Fqdn(q.Domain), dns.TypeAAAA)
 					}
 
 					setTimeout(dnsConnWriteTimeout)
 
-					err := dnsConn.WriteMsg(&m)
+					err := dnsMsg.Pack()
 					if err == nil {
-						var msg *dns.Msg
-
+						err = writeMsgData(dnsConn.Conn, dnsMsg.Data)
+					}
+					if err == nil {
 						setTimeout(dnsConnReadTimeout)
 
-						msg, err = dnsConn.ReadMsg()
+						_, err = dnsMsg.ReadFrom(dnsConn.Conn)
+						if err == nil {
+							err = dnsMsg.Unpack()
+						}
 						if err == nil {
 							var minTTL uint32 = math.MaxUint32
 
-							for _, ans := range msg.Answer {
-								if h := ans.Header(); h != nil {
+							for rr := range dnsMsg.RRs() {
+								if h := rr.Header(); h != nil {
 									if opts.DNS.TTL.Min > 0 || opts.DNS.TTL.Max > 0 {
-										ttl := time.Duration(h.Ttl) * time.Second
-
+										ttl := time.Duration(h.TTL) * time.Second
 										if opts.DNS.TTL.Min > 0 && ttl < opts.DNS.TTL.Min {
 											ttl = opts.DNS.TTL.Min
 										}
-
 										if opts.DNS.TTL.Max > 0 && ttl > opts.DNS.TTL.Max {
 											ttl = opts.DNS.TTL.Max
 										}
-
-										if ttl != time.Duration(h.Ttl)*time.Second {
-											h.Ttl = uint32(math.Ceil(ttl.Seconds()))
+										if ttl != time.Duration(h.TTL)*time.Second {
+											h.TTL = uint32(math.Ceil(ttl.Seconds()))
 										}
 									}
-
-									if minTTL > h.Ttl {
-										minTTL = h.Ttl
+									if minTTL > h.TTL {
+										minTTL = h.TTL
 									}
 								}
 
-								switch ans := ans.(type) {
+								switch rr := rr.(type) {
 								case *dns.A:
-									r.IPv4 = append(r.IPv4, ans.A)
+									if rr.Addr.IsValid() {
+										r.IPv4 = append(r.IPv4, rr.Addr)
+									}
 								case *dns.AAAA:
-									r.IPv6 = append(r.IPv6, ans.AAAA)
+									if rr.Addr.IsValid() {
+										r.IPv6 = append(r.IPv6, rr.Addr)
+									}
 								}
 							}
 
@@ -732,6 +744,15 @@ Outer:
 	}
 
 	return result
+}
+
+func writeMsgData(w io.Writer, data []byte) error {
+	s := make([]byte, 2)
+	binary.BigEndian.PutUint16(s, uint16(len(data)))
+	bw := bufio.NewWriter(w)
+	_, err1 := bw.Write(s)
+	_, err2 := bw.Write(data)
+	return cmp.Or(err1, err2, bw.Flush())
 }
 
 const (
